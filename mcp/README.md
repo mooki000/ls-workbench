@@ -183,6 +183,10 @@ Credential-token variables remain excluded; ordinary test/build workers keep the
 Prompt selectors are checked against the repository's actual skill sections, not only self-generated fake headings.
 Retained PR-loop state has a separate 16 MiB bound (ordinary knowledge documents remain bounded to 2 MiB);
 large initialized snapshots therefore remain readable without removing the input-size limit.
+`checks_pr` is bound to the exact `pr_check_checkout` recorded by its operator, which must be the checkout
+the installed helper actually uses; a different registered worktree refuses before executing the helper.
+Register the resolved Windows helper path (not a symlink crossing registered roots), and register `ci_reader`
+as the trusted `hs_pr_ci.py` parser module, not the `hs-pr-ci.sh` launcher.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
@@ -250,7 +254,7 @@ uv run python -m src.generate_readme --check
 |---|---|---|---|---|---|---|
 | `build_plan` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, profile_id | Pinned build/donor planning and compiler dry-run inspection |
 | `build_start` | checks | RUN | operate | yes | plan_id, idempotency_key | Gated full/reused build wrappers and completion bookkeeping |
-| `checks_pr` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, branch, title_artifact, idempotency_key | Repository-bound pre-push check; whole imported-commit attestations only |
+| `checks_pr` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, branch, title_artifact, idempotency_key | Repository-bound pre-push check at pr_check_checkout; whole imported-commit attestations only |
 | `checks_source` | checks | RUN | operate | yes | repo_id, commit, idempotency_key | Idle-gated source test runner and failing-name comparison |
 | `checks_windows_syntax` | checks | RUN | operate | yes | repo_id, commit, base, idempotency_key | Windows-target fixture check wrapper (not Windows runtime) |
 | `ci_read` | checks | READ | observe, operate | no | repository | CI reader plus failed-job/log and matching-main inspection |

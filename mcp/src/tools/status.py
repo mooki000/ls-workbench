@@ -13,7 +13,7 @@ SPECS = (
     ToolSpec("queue_status", Safety.READ, "Observe GPU, Intel and build locks and tickets without acquiring a lock or creating files; wait estimates stay unknown.", shell_route="Manual queue/holder files and procfs lock inspection"),
     ToolSpec("jobs_list", Safety.READ, "List this registry's jobs with a bounded cursor page.", shell_route="Ad-hoc background process and topic job lists"),
     ToolSpec("job_read", Safety.READ, "Read one owned job, bounded events and its final child receipt.", shell_route="Manual progress logs and completion-receipt lookup"),
-    ToolSpec("job_wait", Safety.READ, "Wait for observed terminal state under a deadline; cancelling this wait never cancels work.", shell_route="Repeated bounded completion checks without cancelling work"),
+    ToolSpec("job_wait", Safety.READ, "Wait 0–30 seconds per call for observed terminal state; repeat within an overall deadline. Cancelling this wait never cancels work.", shell_route="Repeated bounded completion checks without cancelling work"),
     ToolSpec("job_cancel", Safety.WRITE_LOCAL, "Request cancellation of one registry-owned worker; preserve its output and receipt.", destructive=True, shell_route="Hand-managed scoped cancellation and child receipts"),
 )
 

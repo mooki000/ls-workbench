@@ -61,6 +61,12 @@ async def test_catalogue(config, profile, extra):
             assert tool.annotations.idempotent_hint == spec.idempotent
             assert tool.annotations.open_world_hint == spec.open_world
             assert set(tool.input_schema.get("required", [])) == set(REQUIRED[name])
+        wait_schema = tools["job_wait"].input_schema["properties"]["timeout_seconds"]
+        assert (wait_schema["minimum"], wait_schema["maximum"]) == (0, 30)
+        assert "0–30 seconds" in tools["job_wait"].description
+        if profile == "operate":
+            assert "bridge_ready" in tools["session_launch"].description
+            assert "pr_check_checkout" in tools["checks_pr"].description
         result = await client.call_tool("workbench_status")
         assert result.structured_content["protected_player_active"] is None
         assert result.structured_content["capabilities"]["harness"]["status"] == "unavailable"

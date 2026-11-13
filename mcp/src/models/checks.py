@@ -43,8 +43,8 @@ class Catalogue(Record):
     windows_check: Path | None = None
     windows_sysroot: Path | None = None
     pr_check: Path | None = None
-    pr_check_checkout: Path | None = None
-    ci_reader: Path | None = None
+    pr_check_checkout: Path | None = Field(default=None, description="Exact checkout hard-bound by the trusted pre-push helper; other repo_id paths refuse.")
+    ci_reader: Path | None = Field(default=None, description="Trusted Python parser module exposing failures(text), not its shell launcher.")
     gh: Path | None = None
     repositories: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]] = Field(default_factory=list, max_length=20)
     approved_plans: list[Digest] = Field(default_factory=list, max_length=100)
