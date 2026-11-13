@@ -177,6 +177,9 @@ Session profiles may set the strict Boolean `precompile:false` for a bounded col
 The default `true` leaves the build's startup behavior unchanged; only explicit `false` adds `RX_VK_PRECOMPILE=0`.
 The selected value is pinned in the request/plan and `startup_policy` event. This is operator configuration,
 not an arbitrary environment tool argument or evidence that a cold run is suitable for timing.
+Reviewed GET-only provider workers retain both set and unset HOME/XDG/GH configuration choices.
+An unset `XDG_CONFIG_HOME` must not become the worker's empty isolated config directory, hiding an existing login.
+Credential-token variables remain excluded; ordinary test/build workers keep their isolated environment.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
