@@ -60,7 +60,7 @@ A generic host entry (replace the paths yourself; no server-side shell expansion
 
 Stdio inherits the trust of the account and host launching it. This entry opens no network listener. Do not expose it
 as an unauthenticated remote service. Missing optional backends are reported as `unavailable`, not silently emulated.
-`configured` means a path exists, not that connectivity, a binary, a save, or gameplay has been validated.
+`configured` means registered local paths and prerequisites passed validation, not that connectivity or gameplay was proved.
 
 ## Shell entry and owned sessions
 
@@ -202,6 +202,15 @@ This remains a local configuration check, not a connectivity probe or proof that
 Registry contention during streaming progress does not terminate the check child: raw logs remain authoritative,
 optional progress can be omitted with a private diagnostic, and durable artifact/result writes retry only rolled-back
 busy transactions under a bounded deadline. Original worker exceptions are retained in private stderr before reporting.
+Game control sockets use a short private `${XDG_RUNTIME_DIR}/lswb/<12 hex>/c.sock`, or `/tmp/lswb-<uid>/<12 hex>/c.sock`
+when XDG_RUNTIME_DIR is unset. Existing namespace directories must belong to this user and have mode 0700;
+symlinks, foreign ownership and wider modes refuse. Socket pathnames are checked in encoded bytes (maximum 107,
+plus the NUL terminator); an overlong runtime path produces a bounded diagnostic naming the path and limit.
+Everything else remains in the registered run folder, including `control-socket.json`, the checked reconnect pointer.
+Normal shutdown removes the socket and its leaf directory only after observed child exit. Before a new authorized
+launch, stale cleanup removes only same-state-root directories with a proven-dead owner and no live or uncertain
+worker. The namespace directory remains. The CLI broker retains its already-working private relative-bind/procfs
+connection scheme, which handles long state roots without an external socket alias.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
@@ -369,8 +378,9 @@ uv run python -m src.generate_readme --check
 ## Errors, permissions and cancellation
 
 Every tool failure uses a framework ToolError with JSON fields
-`code`, `operation`, `retryable`, `retry_after_seconds`, `operator_action`. No raw exception text or local path is put in
-that envelope. Validation failures use the same boundary. Codes:
+`code`, `operation`, `retryable`, `retry_after_seconds`, `operator_action`. Backend exception text never crosses
+that envelope. The socket-length diagnostic alone includes the server-chosen private runtime path and byte limit.
+Validation failures use the same boundary. Codes:
 
 | Code | Next safe action |
 |---|---|

@@ -24,6 +24,7 @@ from src.effects.session_bridge import Bridge
 import sys
 from src.effects.session_storage import catalogue, clone_tree, lane_guard, new_directory, plain_files, read_json, write_new
 from src.effects.names import copy_names, LOG_NAMES
+from src.effects import session_runtime
 from src.registry import new_id
 
 # Canonical setting keys only. Names/aliases never get a chance to evade this.
@@ -118,9 +119,14 @@ class SessionService:
     async def connection(self, session: Session) -> Bridge:
         async with session.connect_lock:
             if session.bridge is None or session.bridge.closed:
+                pointer = read_json(session.root / "control-socket.json", 4096)
+                selected = Path(pointer.get("socket", ""))
+                if pointer.get("run_id") != session.run_id or selected != Path(session.plan["socket"]):
+                    raise self.deps.error("refused_by_policy", "session_runtime_pointer")
+                session_runtime.validate(self.deps, selected, session.run_id)
+                session.socket = selected
                 if not session.socket.exists():
                     raise self.deps.error("unavailable", "session_bridge")
-                self.deps.paths.read(session.socket)
                 session.bridge = await Bridge.connect(session.socket)
             return session.bridge
 
@@ -542,6 +548,7 @@ class SessionService:
         hold_seconds = wall_seconds + 30  # wrapper TERM/KILL allowance plus cleanup, within 480 seconds
         snapshot = deps.policy.authorize(lane=profile.lane, resource_class=profile.resource_class,
             wall_seconds=hold_seconds, plan_hash=plan_hash, stage="plan")
+        session_runtime.cleanup_stale(deps)
         save = self._save_source(cat, save_id) if save_id else None
         if save:
             plain_files(deps, save)
@@ -556,18 +563,20 @@ class SessionService:
                 policy_revision=snapshot.revision, gate={"class": profile.resource_class, "device": profile.lane}, timing_valid=False,
                 capabilities={"save_drain": False, "disposable": True, "sampled_state": None})
             root = copy / "runs" / run.run_id
-            socket = root / "control.sock"
-            if len(os.fsencode(socket)) >= 108:
-                self._finish(existing.job_id, State.FAILED, error=deps.error("unavailable", "session_launch").envelope)
-                deps.registry.update_run(run.run_id, state=State.FAILED, stop_reason="socket_path_too_long")
-                raise deps.error("unavailable", "session_launch")
+            deps.registry.update_job(existing.job_id, run_ids=[run.run_id])
+            try:
+                socket = session_runtime.allocate(deps, run.run_id)
+            except (WorkbenchError, OSError) as exc:
+                error = exc if isinstance(exc, WorkbenchError) else deps.error("unavailable", "session_runtime_socket")
+                self._finish(existing.job_id, State.FAILED, error=error.envelope)
+                deps.registry.update_run(run.run_id, state=State.FAILED, ended_at=utc_now(), stop_reason="runtime_socket_unavailable")
+                raise error
             plan = dict(run_dir=str(root), socket=str(socket), copy=str(copy), wrapper=str(wrapper), gate=str(gate),
                 python=sys.executable, state_root=str(deps.config.state_root), lane=profile.lane,
                 resource_class=profile.resource_class, wall_seconds=wall_seconds, hold_seconds=hold_seconds, plan_hash=plan_hash,
                 project=names.project, log=names.log, precompile=profile.precompile)
             session = Session(run.run_id, existing.job_id, root, socket, profile, plan)
             self.sessions[run.run_id] = session
-            deps.registry.update_job(existing.job_id, run_ids=[run.run_id])
 
             async def action(job_id):
                 try:
@@ -578,6 +587,8 @@ class SessionService:
                         deps.registry.update_run(run.run_id, state=State.CANCELLED if session.stopping else State.INTERRUPTED,
                             ended_at=utc_now(), stop_reason=session.stop_reason or "launch_interrupted")
                     raise
+                finally:
+                    self._cleanup_socket(session)
                 return {"run_id": run.run_id, "save_drain": "unsupported", "timing_valid": False}
 
             async def cancel():
@@ -589,6 +600,7 @@ class SessionService:
         if not root.parent.exists():
             new_directory(deps, root.parent)
         new_directory(deps, root)
+        write_new(deps, root / "control-socket.json", json.dumps({"run_id": session.run_id, "socket": str(session.socket)}))
         new_directory(deps, root / "shots")
         if save:
             await clone_tree(deps, save, root / "user")
@@ -613,6 +625,7 @@ class SessionService:
         process = deps.registry.create_job("session_process", request={"run_id": session.run_id})
         session.process_job = process.job_id
         deps.registry.update_job(process.job_id, run_ids=[session.run_id])
+        session_runtime.bind_job(deps, session.socket, session.run_id, process.job_id)
         await deps.supervisor.start(process.job_id, [sys.executable, "-I",
             str(Path(__file__).with_name("session_worker.py")), "--outer", str(planfile)], cwd=Path(session.plan["copy"]),
             wall_seconds=session.plan["hold_seconds"]-20, queued=True, grace_seconds=20, cancellation="adapter")
@@ -695,7 +708,8 @@ class SessionService:
         artifacts.append(artifact.id)
         for filename, mime, clock in ((session.plan["log"], "text/plain", None), ("frames.csv", "text/csv", "renderer-offscreen-submit"),
                 ("present.csv", "text/csv", "game-present"), ("perf.csv", "text/csv", "renderer-offscreen-submit"),
-                ("exit.txt", "text/plain", None), ("session-stop.json", "application/json", "host-monotonic")):
+                ("exit.txt", "text/plain", None), ("session-stop.json", "application/json", "host-monotonic"),
+                ("control-socket.json", "application/json", None)):
             path = session.root / filename
             if path.is_file() and path.stat().st_size <= 64*1024*1024:
                 art = self.deps.registry.add_artifact(path, guards=self.deps.paths, mime=mime, producer=Producer(tool="session_launch"),
@@ -704,14 +718,21 @@ class SessionService:
         if run.state not in TERMINAL:
             self.deps.registry.update_run(run.run_id, artifacts=artifacts)
 
+    def _cleanup_socket(self, session):
+        receipt = self.deps.registry.receipt(session.process_job) if session.process_job else None
+        if session.process_job is None or (receipt and receipt.process_exited):
+            session_runtime.cleanup(self.deps, session.socket, session.run_id)
+
     async def _stop(self, session, reason=None) -> StopResult:
         session.stop_reason = session.stop_reason or reason
         session.stopping = True
         job = self.deps.registry.get_job(session.process_job) if session.process_job else None
         if job is None:
+            self._cleanup_socket(session)
             return StopResult(method="cancelled_before_start", process_exited=True, forced=False, artifacts_complete=False)
         if job.state in TERMINAL:
             receipt = self.deps.registry.receipt(job.job_id)
+            self._cleanup_socket(session)
             return StopResult(method="already_exited", process_exited=bool(receipt and receipt.process_exited), forced=False,
                 artifacts_complete=(session.root / "exit.txt").is_file())
         if session.bridge is not None and not session.bridge.closed:
@@ -772,3 +793,4 @@ class SessionService:
                 await self._stop(session, self.deps.shutdown_reason)
             if session.bridge:
                 await session.bridge.close()
+            self._cleanup_socket(session)

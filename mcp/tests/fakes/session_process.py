@@ -25,7 +25,8 @@ def wrapper(args):
     assert args[0] == "--inner"
     root = Path(args[1])
     fixture = Path(os.environ["SESSION_FIXTURE"])
-    log_name = ("longshot" if (fixture / "build/longshot").is_file() else "hookshot") + "_log.txt"
+    copy = Path((root / "copy.txt").read_text())
+    log_name = ("longshot" if (copy / "longshot").is_file() else "hookshot") + "_log.txt"
     (root / "start.txt").write_text("synthetic start")
     (root / "load-before.txt").write_text("0.1 0.2 0.3")
     (root / log_name).write_text("synthetic bridge starting\n")

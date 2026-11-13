@@ -82,6 +82,8 @@ def status(deps) -> dict:
     def sessions():
         from src.effects.session_storage import catalogue
         from src.effects.names import copy_names
+        from src.effects.session_runtime import runtime_root, check_length
+        check_length(runtime_root(config) / ("0" * 12) / "c.sock")
         cat = catalogue(deps)
         require(cat.clone_root, "directory")
         for build in cat.builds.values():
