@@ -354,7 +354,9 @@ def test_launch_and_session_wait_return_jobs_without_waiting_for_lifetime(sessio
     run_id = launch.run_ids[0]
     observed(lambda: (session.root / "pids.json").exists())
     pids = json.loads((session.root / "pids.json").read_text())
-    socket = session.root / "build/runs" / run_id / "control.sock"
+    pointer = session.root / "build/runs" / run_id / "control-socket.json"
+    observed(pointer.exists)
+    socket = Path(json.loads(pointer.read_text())["socket"])
     observed(socket.exists)
     assert all(identity(pid) is not None for pid in pids.values())
 
