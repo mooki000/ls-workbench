@@ -536,7 +536,8 @@ class SessionService:
             raise deps.error("unavailable", "session_launch")
         if "cancellation" not in inspect.signature(deps.supervisor.start).parameters:
             raise deps.error("unavailable", "session_launch")
-        request = dict(build_id=build_id, save_id=save_id, profile_id=profile_id, wall_seconds=wall_seconds, capture=capture)
+        request = dict(build_id=build_id, save_id=save_id, profile_id=profile_id, wall_seconds=wall_seconds,
+            capture=capture, precompile=profile.precompile)
         plan_hash = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         hold_seconds = wall_seconds + 30  # wrapper TERM/KILL allowance plus cleanup, within 480 seconds
         snapshot = deps.policy.authorize(lane=profile.lane, resource_class=profile.resource_class,
@@ -563,7 +564,7 @@ class SessionService:
             plan = dict(run_dir=str(root), socket=str(socket), copy=str(copy), wrapper=str(wrapper), gate=str(gate),
                 python=sys.executable, state_root=str(deps.config.state_root), lane=profile.lane,
                 resource_class=profile.resource_class, wall_seconds=wall_seconds, hold_seconds=hold_seconds, plan_hash=plan_hash,
-                project=names.project, log=names.log)
+                project=names.project, log=names.log, precompile=profile.precompile)
             session = Session(run.run_id, existing.job_id, root, socket, profile, plan)
             self.sessions[run.run_id] = session
             deps.registry.update_job(existing.job_id, run_ids=[run.run_id])
@@ -598,6 +599,11 @@ class SessionService:
             "env-file.txt": "# owned empty environment file\n", "extra-env.txt": "\n".join([
                 "HOS_CONTROL="+str(session.socket), "HOS_HEADLESS=1", "HOS_OUTPUT_RES=1920x1080",
                 "HOS_INPUT_EXCLUSIVE=1", "RX_VK_SHOT_EVERY="+str(every), "RX_VK_SHOT_MENU=1"])+"\n"}
+        if not session.profile.precompile:
+            values["extra-env.txt"] += "RX_VK_PRECOMPILE=0\n"
+        deps.registry.append_event(session.launch_job, "startup_policy",
+            {"project": session.plan["project"], "precompile": session.profile.precompile,
+             "override": None if session.profile.precompile else "RX_VK_PRECOMPILE=0"})
         if session.profile.lane == "intel":
             values["intel"] = ""
         for filename, value in values.items():

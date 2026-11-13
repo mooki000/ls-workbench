@@ -173,6 +173,10 @@ log from the owned copy; build planning selects profile/environment/output names
 Both Longshot and historical Hookshot builds are supported; missing or mixed project identities refuse.
 Queue observation also verifies inherited flock ownership through the recorded holder's bounded `/proc/<pid>/fdinfo`
 records. The exited `flock` helper's PID in `/proc/locks` is not mistaken for a stale live gate holder.
+Session profiles may set the strict Boolean `precompile:false` for a bounded cold-start investigation.
+The default `true` leaves the build's startup behavior unchanged; only explicit `false` adds `RX_VK_PRECOMPILE=0`.
+The selected value is pinned in the request/plan and `startup_policy` event. This is operator configuration,
+not an arbitrary environment tool argument or evidence that a cold run is suitable for timing.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.

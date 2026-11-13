@@ -204,6 +204,7 @@ class SessionProfile(Record):
     resource_class: Literal["ordinary", "whole"] = "ordinary"
     disposable: Literal[True] = True
     debug: bool = False
+    precompile: bool = Field(default=True, strict=True)
     max_wall_seconds: int = Field(default=450, ge=1, le=450)
 
     @model_validator(mode="after")

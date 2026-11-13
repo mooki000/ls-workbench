@@ -349,6 +349,29 @@ async def test_launch_stop_and_owned_child_receipt(sandbox, quit_mode, forced, p
     assert any(e.kind == "bridge_ready" for e in deps.registry.events(launch.job_id).events)
 
 
+@pytest.mark.parametrize("configured", [None, True, False])
+async def test_operator_precompile_profile_is_explicit(sandbox, configured):
+    root, deps, service, client = sandbox
+    cat = json.loads((root / "catalogue.json").read_text())
+    if configured is not None:
+        cat["profiles"]["ordinary"]["precompile"] = configured
+    (root / "catalogue.json").write_text(json.dumps(cat))
+    assert SessionProfile().precompile is True
+    with pytest.raises(ValueError):
+        SessionProfile(precompile="false")
+    launch = await service.launch_impl("synthetic", None, "ordinary", 30, "standard", "startup-option")
+    run_id = deps.registry.get_job(launch.job_id).run_ids[0]
+    await observed(lambda: deps.registry.get_run(run_id).state == State.RUNNING)
+    session = service.sessions[run_id]
+    settings = (session.root / "extra-env.txt").read_text()
+    assert ("RX_VK_PRECOMPILE=0\n" in settings) is (configured is False)
+    assert "RX_VK_PRECOMPILE=1" not in settings
+    assert session.plan["precompile"] is (configured is not False)
+    stop = await service.stop_impl(run_id, "profile fixture", "profile-stop")
+    await finished(deps, stop)
+    await finished(deps, launch)
+
+
 async def test_one_waiter_admission_recheck_and_cancellation(sandbox):
     root, deps, service, client = sandbox
     (root/"gate-delay").write_text("0.5")
