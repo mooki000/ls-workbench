@@ -103,8 +103,9 @@ a terminal state: use `finish(job_id, state, receipt, error=None)` to store term
 
 `add_artifact(path, guards=deps.paths, mime=, producer=Producer(...), run_id=None, clock=None,
 privacy="private", complete=False)` checks roots, hashes a stable file and retains its private path internally. Large
-hashing belongs in a bounded background job. A URI is metadata, not permission to serve raw bytes: this core exposes
-no artifact-content resource. Never add a generic file resource, and never publish saves, dumps or guest memory.
+hashing belongs in a bounded background job. The artifact text resource serves only complete registered
+JSON/plain/CSV text up to 8 MiB, with hashes checked, paths/secrets redacted and opaque revision-bound cursors.
+It accepts no caller-selected path and never serves binary files, saves, dumps or guest memory.
 
 ### Events, process identity and receipts
 

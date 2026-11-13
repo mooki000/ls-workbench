@@ -12,6 +12,8 @@ Name = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")]
 Sha = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 TestName = Annotated[str, Field(pattern=r"^(tests|nx2)/test_[A-Za-z0-9_.-]+\.py$", max_length=240)]
+CHECK_NAME = r"(?:(?:tests|nx2)/test_[A-Za-z0-9_.-]+\.py|gpu/vk/tests/[A-Za-z0-9_.-]+\.cpp|\(byte-compile every tracked \.py\))"
+CheckName = Annotated[str, Field(pattern="^" + CHECK_NAME + "$", max_length=240)]
 
 
 class Checkout(Record):
@@ -74,7 +76,7 @@ class PlanResult(Record):
 
 
 class TestResult(Record):
-    name: TestName
+    name: CheckName
     status: Literal["passed", "failed", "skipped"]
     seconds: float | None = None
     also_fails_on_base: bool | None = None
@@ -87,7 +89,7 @@ class SourceResult(Record):
     failed: int | None
     skipped: int | None
     tests: list[TestResult] = Field(max_length=100)
-    failing_names: list[TestName] = Field(max_length=100)
+    failing_names: list[CheckName] = Field(max_length=10000)
     truncated: bool
     exit: int
     coverage: Literal["suite", "named"]

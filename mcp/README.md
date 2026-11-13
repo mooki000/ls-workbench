@@ -187,6 +187,21 @@ large initialized snapshots therefore remain readable without removing the input
 the installed helper actually uses; a different registered worktree refuses before executing the helper.
 Register the resolved Windows helper path (not a symlink crossing registered roots), and register `ci_reader`
 as the trusted `hs_pr_ci.py` parser module, not the `hs-pr-ci.sh` launcher.
+Whole-suite results include the runner's C++ fixtures and byte-compile check. The declared totals and every failing
+name remain in `result.json`; the first 100 row summaries are only a presentation cap, not table completeness.
+Follow `job_read` event cursors for all rows, or read an artifact URI through
+`workbench://artifacts/<id>?limit=8192` and continue with `cursor=<next_cursor>`.
+That resource serves complete registered JSON/plain/CSV text (at most 8 MiB), checks its digest, redacts local paths
+and secrets, and pages normalized text by at most 32768 characters. Binary/save contents and live files refuse.
+Source snapshots are intentionally retained; no automated pruning or MCP deletion operation exists. They consume
+disk space until an operator removes selected completed source-check snapshots after preserving the evidence.
+Never prune an active/queued job or a build donor's source/work tree; its hashes and receipts authorize later reuse.
+Configured capabilities require registered readable paths, executable tools where appropriate, valid catalogue
+schemas and local prerequisites; Windows syntax checks verify `include/windows.h` before joining the test gate.
+This remains a local configuration check, not a connectivity probe or proof that a game/backend runs.
+Registry contention during streaming progress does not terminate the check child: raw logs remain authoritative,
+optional progress can be omitted with a private diagnostic, and durable artifact/result writes retry only rolled-back
+busy transactions under a bounded deadline. Original worker exceptions are retained in private stderr before reporting.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
@@ -297,6 +312,7 @@ uv run python -m src.generate_readme --check
 
 | URI or template | Profiles | Purpose |
 |---|---|---|
+| `workbench://artifacts/{id}{?cursor,limit}` | observe, operate | Read complete registered JSON/plain/CSV text (8 MiB maximum), redacted and revision-pinned. limit is 1–32768 characters; follow next_cursor. Never binary/save contents. |
 | `workbench://evidence/analyzers` | operate | Approved analyzer IDs, measurements, units, clocks and required retained inputs; no probe. |
 | `workbench://jobs/{id}/events{?cursor,limit}` | observe, operate | Append-only events, at most 100 per page; continue with next_cursor. |
 | `workbench://nightly/{cycle}{?start,limit,revision}` | observe, operate | Retained nightly cycle status and bounded private report; no new work or database initialization. |

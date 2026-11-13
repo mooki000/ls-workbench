@@ -80,6 +80,32 @@ async def test_catalogue(config, profile, extra):
             "recover_or_cancel", "prepare_evidence_handoff"}
 
 
+async def test_completed_text_artifact_resource_pages_and_redacts(config):
+    deps = Deps(config)
+    async with Client(build_server(deps=deps)) as client:
+        path = config.state_root / "result.json"
+        path.write_text(json.dumps({"value": "é" * 70000, "token": "never-return", "path": "/private/source/file"}))
+        art = deps.registry.add_artifact(path, guards=deps.paths, mime="application/json",
+            producer=Producer(tool="checks_source"), complete=True)
+        uri = "workbench://artifacts/" + art.id
+        cursor = None
+        parts = []
+        while True:
+            page = json.loads((await client.read_resource(uri + "?limit=16384" + ("&cursor=" + cursor if cursor else "")))[0].text)
+            assert len(page["text"]) <= 16384
+            parts.append(page["text"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                assert page["complete"]
+                break
+        content = "".join(parts)
+        assert "never-return" not in content and "/private/source" not in content
+        assert json.loads(content)["value"] == "é" * 70000
+        path.write_text("changed after registration")
+        with pytest.raises(Exception):
+            await client.read_resource(uri)
+
+
 def test_unknown_profile_and_extras(config):
     with pytest.raises(ValueError, match="Unknown extra tools: imaginary"):
         build_server(replace(config, extra_tools=("imaginary",)))

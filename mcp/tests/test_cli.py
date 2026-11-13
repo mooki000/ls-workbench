@@ -193,7 +193,12 @@ def test_profile_override_preserves_other_configuration(shell):
     names = {row["name"] for row in rows}
     assert "job_cancel" in names and "session_launch" not in names
     status = success(shell("--profile", "observe", "call", "workbench_status", "--args", "{}"))
-    assert status["capabilities"]["harness"]["status"] == "configured"
+    assert status["capabilities"]["harness"]["status"] == "unavailable"
+    (harness / "hs-run.sh").write_text("#!/bin/sh\nexit 0\n")
+    (harness / "hs-run.sh").chmod(0o700)
+    (harness / "hs_names.py").write_text("# fixture resolver presence\n")
+    configured = success(shell("--profile", "observe", "call", "workbench_status", "--args", "{}"))
+    assert configured["capabilities"]["harness"]["status"] == "configured"
     failure(shell("call", "session_launch", "--profile", "observe", "--args", "{}"), "not_found")
     assert not paths(shell.config).socket.exists()
 

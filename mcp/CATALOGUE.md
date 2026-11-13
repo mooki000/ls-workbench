@@ -52,6 +52,7 @@ Generated from the real registered server; do not edit by hand.
 
 | URI or template | Profiles | Purpose |
 |---|---|---|
+| `workbench://artifacts/{id}{?cursor,limit}` | observe, operate | Read complete registered JSON/plain/CSV text (8 MiB maximum), redacted and revision-pinned. limit is 1–32768 characters; follow next_cursor. Never binary/save contents. |
 | `workbench://evidence/analyzers` | operate | Approved analyzer IDs, measurements, units, clocks and required retained inputs; no probe. |
 | `workbench://jobs/{id}/events{?cursor,limit}` | observe, operate | Append-only events, at most 100 per page; continue with next_cursor. |
 | `workbench://nightly/{cycle}{?start,limit,revision}` | observe, operate | Retained nightly cycle status and bounded private report; no new work or database initialization. |

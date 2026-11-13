@@ -12,7 +12,7 @@ from src.models import Build, Producer, Receipt, State, TERMINAL, utc_now
 from src.models.checks import Plan, PlanResult
 from src.policy import child_environment
 from src.effects.checks_common import (catalogue, capture, checkout, digest, dry_run, file_hash,
-    git, json_read, prerequisite, safe_relative)
+    git, json_read, prerequisite, safe_relative, windows_sysroot)
 from src.effects.names import checkout_names, resolver
 
 
@@ -265,7 +265,7 @@ async def submit_impl(deps, operation, request, idempotency_key):
         prerequisites += [cat.idle, cat.nocore]
         if operation == "checks_windows_syntax":
             prerequisites.append(cat.windows_check)
-            prerequisite(deps, cat.windows_sysroot, directory=True)
+            windows_sysroot(deps, cat.windows_sysroot)
     elif operation == "checks_pr":
         prerequisites += [cat.pr_check]
         if cat.pr_check_checkout is None or deps.paths.read(cat.pr_check_checkout) != root:
@@ -289,6 +289,9 @@ async def submit_impl(deps, operation, request, idempotency_key):
         request_path = area(deps) / (job.job_id + ".json")
         if request_path.exists() or job.state in TERMINAL or deps.registry.process(job.job_id)[0] is not None:
             return deps.registry.get_job(job.job_id)
+        if operation in ("checks_source", "checks_windows_syntax"):
+            deps.registry.update_job(job.job_id, phase="waiting_for_test_gate",
+                progress_text="Waiting for the test gate; queue position and admission time are unknown.")
         if operation == "build_start" and request["plan"]["mode"] == "full":
             active = area(deps) / "full-build.json"
             if active.exists():
