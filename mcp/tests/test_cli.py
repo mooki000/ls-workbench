@@ -118,6 +118,7 @@ def session(shell):
     root = shell.root
     for name in ("state", "build", "harness", "clones"):
         (root / name).mkdir()
+    (root / "harness/hs_names.py").write_bytes((Path(__file__).parents[2] / "harness/hs_names.py").read_bytes())
     (root / "build/romfs").mkdir()
     (root / "build/image.bin").write_bytes(b"synthetic image, not game data")
     executable = root / "build/hookshot"

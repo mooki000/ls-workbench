@@ -23,6 +23,7 @@ from src.models.session import (GameSample, InputResult, InputStep, Option, Opti
 from src.effects.session_bridge import Bridge
 import sys
 from src.effects.session_storage import catalogue, clone_tree, lane_guard, new_directory, plain_files, read_json, write_new
+from src.effects.names import copy_names, LOG_NAMES
 from src.registry import new_id
 
 # Canonical setting keys only. Names/aliases never get a chance to evade this.
@@ -526,7 +527,8 @@ class SessionService:
             raise deps.error("refused_by_policy", "session_launch")
         # The wrapper writes caches and options alongside the executable.
         deps.paths.output(copy / ("permission-"+new_id("probe")))
-        if not os.access(copy / "hookshot", os.X_OK) or not (copy / "image.bin").is_file() or not (copy / "romfs").is_dir():
+        names = copy_names(deps, copy, "session_launch")
+        if not os.access(copy / names.executable, os.X_OK) or not (copy / "image.bin").is_file() or not (copy / "romfs").is_dir():
             raise deps.error("unavailable", "session_launch")
         wrapper = deps.config.harness_dir / "hs-run.sh" if deps.config.harness_dir else None
         gate = deps.config.gpu_gate if profile.lane == "gpu" else deps.config.intel_gate
@@ -560,7 +562,8 @@ class SessionService:
                 raise deps.error("unavailable", "session_launch")
             plan = dict(run_dir=str(root), socket=str(socket), copy=str(copy), wrapper=str(wrapper), gate=str(gate),
                 python=sys.executable, state_root=str(deps.config.state_root), lane=profile.lane,
-                resource_class=profile.resource_class, wall_seconds=wall_seconds, hold_seconds=hold_seconds, plan_hash=plan_hash)
+                resource_class=profile.resource_class, wall_seconds=wall_seconds, hold_seconds=hold_seconds, plan_hash=plan_hash,
+                project=names.project, log=names.log)
             session = Session(run.run_id, existing.job_id, root, socket, profile, plan)
             self.sessions[run.run_id] = session
             deps.registry.update_job(existing.job_id, run_ids=[run.run_id])
@@ -609,8 +612,8 @@ class SessionService:
             wall_seconds=session.plan["hold_seconds"]-20, queued=True, grace_seconds=20, cancellation="adapter")
         admitted, ready, live_log = False, False, False
         while deps.registry.get_job(process.job_id).state not in TERMINAL:
-            if not live_log and (root / "hookshot_log.txt").is_file():
-                art = deps.registry.add_live_artifact(root / "hookshot_log.txt", guards=deps.paths,
+            if not live_log and (root / session.plan["log"]).is_file():
+                art = deps.registry.add_live_artifact(root / session.plan["log"], guards=deps.paths,
                     mime="text/plain", producer=Producer(tool="session_launch"), run_id=session.run_id)
                 current = deps.registry.get_run(session.run_id)
                 deps.registry.update_run(session.run_id, artifacts=[*current.artifacts, art.id])
@@ -667,7 +670,7 @@ class SessionService:
         # the registry, but keep only one current named log in the Run manifest.
         artifacts = [ident for ident in run.artifacts if not (
             (art := self.deps.registry.get_artifact(ident)).producer.tool == "session_launch" and
-            not art.complete and self.deps.registry.artifact_path(ident, self.deps.paths).name == "hookshot_log.txt")]
+            not art.complete and self.deps.registry.artifact_path(ident, self.deps.paths).name in LOG_NAMES)]
         def load_values(filename):
             try:
                 raw = (session.root / filename).read_bytes()
@@ -684,7 +687,7 @@ class SessionService:
         artifact = self.deps.registry.add_artifact(context_path, guards=self.deps.paths, mime="application/json",
             producer=Producer(tool="session_launch"), run_id=session.run_id, complete=True)
         artifacts.append(artifact.id)
-        for filename, mime, clock in (("hookshot_log.txt", "text/plain", None), ("frames.csv", "text/csv", "renderer-offscreen-submit"),
+        for filename, mime, clock in ((session.plan["log"], "text/plain", None), ("frames.csv", "text/csv", "renderer-offscreen-submit"),
                 ("present.csv", "text/csv", "game-present"), ("perf.csv", "text/csv", "renderer-offscreen-submit"),
                 ("exit.txt", "text/plain", None), ("session-stop.json", "application/json", "host-monotonic")):
             path = session.root / filename

@@ -60,6 +60,7 @@ async def sandbox(monkeypatch):
         root = Path(folder)
         for name in ("state", "build", "harness", "clones", "seed", "protected"):
             (root/name).mkdir()
+        (root / "harness/hs_names.py").write_bytes((Path(__file__).parents[2] / "harness/hs_names.py").read_bytes())
         (root / "build/romfs").mkdir()
         (root / "build/image.bin").write_bytes(b"synthetic")
         (root / "build/hookshot").write_text("#!/bin/sh\nexit 99\n")
@@ -318,8 +319,10 @@ async def test_clone_manifest_dedup_and_source_unchanged(sandbox):
 
 
 @pytest.mark.parametrize("quit_mode,forced", [("reply", False), ("silent", True)])
-async def test_launch_stop_and_owned_child_receipt(sandbox, quit_mode, forced):
+@pytest.mark.parametrize("project", ["hookshot", "longshot"])
+async def test_launch_stop_and_owned_child_receipt(sandbox, quit_mode, forced, project):
     root, deps, service, client = sandbox
+    (root / "build/hookshot").rename(root / "build" / project)
     (root/"quit-mode").write_text(quit_mode)
     args = {"build_id": "synthetic", "profile_id": "ordinary", "wall_seconds": 30, "save_id": "seed", "idempotency_key": "launch"}
     began = time.monotonic()
@@ -338,7 +341,10 @@ async def test_launch_stop_and_owned_child_receipt(sandbox, quit_mode, forced):
     await finished(deps, launch)
     assert all(identity(pid) is None for pid in pids.values())
     run = deps.registry.get_run(run_id)
-    assert any(deps.registry.artifact_path(a, deps.paths).name == "hookshot_log.txt" for a in run.artifacts)
+    assert any(deps.registry.artifact_path(a, deps.paths).name == project + "_log.txt" for a in run.artifacts)
+    from src.effects.evidence_logs import run_logs_impl, run_faults_impl
+    assert run_logs_impl(deps, run_id).lines
+    assert (await run_faults_impl(deps, run_id))["fatal"] == 0
     assert run.exit == 0 and run.timing_valid is False
     assert any(e.kind == "bridge_ready" for e in deps.registry.events(launch.job_id).events)
 

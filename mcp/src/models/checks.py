@@ -62,7 +62,7 @@ class Plan(Record):
     changed_assets: list[str] = Field(max_length=100)
     changed_assets_truncated: bool = False
     required_gates: list[str]
-    expected_outputs: list[str] = ["hookshot", "hookshot_vk.so", "completion_receipt"]
+    expected_outputs: list[str]
     estimated_time: None = None
     dry_run: dict[str, int | str | None]
     plan_hash: Digest

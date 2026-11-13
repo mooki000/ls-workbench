@@ -168,6 +168,9 @@ They are operator registrations, not account files. Register their directories a
 READ_ROOTS; register STATE_ROOT explicitly in WRITE_ROOTS before using job/artifact producers. Missing components
 refuse without executing a substitute. Invalid optional knowledge configuration is unavailable, not a server crash.
 The stock team/request CLIs remain unavailable until a reviewed GET-only/no-save CLI contract exists.
+The configured harness must include its shared `hs_names.py` resolver. Session launch selects the executable and
+log from the owned copy; build planning selects profile/environment/output names from the pinned checkout.
+Both Longshot and historical Hookshot builds are supported; missing or mixed project identities refuse.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.

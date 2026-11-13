@@ -39,6 +39,7 @@ def bench(tmp_path, monkeypatch):
     root.mkdir()
     tools = tmp_path / "tools"
     tools.mkdir()
+    (tools / "hs_names.py").write_bytes((Path(__file__).parents[2] / "harness/hs_names.py").read_bytes())
     control = tmp_path / "control.json"
     control.write_text(json.dumps({"pids": str(tmp_path / "pids.json")}))
     fixture = (Path(__file__).parent / "fakes/checks_backend.py").read_text().replace("@CONTROL@", str(control))
@@ -80,7 +81,7 @@ def bench(tmp_path, monkeypatch):
     catalogue.write_text(json.dumps(data))
     config = ChecksConfig(state_root=tmp_path / "state", read_roots=(tmp_path, Path(sys.executable).resolve().parent, Path("/usr/bin")),
         write_roots=(tmp_path,), protected_roots=(tmp_path / "protected",), profile="operate", checks_catalogue=catalogue,
-        build_gate=tools / "build-gate", dependency_python=Path(sys.executable).resolve())
+        build_gate=tools / "build-gate", dependency_python=Path(sys.executable).resolve(), harness_dir=tools)
     config.state_root.mkdir()
     rule = {"lanes": ["build", "idle"], "classes": ["ordinary"], "max_hold_seconds": 480}
     (config.state_root / "policy.json").write_text(json.dumps({"day": rule, "night": rule}))
@@ -132,6 +133,32 @@ async def approved_plan(client, bench, **kwargs):
     bench.data.setdefault("approved_plans", []).append(result["plan"]["plan_hash"])
     save_catalogue(bench)
     return result
+
+
+async def test_longshot_build_names_and_environment(bench):
+    from src.effects.checks import build_env
+    for name in ("nx2/build.py", "nx2/make_game.py"):
+        path = bench.root / name
+        path.write_text(path.read_text().replace("hookshot", "longshot").replace("HOOKSHOT_", "LONGSHOT_"))
+    git(bench.root, "add", ".")
+    git(bench.root, "commit", "-m", "renamed project fixture")
+    bench.head = git(bench.root, "rev-parse", "HEAD")
+    bench.data["checkouts"]["fixture"]["reviewed_commits"].append(bench.head)
+    save_catalogue(bench)
+    async with Client(build_server(deps=bench.deps)) as client:
+        plan = await approved_plan(client, bench)
+        assert plan["plan"]["expected_outputs"] == ["longshot", "longshot_vk.so", "completion_receipt"]
+        job = await call(client, "build_start", plan_id=plan["artifact"]["id"], idempotency_key="renamed")
+        done = await finished(client, job["job_id"])
+        assert done["job"]["state"] == "completed", done
+        run = bench.deps.registry.get_run(done["job"]["run_ids"][0])
+        assert set(run.build.binary_hashes) == {"longshot", "longshot_vk.so"}
+        from src.models.checks import Profile
+        (bench.tmp / "environment").mkdir()
+        env = build_env(bench.deps, Profile.model_validate(bench.data["profiles"]["default"]), bench.tmp / "environment", bench.root)
+        assert env["RX_PGO"].endswith("/longshot_pieces.prof")
+        assert env["LONGSHOT_LIFT_JOBS"] == "8" and env["LONGSHOT_KEEP_BUILD_FILES"] == "1"
+        assert not any(key.startswith("HOOKSHOT_") for key in env)
 
 
 @pytest.mark.parametrize("profile,extras", [("observe", ()), ("operate", ()), ("observe", ("checks_source",))])

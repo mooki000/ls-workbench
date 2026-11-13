@@ -14,6 +14,7 @@ from src.effects.checks import (build_env, catalogue, checkout, copy_tree, donor
     seed_profile, snapshot, tree_identity, write_new)
 from src.effects.checks_common import (MAX_BYTES, TEST, dry_run, file_hash, git, json_read,
     parse_pr, parse_source, parse_windows, prerequisite, safe_relative)
+from src.effects.names import checkout_names
 
 
 def dependencies(payload):
@@ -196,6 +197,10 @@ class Worker:
         if identity != plan["profile_identity"]:
             raise self.deps.error("refused_by_policy", "build_start")
         source = self.source_tree(self.request["commit"], "source")
+        names = checkout_names(self.deps, source, "build_start")
+        outputs = (names.executable, names.renderer)
+        if plan["expected_outputs"] != [*outputs, "completion_receipt"]:
+            raise self.deps.error("refused_by_policy", "build_output_identity")
         output = self.folder / "output"
         self.deps.paths.output(output)
         donor = donor_record(self.deps, plan["donor_id"]) if plan["mode"] == "reuse" else None
@@ -220,7 +225,7 @@ class Worker:
         if len(stamps) != 1:
             raise self.deps.error("backend_failed", "build_source_stamp")
         if donor:
-            linked = [name for name in ("hookshot", "hookshot_vk.so")
+            linked = [name for name in outputs
                       if re.search(r"^linked .*/" + re.escape(name) + r":", text, re.M)]
             if len(linked) != 2:
                 raise self.deps.error("backend_failed", "build_receipt")
@@ -234,7 +239,7 @@ class Worker:
                         target.write(chunk)
         elif "@@done " + str(output) not in text.splitlines():
             raise self.deps.error("backend_failed", "build_receipt")
-        hashes = {name: file_hash(prerequisite(self.deps, output / name)) for name in ("hookshot", "hookshot_vk.so")}
+        hashes = {name: file_hash(prerequisite(self.deps, output / name)) for name in outputs}
         # A build donor is never a played copy; no saves or run folders may enter its manifest.
         if any((output / name).exists() for name in ("runs", "user", "user-template")):
             raise self.deps.error("refused_by_policy", "build_output")
