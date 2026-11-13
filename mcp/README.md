@@ -180,6 +180,9 @@ not an arbitrary environment tool argument or evidence that a cold run is suitab
 Reviewed GET-only provider workers retain both set and unset HOME/XDG/GH configuration choices.
 An unset `XDG_CONFIG_HOME` must not become the worker's empty isolated config directory, hiding an existing login.
 Credential-token variables remain excluded; ordinary test/build workers keep their isolated environment.
+Prompt selectors are checked against the repository's actual skill sections, not only self-generated fake headings.
+Retained PR-loop state has a separate 16 MiB bound (ordinary knowledge documents remain bounded to 2 MiB);
+large initialized snapshots therefore remain readable without removing the input-size limit.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
