@@ -560,5 +560,10 @@ protection paths and coordination locks still name objects on this PC. No live m
 ["harness/test_hs_run.py", "hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["harness/test_hs_run.py", "$R/hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["nightly/test_compare_signature_paths.py", "longshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["skills/ls-pr-tagging/SKILL.md", "/tmp/longshot-forge-auth.lock", 1, "Existing shared admission lock on this host; changing it before host cutover would target the wrong object."]
+["skills/ls-pr-tagging/scripts/pr_tags.py", "/tmp/longshot-forge-auth.lock", 2, "Existing shared admission lock on this host; changing it before host cutover would target the wrong object."]
+["skills/ls-pr-tagging/scripts/pr_tags.py", "/home/mooki/Code/hookshot-wt/longshot-main", 1, "Existing workstation clone, worktree, harness, copy or protected player/configuration path; retained until an explicitly scoped host migration."]
+["skills/ls-pr-tagging/scripts/pr_tags.py", "/home/mooki/Code/hookshot-wt/reports/PrTags", 1, "Existing workstation clone, worktree, harness, copy or protected player/configuration path; retained until an explicitly scoped host migration."]
+["skills/ls-pr-tagging/scripts/pr_tags.py", "MagicBeanDev/Longshot", 1, "Existing upstream/fork repository, public issue/PR URL or service API path; renaming the workbench does not rename that external repository."]
 ```
 <!-- kept-literals:end -->

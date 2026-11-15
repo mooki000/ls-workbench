@@ -29,6 +29,7 @@ SKILL_MAP = {
     'ls-function-map': 'ls-function-map',
     'ls-skill-upkeep': 'ls-skill-upkeep',
     'ls-field-data': 'ls-field-data',
+    'ls-pr-tagging': 'ls-pr-tagging',
 }
 LIVE_LAYOUT = 'legacy'  # cutover.py changes only the installed source layout
 HARNESS_MAP = {name: Path(name).name for name in (
