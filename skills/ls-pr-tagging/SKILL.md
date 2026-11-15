@@ -17,7 +17,7 @@ as the user.
 | Scope | Rule (in `scripts/pr_tags.py`) |
 |---|---|
 | `kind/` (one) | The title's Conventional Commit type: feat → feature, fix and revert → bug, perf → performance, docs → docs, chore/build/ci/test/refactor/style → chore. Docs-only file lists → docs. No type: flagged. |
-| `priority/` (one) | bug and performance: high; everything else: low. Never critical by script: a bug whose title or reason says crash, data loss, corrupt or fails to start is flagged for a person to decide. |
+| `priority/` (one) | bug and performance: high; everything else: low. Never critical by script: a bug whose title says crash, data loss, corrupt or fails to start is flagged for a person to decide (titles only: reasons often say what a fix is not). |
 | `area/` (up to 3) | Changed source files (tests and docs only when nothing else): renderer, upscaling, menu, input, audio, saves, install; plus title words (accessibility and the same areas). Tooling, CI and runtime changes often have none: flagged, left without. |
 | `platform/` | macOS words in the title, or only Mac files → macos only. Steam Deck in the title → steam-deck and linux. Windows-only or Linux-only files or title → that one. Everything else → windows and linux (the label's own rule: a change for every system carries both), plus macos when the reason mentions the Mac (shared code found or wanted there; flagged). |
 | `gpu/` | Vendor words in the title only (reasons name the tester's card too often). |
@@ -29,16 +29,18 @@ left alone; the script reports what it would have added there under `not_added_s
 
 ## Steps
 
-1. Plan (reads only; holds the forge sign-in lock while it reads):
+1. Plan (reads the forge only, under the forge sign-in lock; writes the plan files):
    ```sh
    export HOME=/home/mooki
-   python3 /home/mooki/.agents/skills/ls-pr-tagging/scripts/pr_tags.py plan [--numbers 355 68]
+   python3 /home/mooki/.agents/skills/ls-pr-tagging/scripts/pr_tags.py plan [--numbers 355 68] [--out <dir>]
    ```
-   It writes `reports/PrTags/<date-time>/plan.json` and `plan.md` and prints the counts. About 350 pull requests take
-   a few minutes (one files request per pull request).
-2. Review `plan.md`. Read every row with notes (no type, critical, regression, macOS, no area) and a sample of the
+   It writes `<dir>/plan.json` and `plan.md` (default `reports/PrTags/<date-time>/`) and prints the counts. About
+   350 pull requests take two minutes (one files request per pull request).
+2. Review `plan.md`. Read every row with notes (no type, crash words, regression, macOS, no area) and a sample of the
    rest. Wrong proposals: edit `plan.json`'s `add` list for that number (labels must exist in `labels`), or drop the
-   number with `--numbers` on apply.
+   number with `--numbers` on apply. An empty `add` means every proposed label is there already, or its scope
+   carries another label (see `not_added_scope_taken`); the issue's label events (`GET .../issues/<n>/timeline`)
+   say who set them.
 3. Dry run, then apply:
    ```sh
    python3 /home/mooki/.agents/skills/ls-pr-tagging/scripts/pr_tags.py apply --plan <dir>/plan.json

@@ -136,7 +136,7 @@ def propose(pr, files):
         if re.search(rx, tl):
             prop.append(lab)
 
-    if kind == "kind/bug" and re.search(CRITICAL, words):
+    if kind == "kind/bug" and re.search(CRITICAL, tl):
         prop.append("priority/high")
         notes.append("crash or data-loss words: critical is a person's call")
     elif kind in ("kind/bug", "kind/performance"):
