@@ -58,6 +58,11 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
   log to its function, find who references the string's address, or start from a neighbour the map already has.
 - Thread names are not unique: a pool's workers share one name (six `BaseProcCreateAndDeleteThread`, one
   `PreActorModelCompose` per core). A name in a log line or a sampler does not identify which worker it was.
+- Another project's addresses (a co-op mod's, say) are offsets into the game's main module: our address is theirs plus
+  `0x80020000` (their `0x57af30` is `f_8059af30`; data converts the same way). Every one checked by reading the
+  function was the one their comment names, but treat their name as a lead. An offset can land inside a function
+  (their `0x49dcb0` is a place inside `f_804bd8c0`, not a function: find the function that contains it and put the
+  place in its row as `at 0x...`), and a name can belong to the next class's function; read it before you trust it.
 - What you work out this way is exactly what section 4 is for: hand the rows back.
 
 ## 2. Weigh the row before you build on it

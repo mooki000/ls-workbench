@@ -66,6 +66,14 @@ own words, and nothing more from the game.
 
 - **Addresses.** A function is `f_` and its address in eight hex digits (`f_833ec800`); data is `0x` and its address
   (`0x84e98e38`); a place inside a function is its address (`at 0x834208a4`).
+- **Other projects' addresses.** Another project's code (a co-op mod, say) names a game function by its offset into the
+  game's main module; our address is that offset plus `0x80020000`, so their `0x57af30` is `f_8059af30` and their
+  `0x4e94840` is `0x84eb4840`. It works the other way too (our address minus `0x80020000`), for data as well as functions.
+  Every address checked by reading the function was the one the other code's comment names, apart from the cases below,
+  but their names and offsets are leads, not proof: look the address up here and read the row. Two ways it goes wrong: an
+  offset can name a place inside a function (their `0x49dcb0` is `0x804bdcb0`, inside `f_804bd8c0`; there is no function
+  there), and that belongs in the owning function's row as `at 0x804bdcb0`, never as a row of its own; and their name can
+  belong to the neighbouring function (a "node run" that was the body of the next node class).
 - **Arguments.** A call's arguments are in `x0`, `x1`, … and its float arguments in `s0`, `s1`, … (AArch64); the result is
   in `x0` (`s0` for a float). In a name, `(card, entry)` gives the arguments in that order.
 - **Fields.** `obj+N` is the field at byte offset N of the object `obj` points to, in decimal as the lifted C writes it; a
