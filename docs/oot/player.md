@@ -146,7 +146,7 @@ The equipment user (`Actor_GetEquipmentUser`, `f_80817690`) keeps one record poi
 
 ### Item actors
 
-Both ocarina actors' ActorParam name the `Common` event performer, where every other item actor read names `PouchContent`; the Hookshot and the Longshot share one model, `Item_Hookshot_Body`. **read**
+Both ocarina actors' ActorParam name the `Common` event performer, where every other item actor read names `PouchContent`; the game's two grappling items (the first and the upgraded one) share one model. **read**
 
 - `f_82c415e0` (the movement update) also runs the AI component's unit at index `+0x18` ([ai.md](ai.md)). **read**
 
