@@ -10,7 +10,7 @@ description: >
 # The function map: look it up first, add what you learn
 
 The game ships without symbols, so the lifted code calls every function `f_<address>`. The map says what the ones
-somebody already looked at do: about 1,400 rows over 31 pages, one page per part of the game, each row with how sure it
+somebody already looked at do: about 1,650 rows over 31 pages, one page per part of the game, each row with how sure it
 is. Reading it takes seconds; working a function out again from lifted C takes an hour and may get it wrong.
 
 - Pages and conventions: `/home/mooki/Code/hookshot-workbench/docs/oot/` (`README.md` is the index).

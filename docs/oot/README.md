@@ -162,7 +162,8 @@ and against the port's code (`LS_REPO` names the clone when `--repo` is left out
 - that every function table and data table row has an address, a name and one of the three *Sure* values;
 - that no function or data address has rows on two pages, or twice on one;
 - that every game function LS's code names (`nx2/oot_*.py`, `host/`) has a row, except the ones in `undocumented.txt`
-  beside the script (named in the code, but not a function of this game). A function on that list that has a row fails too;
+  beside the script (named in the code, but not a function of this game: a comment about another one, or a place inside a
+  function, which goes in its function's row as `at 0x…`). A function on that list that has a row fails too;
 - that every `patch_…` a page names is a function in `nx2/oot_*.py`;
 - that every relative link resolves, and that this index lists every page.
 
