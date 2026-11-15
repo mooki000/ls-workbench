@@ -178,6 +178,18 @@ the lens flare and the sun's occlusion ([environment.md](environment.md)), not t
 | `f_82be5f90` | `EffectCallbackProcessSet_EventCreate` | `game::effect::EffectCallbackProcessSet::eventCreate`: the game's callback when an ELink event creates an effect (`EventCommonArg`) | read |
 | `f_809d0f50` | `EffectCallbackProcessSet_InitEmitterSet` | `initializeEmitterSet_`: the game's set-up of a new emitter set (`EmitterSetArg`) | read |
 
+### The XLink user chain (search and emit)
+
+An actor's XLink component hands out two users, one for effects (ELink) and one for sound (SLink); a node or the host asks a user to emit a call by its key. See *The XLink user chain* in Notes.
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_804609e0` | `XLinkUser_SystemReady(user, label, key)` | The readiness test before a search or an emit: true when bit 0 of `[[user + 0x48 + 8*(flags & 1)] + 0x20]` is set (the user's system side is enabled); otherwise it formats the label with the key into a local 256-byte buffer, throws it away and returns false. The labels are "searchAndEmit(%s)" (the nodes) and "emit(%s)" (`f_80460630`). It does not pick a sound system | read |
+| `f_8045db00` | `XLinkResource_FindCallByName(accessor, &outEntry, key)` | Picks a table (the u32 at `accessor+0x18` selects `[accessor+0x20 + 8*i]`, values above 1 use the first), needs its ready byte at `+0xb0` to be 1, then binary-searches the table's sorted u16 index array (`+0x20`) over its 0x30-byte entries (`+0x28`, the entry's name char pointer at `+0`) comparing with the key as a string; a hit stores the entry pointer in `*out` and returns true | read |
+| `f_80460630` | `XLinkUser_Emit(user, &entryCell, &handleOut, delegate)` | Starts the named call on the user: refuses unless user bit 0x8 is clear, the system object (the ELink or SLink holder, byte `[holder]+0x9c`) is on, `f_804609e0` passes, user bit 0x2 is clear, the entry is not null and the user's vtable slot 12 filter accepts it. Then it takes a free event from the system's pool (the serial at `pool+0x34` skips 0), initialises it (`f_80460ac0(event, serial, user)`), creates the emitter instance (`f_80460e50(event, entry)`), links the event at the head of the user's list, adds one to the user's count, sets user bit 0x4, fills `handleOut` (8 bytes: the system, the pool index, the serial) and ends with a tail call of the user's vtable slot 13 (`onEmitted(entry, event)`). `delegate`, when given, is called with the new event before it is linked. The entry is passed by reference (the address of a cell that holds it) | read |
+| `f_807ec120` | `XLinkHandle_Stop(handle*)` | Stops what an xlink2 handle plays. Handle: u8 pool kind +0 (0 effects, 1 sound), s16 index +2 (-1 = none: return), u32 generation +4. Element = pool base[kind] + stride[kind] x index (the two tables sit behind GOT cells 0x84c9e260 and 0x84c9e268). If the element's generation (u32 +0x20) matches: element u32 +8 |= 0x30 (stop request), then, if the element's user (+0x28) is set, under the system lock (system chosen by bit 0x1000 of user+0x18): calls the object at element+0x58 slot 8, then slot 7 on every node of the circular list at element+0x98 (link offset s32 at +0xac). A stale handle is left alone. | read |
+| `f_837616c0` | `XLinkUser_FindPlayingByName(user, handle*|0, name)` | Walks the user's list of running instances (sentinel at user+0x28, first link +0x30, link offset s32 at +0x3c); an instance's asset record is at element+0x30 and its first qword is the asset name `char*`; compares with `name` (strcmp `f_8575d380`). Found: returns 1 and, when `handle` is non-null, writes {u8 kind = (user flags & 0x1000 ? 0 : 1), s16 index = (element - pool base) / stride, u32 generation from element+0x20}; not found or null name: 0. Done under the system lock. 7 callers (f_82729310, f_82854180, f_829347b0, f_8296e810, f_8297af30, f_82b23920, f_8306b9b0). | read |
+
 ### Script nodes
 
 The node classes' frame is in [sequences.md](sequences.md): slot 39 is a one-shot's or query's calc, 29 to 31 an
@@ -185,7 +197,9 @@ execute node's OnEnter, OnUpdate and OnLeave.
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_80c2dbd0` | `OneShotXLinkSearchAndEmit_Calc` | Slot 39 of `0x84a63f38`: finds the XLink user (`f_804609e0`, `f_8045db00`) and emits the key for ELink, SLink or both (`f_80460630`, whose label is "emit(%s)") | read |
+| `f_80c2dbd0` | `OneShotXLinkSearchAndEmit_Calc` | Slot 39 of `0x84a63f38` (the class `OneShotXLinkSearchAndEmit`): for ELink, then SLink, each when its bool port is set: the readiness test (`f_804609e0`), the search (`f_8045db00`) and the emit (`f_80460630`, whose label is "emit(%s)"), the user taken from the actor's XLink component; ends by writing the node's done marker | read |
+| `f_8297b740` | `OneShotXLinkSearchAndEmitRepresentativeUserInstance_CalcBody` | The body of the calc of the next node class (vtable `0x84a64088`, not in any vtable itself; reached through `f_8297b700`): the ELink emit as in `f_80c2dbd0` (flag port `+0x48`, key `+0x38`, handle `+0x20`), and a sound branch that gives the key to a manager found by `f_8113ee40` and posted by `f_8337c980` (the user type from port `+0x30`). Another project's notes took this address for `f_80c2dbd0`'s | read |
+| `f_8297b700` | `OneShotXLinkSearchAndEmitRepresentativeUserInstance_Calc` | Slot 39 of `0x84a64088`: calls `f_8297b740`, then sets the done marker. | read |
 | `f_828ff050` | `OneShotGenericEmitEventEffectInputActor_Calc` | Slot 39 of `0x84a26010`: emits the event effect `ELinkKeyName` on `Actor` (`f_804dedd0`, `f_8045fd50`, under a lock) | read |
 | `f_826ca9c0` | `ExecuteEventEffectEmitAfterNode_OnLeave` | Slot 31 of `0x849b6088`: emits `ELinkKey` on `Actor` at `Pos` when the node is left, through the same calls as `f_828ff050` | read |
 | `f_828a37c0` | `ExecuteVisibleOnOffEffect_OnUpdate` | Slot 30 of `0x849fef18` (OnEnter `f_828a3770`): each update, turns the effect `Key` of `Category` on or off with the actor's visibility | guess |
@@ -229,6 +243,8 @@ execute node's OnEnter, OnUpdate and OnLeave.
 | `0x84b3fe90` | `GameEffectModule_vtable` | The game effect module: `+16` calc `f_82bee380`, `+56` `f_8087ae60` | read |
 | `0x84c3e180` | `ELinkAssetExecutor_vtable` | The ELink asset executor: slot 7 `f_80128d70` (calc), slot 18 `f_80136b60` (activate) | guess |
 | `0x8488ad08` | `Vfx2PhysicsModule_vtable` | The vfx3 emitter module with gravity and air resistance: slot 103 `f_81281850` | guess |
+| `0x84a63f38` | `OneShotXLinkSearchAndEmit_vtable` | The node class `OneShotXLinkSearchAndEmit`: name getter `f_8297b660` (slot 19), slot 28 binds the ports (`f_803f8d20`), slot 39 `f_80c2dbd0` | read |
+| `0x84a64088` | `OneShotXLinkSearchAndEmitRepresentativeUserInstance_vtable` | The next node class in memory: name getter `f_8297ba80`, slot 28 `f_8297b8f0`, slot 39 `f_8297b700` | read |
 
 ## Structures
 
@@ -321,6 +337,13 @@ GPU's pending time (`+0xdc`), and air resistance (`powf`). **read** The emission
 slots were not read: a site that turns the step into whole frames (as #1832 did) could be in them. The ELink executors
 read their curves by the set's frame. **guess**
 
+### The XLink user chain
+
+- **The chain.** A node's actor is `[[node+8]+8]+0x1f0`, its components are `[actor+0x270]`, the XLink component is `[comps+0x68]` and `[C+0x70]` is its ELink (effects) user, `[C+0x78]` its SLink (sound) user (null when absent). A user's `+0x18` holds flags (bit 0x1000: the ELink system, clear the SLink system; bit 0x8: emits refused; bit 0x2: emits refused, a second gate; bit 0x4: set by every successful emit); `+0x28` is the head of the doubly linked list of its running events (a link is `{+0 next, +8 previous}`; the link's offset inside an event is the s32 at `+0x3c`), `+0x38` the running count, `+0x48` and `+0x50` two system-side sub-objects (bit 0 of `+0x18` picks the one `f_804609e0` tests; why it is bit 0 here and bit 0x1000 elsewhere is not settled), `+0x58` the user's resource and `[resource+0x18]` the accessor handed to the search. **read**
+- **The game's own sequence** for an effect by key on an actor is `f_8045db00(accessor, &location, key)`, then `f_80460630(user, &location, &handle, 0)` on the actor's ELink user: what `f_80c2dbd0` and `f_8297b740` do. **read**
+- **A handle** is 8 bytes: u8 pool kind at `+0` (0 effects, 1 sound, chosen by bit 0x1000 of the user's `+0x18`), s16 pool index at `+2` (-1 none), u32 serial at `+4`. `f_807ec120` stops what a handle plays (the element is the pool base for the kind plus the stride times the index; the two tables sit behind the GOT cells `0x84c9e260` and `0x84c9e268`; a matching serial at element `+0x20` gets `+8 |= 0x30` and, with the element's user at `+0x28` set, a virtual call at element `+0x58` slot 8 and slot 7 on every node of the circular list at `+0x98`, under the system's lock; a stale handle is left alone). `f_837616c0` finds a playing instance of a named asset on a user: it walks the user's list (sentinel `+0x28`, first link `+0x30`, link offset `+0x3c`), compares the asset record's first qword at element `+0x30` with the name (`f_8575d380`) and on a hit returns 1 and, when `handle` is not null, writes the handle. **read**
+- **Two neighbouring classes.** `f_80c2dbd0` is slot 39 of `OneShotXLinkSearchAndEmit` (vtable `0x84a63f38`). `f_8297b740` is in no vtable: it is the body `f_8297b700`, slot 39 (at `0x84a641c0`) of the *next* class in memory, `OneShotXLinkSearchAndEmitRepresentativeUserInstance` (vtable `0x84a64088`), calls. That class takes an extra parameter (`ReuseUserType`) and gives the sound key to a manager where the first class emits through the actor's own sound user; the ELink part is the same three steps in both. Another project's notes took the name from the first class and the address from the second. Node layouts (ports are tagged pointers: mask the low 2 bits; Bool ports are read without masking): the first class has the ELink and SLink handle storage at `+0x20` and `+0x28`, the key name at `+0x30`, the ELinkCall and SLinkCall bools at `+0x40` and `+0x48` and HandleSet at `+0x50`; the second has ReuseUserType at `+0x30`, the key name at `+0x38`, ELinkCall at `+0x48`, SLinkCall at `+0x50`, HandleSet at `+0x58` and the handles at `+0x20` and `+0x28`. **read**
+
 ## Optimization notes
 
 Levers, each with where it would act and its risk. None has been tried.
@@ -367,3 +390,5 @@ Levers, each with where it would act and its risk. None has been tried.
 - The unidentified library at 0x814ee000–0x81502000 ([hot-path.md](hot-path.md)) lies beside vfx3's expression
   evaluator (`f_814e52a0`) and the view set-up calls into it (`f_814e6be0` from `f_8027d040`): whether it is vfx3's
   maths or something shared.
+
+- Which sub-object `[user+0x48]` or `[user+0x50]` (picked by bit 0 of `+0x18`) the readiness test means: read `[user+0x18]`, `+0x48` and `+0x50` of a copy's ELink user; expected bit 0x1000 set and the pointer picked by bit 0 non-null. The second class's sound branch (`f_8113ee40`, `f_8337c980`) was described only as "a manager posts the key".

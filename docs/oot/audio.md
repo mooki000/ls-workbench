@@ -82,7 +82,7 @@ The unimplemented `nn::audio` imports in the local logs (v2.0.14, five runs) are
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_8104c360` | `AltoSystem_Boot(sys, args)` | Boots "altoSystem": loads `Sound/altoConfig`, `Sound/Group/GroupSetting.%s.byml` (or `.%s.bagst`), `Sound/Attenuation/SPLAttenuation.%s.baatarc`, `Sound/ResourceListPack/BarslistPack.%s.byml` and `SLink2/slink2.%s.bslnk`, each with a plain-name fallback, and sets the stream root `content://Sound/Resource/Stream/`. The `%s` is the string at `[[args+0x28]]+0x148`; the dump's files say it is `Product.111`. "SLinkUserCreate" and "Boot" are also named. Called from `f_83bde660`; calls `f_81049f70` | read |
+| `f_8104c360` | `AltoSystem_Boot(sys, args)` | Boots "altoSystem": loads `Sound/altoConfig`, `Sound/Group/GroupSetting.%s.byml` (or `.%s.bagst`), `Sound/Attenuation/SPLAttenuation.%s.baatarc`, `Sound/ResourceListPack/BarslistPack.%s.byml` and `SLink2/slink2.%s.bslnk`, each with a plain-name fallback, and sets the stream root `content://Sound/Resource/Stream/`. The `%s` is the string at `[[args+0x28]]+0x148`; the dump's files say it is `Product.111`. "SLinkUserCreate" and "Boot" are also named. Called from `f_83bde660`; calls `f_81049f70`. The `sys` object is the alto system root (see *The ocarina and the alto root* in Notes): it stores `root+0x08` = the description's `+0x28` object (refcounted; a default object from `f_80fcf1e0` replaces it when its name string is empty) and `root+0x18` = the description's `+0x20` or, when that is null, a fresh 8-byte default object (`f_8104d330`; the sound-user factory). Only the field stores and the head were read in this 36 kB function | read |
 | `f_83bde660` | `AltoConfig_Load` | Builds `Sound/%s.alto__AltoConfig.bgyml` with "Product" or "All" (the same choice as `f_83be64a0`, [master-quest.md](master-quest.md)) and reads its `ShapeListFileName`; calls `f_8104c360` | guess |
 | `f_81049f70` | `AalSystem_Initialize` | Sets up aal: "aal::Emitter", "aal::LowPrioWorkerThread" (started with a core mask), the snd heap, ducking ("ManualDucking", "Pause"), "BiquadFilter" and "OcclusionParam". Calls `f_80fb1730` (the framework's parameters) then `f_81043860` (the framework) | read |
 | `f_8104e250` | `Bgm_LoadTable` | Loads `Sound/Bgm/bgm.%s.byml` (falling back to `Sound/Bgm/bgm.byml`), with the same `%s` as the boot | guess |
@@ -139,6 +139,18 @@ an "apply parameters", an input/output setter, and thin `Remove`/`Is…Enabled`/
 | `f_83b809d0` | `MovieAudio_Create` | The movie player's sound: starts "MovieAudioRendererThread" | guess |
 | `f_83b816f0` | `MovieAudio_OpenOutputStream` | `OpenOutputStream` (the 8-argument form) on the default virtual output device; `f_83b81890` writes and closes it. Not reached in the logs | read |
 
+### The ocarina and the alto root
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80fb32f0` | `AltoRoot_GetOrCreate(heap)` | If the pointer at `0x84ea4e08` is non-null, nothing; else allocates 0x158 bytes, builds a three-container part at `+0x138` (vtable `0x84c45158`; the cell `0x84ea4dc0` holds its address), runs `f_80c639e0` and stores the pointer. Only caller `f_83bde660`. This is the alto system root | read |
+| `f_80c639e0` | `AltoRoot_Construct(this)` | Sets vtable 0x84c45178, +0x10 u8 1, +0x18/+0x20 zero, containers at +0x28 and +0x50, a list part at +0x78.., more at +0x110.. | read |
+| `f_80e9c570` | `OcarinaMgr_Construct(this, src, arg)` | Builds the ocarina manager: vtable 0x84bc1978; +0x08 u64 copy of [src], +0x10 u64 arg, +0x18 u8 0, +0x20 u64 0xffff00ff; base part at +0x30; **+0x40 .. +0xd0: 19 name pointers "Ocarina_LowB" .. "Ocarina_HighF" in the table order listed in A1; +0xd8: pointer to ""**; +0xe0: 52 bytes (13 u32 hash-like values) copied from rodata 0x83f2db74; later parts hold the note state (+0x114 .. +0x27680, not read). | read |
+| `f_80e9c510` | `OcarinaMgr_Create(heap, src, arg)` | Allocates 0x27680 bytes (align 8) from `heap` with `f_8005ebe0`, runs the constructor, returns the object. | read |
+| `f_80f37c30` | `OcarinaSoundModule_Construct(this)` | 0xe0-byte module: vtable at +0 and a secondary at +8, parts at +0x98 and +0xa0 (built by `f_80f37ce0`), +0xa8 a small vtable 0x84bf7930; module+0x38/+0x40 are filled later by slot 2. Only caller `f_80f37d80`. | read |
+| `f_80f37d80` | `SoundModuleSet_Create(list, heap, ...)` | 51 kB factory (vtable 0x84bf7560 slot 4, thunk `f_80f37d70` = this-0x30): makes about a dozen sound modules, appends each to the {s32 count, s32 cap, T** data} array in x1, runs per-module setup. The Ocarina module is made at 0x80f3845c. Read in part (shape only) | read |
+| `f_80d3f360` | `OcarinaSoundModule_MakeUser(module, _, param)` | Slot 2 of the module vtable. If the engine root's factory is ready, makes the xlink2 user "Ocarina" (name string at 0x83de1d94), stores the result at module+0x40 and module+0x38 into that user's +0x138; then looks up two parameter objects by hash (0xadaa4403, 0x813bd046) in a table at GOT 0x84ca0000+1744 and stores them at module+0x98 and +0xa0. | read |
+
 ### The region and the language
 
 | Function | Name | What it does | Sure |
@@ -184,7 +196,9 @@ an "apply parameters", an input/output setter, and thin `Remove`/`Is…Enabled`/
 | `0x84bda7c8` | `SeqOneShotSetDefaultVoiceLanguage_vtable` | Slot 19 `f_83300f20`, slot 39 `f_83300e50` | read |
 | `0x84c38238` | `AudioFrameworkThread_vtable` | Slot 14 (`+0x70`) is the thread's run, `f_836f51d0` | read |
 | `0x83f83998` | `MainAudioOut_ChannelMap` | The device sink's channel map, 0 1 2 3 4 5 | read |
-| `0x84ea4e08` | `g_ResourceVariantHolder` | Holder (made by `f_80fb32f0`, 0x158 bytes) of the object whose `+8` gives the variant string at `+0x148` that the sound and voice paths use (`Product.111`) | guess |
+| `0x84ea4e08` | `g_AltoRootHolder` | The 8-byte variable that holds the alto system root (0x158 bytes, made by `f_80fb32f0`); first listed here as `g_ResourceVariantHolder` because the root's `+8` object gives the variant string at `+0x148` that the sound and voice paths use (`Product.111`). The GOT cell `0x84c9e678` holds this address | read |
+| `0x84c9e678` | `got_AltoRootHolder` | The GOT cell holding `0x84ea4e08`, the address of the variable that holds the alto root, so `[[cell]]` is the root (172 functions read it) | read |
+| `0x84cabfd0` | `got_OcarinaSoundModule` | A GOT cell with the static value `0x84bf6de0`, whose `+0x10` is `0x84bf6df0`, the vtable of the Ocarina sound module. Not a run-time cell | read |
 
 The hashes (murmur3 of the names, as the game data's): `OptionData` 0x834d9d9e, `VoiceLanguage` 0x74b1edd9,
 `OptionData.VoiceLanguage` 0xa2dcdc9d; the values Japanese 0x69b014ce, English 0x82591fa9, French_France 0x2498c397,
@@ -193,6 +207,15 @@ French_Canada 0x7d30fc45, German 0x515b9eeb, Spanish_Spain 0x33c26987, Spanish_L
 **read**
 
 ## Structures
+
+### The alto system root (0x158 bytes, `[0x84ea4e08]`)
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x08` | The description's `+0x28` object: its `+0x148` name string is the variant string (`Product.111`); refcounted (the count at `[obj+0x164]`) | read |
+| `+0x18` | The sound-user factory: slot 4 "is ready" (returns 1), slot 5 "make a user from a name cell" (looks a user up by the CRC32 of its name and allocates a 0x38-byte object; the reading is plausible, not proven) | read |
+| `+0xc0`, `+0xc8` | s32 count and pointer of an array of provider objects: 170 functions loop over it calling slot 0 with a key until one answers (`f_80184000`) | read |
+| `+0x138` | A three-container part (vtable `0x84c45158`) | read |
 
 ### Audio framework (`f_81043860`'s object)
 
@@ -267,6 +290,13 @@ voices Japanese later and leave the text alone, because the text follows the reg
 Which write happens after Gohma was not found statically. What decides it is when `option.sav` is loaded and written
 relative to the first update of `game::NpcVoiceResource`, and what resets `ResetTypeValue` 4. **guess**
 
+### The ocarina and the alto root
+
+- **The ocarina manager.** `f_80e9c570` builds it (0x27680 bytes, made by `f_80e9c510`; vtable `0x84bc1978`): `+0x08` a copy of `[src]`, `+0x10` the argument, `+0x18` u8 0, `+0x20` u64 `0xffff00ff`, a base part at `+0x30`, then **19 name pointers at `+0x40` to `+0xd0`** (8 bytes each), table indexes 0 to 18: LowB, LowC, LowCsharp, D, Dsharp, E, F, Fsharp, G, Gsharp, A, Asharp, B, C, Csharp, HighD, HighDsharp, HighE, HighF; each is the asset name "Ocarina_<note>". `+0xd8` is one more pointer, to the empty text `0x83f04f8c` (the constant the host calls EMPTY_TEXT); `+0xe0` holds 52 bytes (13 u32 values copied from `0x83f2db74`; they are not the CRC32 of the twelve song names or of "Correct", with or without the prefixes "Ocarina_", "Melody_" and "Song_"); the note state follows (`+0x114` to the end, not read). The five playable notes are table index D 3, F 6, A 10, B 12 and HighD 15; another project's wire numbers (the index plus 1: 4, 7, 11, 13, 16) agree. Which button plays which note is an inference from the on-screen prompt, not from this function. **read**
+- **The alto root.** `[0x84ea4e08]` points to a 0x158-byte object that is not a sound object: `+0x18` is the sound-user factory and `+0xc0` / `+0xc8` the providers (structures above). Seven module makers call the factory's ready test and make-user slots with their name strings ("Ocarina" `f_80d3f360`, "UI_GlobalSound" `f_8104d7d0`, "FieldEnvSound" `f_80bae0d0`, "EnvBird" `f_80bae240`, "EnvGrassInsect" `f_80baef50`, "BaseEnvSound" `f_811cace0`, and `f_80f3a7a0`, `f_80c7f0e0`). Another project's reading of the cell as "the SLink system that makes users" is right in effect; "sound root" is not the name. **read**
+- **The handle and the user.** A handle (8 bytes: pool kind, pool index, serial) and the user's list are on [effects.md](effects.md), *The XLink user chain*. `f_804609e0` is referenced only here: the readiness test. **read**
+- **The Ocarina sound module.** The vtable `0x84bf6df0` (0xe0-byte module, constructor `f_80f37c30`, made at `0x80f3845c` inside the module-group factory `f_80f37d80`, which makes about a dozen sound modules) has `f_80d3f360` in slot 2: it makes the xlink2 user named "Ocarina" through the root's factory, stores the result at `module+0x40` (the bank handle; the user hangs one deeper at that object's `+0x8`) and `module+0x38` into the user object's `+0x138`, and looks up two named parameter objects by hash (`0xadaa4403`, `0x813bd046`) in the table behind GOT `0x84ca0000+1744`, storing them at `module+0x98` and `+0xa0`. Another project recognises the module by comparing an object's first qword with `[[cell]]+0x10`. **read**
+
 ### Frame rate
 
 The audio frame is the renderer's (240 samples, 5 ms), run on "AudioFrameworkThread" from the renderer's event. LS's
@@ -284,5 +314,7 @@ side (the SoundModule job, [jobs.md](jobs.md)) runs once a game frame. **read**
 - How much the missing Reverb, Delay and BiquadFilter effects and splitter biquads change the sound (rooms, underwater,
   `RoomReverbControllerSetting`, `EnableBgmInWaterFilter`).
 - How the movies' sound reaches the output in LS, since the movie player's `OutputStream` path is never logged.
-- The `%s` variant string's source object (`0x84ea4e08`) and how it becomes `Product.111`.
+- How the alto root's `+8` object's name string becomes `Product.111` (the object is the start-up description's `+0x28` one; `f_80fcf1e0` supplies a default when its name is empty).
 - Which object `f_801e9c80` and `f_806ab700` feed (the aux effects), now that they read no samples.
+
+- Who reads the ocarina manager's note table at `+0x40` (candidates not read: `f_8289a250`, `f_805e3e50`, `f_80ac3c60`, `f_8267c470`, `f_82678f80`, `f_8337b730`) and where the played note index is stored; what the 13 values at `+0xe0` are. Which note button is which: break on `f_80460630` while each of the five note buttons is pressed and read the asset name pointer in `x1`; expected "Ocarina_D", "_F", "_A", "_B", "_HighD" in the controls' order. The root factory's slot 5 was read as "make a user" and not traced further.

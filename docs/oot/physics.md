@@ -256,6 +256,17 @@ links to.
 | `f_81ebd620` | `hkaiUpOrientedRaycast::castBidirectionalRay` | Hot rank 451 ("StreamingCollectionMediator::castBidirectionalRay") | read |
 | `f_81f8c974` | `hkaiNavMeshCollectionQueryMediator::getClosestPoint` | Hot rank 483 ("StreamingCollectionMediator::GCP") | read |
 
+### Wave-driven bodies (the WaveLoop controller)
+
+A controller object (class label `GroundControlActor_WaveLoop`) that moves a driven body along sine waves: linear and angular cycles and radii per axis. Its setup reads four 3-float blackboard keys.
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_8301f730` | `WaveLoop_Setup(ctrl)` | Reads `WaveCycle_Linear`, `WaveRadius_Linear`, `WaveCycle_Angular`, `WaveRadius_Angular` (angular radius x pi/180) from the actor's blackboard into a parameter struct (u16 body id then four vec3), calls `f_811f07b0(ctrl+0xc0, &params)`, sets `ctrl+0xb8 = {0.3f, 1.0f}` | read |
+| `f_811f07b0` | `WaveBlock_Init(block, params)` | Copies the four vec3 into the block (`+0x08, +0x14, +0x20, +0x2c`), the u16 body id into `+0x50`, and computes the six starting phases at `+0x38..+0x4c` from the body's current place, each wrapped into [0, 2pi) | read |
+| `f_8301f930` | `WaveLoop_Update(ctrl, float *step)` | Reads the logic bool `Move`, writes `Moving` and `Stopping`, stores the step at `+0xb8` and 1.0/0.0 at `+0xbc`, runs `f_8388c160(ctrl+0xc0, ctrl+0xb8)` | read |
+| `f_8388c160` | `WaveBlock_Step(block, {step, flag})` | Advances each of the six phases by `flag*step*2pi/cycle` (wrapped), and writes the resulting transform into the body record (`body+0x88..0xb7`, dirty bit at `body+0x1e8`) | read |
+
 ## Data
 
 | Address | Name | What it is | Sure |
@@ -275,6 +286,7 @@ links to.
 | `0x848d7b90` | `hknpProcessNarrowPhasePairsTask_vtable` | The narrow phase's pairs task: slot 5 its process `f_8191ee00` | read |
 | `0x83e60ac4` | `k_MaxPhysicsStep` | 0.999, the cap on the config's step | read |
 | `0x84eb5fe0` | `g_PhysicsModule` | The PhysicsModule (also through the GOT slot `0x84ca29d8`): the module `f_806a6610` runs on; its `+0x44` and `+0x48` count the two world jobs' runs | read |
+| `0x84b8ca28` | `WaveLoopLogic_vtable` | The vtable of the WaveLoop controller (0x118 bytes): 0 destructor, 1 deleting destructor `f_80e807d0`, 2 setup `f_8301f730`, 3 update `f_8301f930`. The class name `GroundControlActor_WaveLoop` is the other project's; the keys the setup reads are the proof | read |
 
 ## Structures
 
@@ -345,6 +357,22 @@ links to.
 | `+0x138` | A factor of the step | read |
 | `+0x170` | The next instance to claim (atomic): every executor running the job takes instances until none are left | read |
 | `+0x174`, `+0x198` | The count still running, and the event signalled when the last one ends | read |
+
+### The WaveLoop controller (0x118 bytes) and its wave block (`+0xc0`, 0x58 bytes)
+
+| Offset | Field | Sure |
+|---|---|---|
+| ctrl `+0x08` | u64: the controller's actor | read |
+| ctrl `+0xb8` | f32: the update's step (0.3 as set by the setup, then the step each update) | read |
+| ctrl `+0xbc` | f32: 1.0 while the logic bool `Move` is true, else 0.0 (1.0 as set by the setup) | read |
+| ctrl `+0xc0` | block: the wave block (below), 0x58 bytes; its first 8 bytes are not written by the init; the destructors pass it to the empty `f_80e80810` | read |
+| block `+0x08` | 3 x f32: WaveCycle_Linear (x, y, z) | read |
+| block `+0x14` | 3 x f32: WaveRadius_Linear | read |
+| block `+0x20` | 3 x f32: WaveCycle_Angular | read |
+| block `+0x2c` | 3 x f32: WaveRadius_Angular (radians) | read |
+| block `+0x38` | 3 x f32: linear phase x, y, z, wrapped into [0, 2pi) (ctrl `+0xf8`) | read |
+| block `+0x44` | 3 x f32: angular phase x, y, z (ctrl `+0x104`) | read |
+| block `+0x50` | u16: the body id (0xffff when none) | read |
 
 ## Notes
 
@@ -434,6 +462,10 @@ section. A function with those is Havok's, named after the `hkResult …::…` s
 `D:/home/Project/Owl/App/Lib/Havok/Public/HavokSDK…` (Havok headers compiled into the game's code, such as the game's
 copies of `generateCollideTasks`, the hknpWorld and hclWorld constructors, and `hknpShapeQueryInterface`).
 
+### How a wave moves
+
+The four blackboard keys are proved by the murmur3 of their names (seed 0; all four match): `0x0a6d2c57` `WaveCycle_Linear`, `0x97c33c58` `WaveRadius_Linear`, `0x7264e321` `WaveCycle_Angular` and `0xc4d35c72` `WaveRadius_Angular`; each is a 3-float entry found with `f_829e4e40(blackboard, hash)` (a missing key reads a static default) and the angular radius is multiplied by pi/180. The controller's actor is `[ctrl+8]`, its blackboard `[[actor+0x270]+0]+0x10`, and the body id comes from `[[[[actor+0x270]+0x50]+0x20]+0x180]+0xc` (u16, 0xffff when none). `f_8388c160` adds `flag * step * 2pi / cycle` to each of the six axis phases (skipped for a cycle of about 0), wraps them into [0, 2pi), and writes the transform made from `radius * sin(phase)` into the body record (`body+0x88..0xb7`, dirty bit in the byte `body+0x1e8`). The flag is the logic bool `Move` (`f_8301f930` reads it, writes the logic bools `Moving` = Move and `Stopping` = not Move, stores the step at `ctrl+0xb8` and 1.0 or 0.0 at `ctrl+0xbc`), so **the phase advances only while `Move` is true**: two games can differ by the phase alone. The phases are `block+0x38..0x4c`, that is `ctrl+0xf8..0x10c`. **read** (`f_811f07b0` for its copies and the stores to `+0x38..+0x4c`, not the phase algebra; `f_8388c160` for the phase update and the transform store, not line by line)
+
 ## Open questions
 
 - How Havok divides `DF+0x24` over the per-update step count, and whether anything but the count follows the frame
@@ -454,3 +486,5 @@ copies of `generateCollideTasks`, the hknpWorld and hclWorld constructors, and `
 - ~~Whether the game gives the hclWorld a time-stepping helper~~: it makes one but leaves it off (`f_80e66b2c`).
 - hknpMeshShape's slots 23 and 24 exactly, and what `f_81b8c000` collides against.
 - Whether Havok's own thread pool (`hkDefaultTaskQueueEx`) ever runs, or only the game's pools.
+
+- The wave controller: in the Deku Tree basement water room read `block+0x08` (expected 18.0 in x), `block+0x14` (expected 4.0) and `block+0x38` twice a second apart: expected a rise of `2*pi/18` per second while `Move` is true and no change while it is false. Who constructs the controller (only its two destructors build the address `0x84b8ca28`), how to find it from the driver actor, the algebra of the starting phases and the layout of the body record at `body+0x88` are not known; the block has no vtable of its own that was seen.

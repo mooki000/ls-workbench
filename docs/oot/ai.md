@@ -70,6 +70,8 @@ AI: navigation, collision avoidance, the async sensor queries), [hot-path.md](ho
 | `f_82cbf060` | `BrainCalcOptions_Visit` | `game__bsa__BrainCalcOptions` (name `f_82cbf640`; default file `Work/BSA/BrainCalcOptions/Default.game__bsa__BrainCalcOptions.gyml`): IsCalcDuringInterrupt, IsAllowCalcSkipForLOD | read |
 | `f_82dea2f0` | `BSA_CreateControllers` | A slot of the vtable word `0x84b67af8` (strings `Brain,Action,Utility`, `cReservedDefaultBrainVerbAttributesKey`, `cReservedDefaultActionVerbAttributesKey`): makes AI controller units through `f_83ad8e90` ([sequences.md](sequences.md)), at 0x82dea6d8 | guess |
 | `f_80417ba0` | `SelectorNpcBSAInterruptAction_Calc` | Hot rank 316 (3,236 instructions): the calc (slot 39) of `SelectorNpcBSAInterruptAction`, which picks an NPC's interrupting reaction (`DontBSAInterruptAction`, `IsReceiveSpreadTerror`, `game__npc__NpcReactionParam`, `NpcGoronRolling`, `Arrow`, `Shootable_Hook`) | read |
+| `f_806933b0` | `BSA_SetBrainVerb(bsa, verb, force, node)` | Sets the brain verb `bsa+0x28`: clears the queued verb (u32 `+0x2c` = 0), lowers the s8 pending counter (`+0x20`) to at least 0, and with `force` sets bit 2 of the u32 flags at `+0x24`. A different verb that is not forced, with a transition pending (u32 `+0x34` == 1) and bit 15 of `+0x24` clear, is only queued (`+0x2c` = verb, the counter raised to 1). Otherwise it applies it: records the change in the history part at `+0x3018` (`f_80693580(part, new, old)`), `+0x28` = verb, `+0x2c` = 0, `+0x48` u64 = 0, `+0x34` = 0, the counter lowered, `+0x24` = the old flags masked with `0xffff7ef3` and ORed with `0x10c` when the old verb was 0, else `0xc`, `+0x50` float = 1.0. Returns nothing. 12 callers; `node` is not read | read |
+| `f_800e08f0` | `BSA_RequestActionVerb(bsa, request*, changed)` | The BSA's current action record is the pointer at BSA+0x1c0 (none: return 2; record byte +0x7c bit 1 set: return 3). Copies the 0x60-byte request into it: places/values at record +0x00..+0x24, **verb u32 request+0x28 -> record+0x28** (0x11a = "keep the old verb" is honoured on both sides), request+0x3c -> +0x2c, request+0x44 -> +0x34 (value 16 special), the asking node (request+0x48) -> +0x38 with +0x40 = 1 when the request's flag byte (+0x40) says so, request+0x58/+0x5c -> +0x48/+0x4c, request+0x50 pair -> +0x50; sets record +0x78 = 4 and +0x7c |= 0xa, scales the floats +0x60/+0x68. BSA+0x3c68 is the controller it asks first; BSA+0x3c50/+0x3c58 hold a pending request that is cancelled first. Returns 0 when taken. 9 callers. Read in part (partly skimmed) | read |
 
 ### NPC schedules (AISchedule)
 
@@ -107,6 +109,58 @@ AI: navigation, collision avoidance, the async sensor queries), [hot-path.md](ho
 | `f_82ef9510` | `EnvAnimalSwarmParam_Visit` | Slot 7 of the same vtable: IsMovementOrbital, IsSpawnNearCamera, IsOrbitPlayer, BoneNum, WavePerRandomize, BoxHeight/Width/Depth, InnerDiameter, AppearHeightFromGroundMin/Max, ModelScale, SphereRadius, MoveSpeed, Amplitude, Period, ShapeCastRadius, NearFadeMax/MinDistance, DefaultAlpha, WeakenedState… | read |
 | `f_803d8750` | `Actor_Periodic150` | Hot rank 778: called from GameActor slot 51 every 150 frames (every 30 when bit 9 of the component's `+0xa8` is set), staggered by the actor's BaseProc ID, for the component at components `+0x460`; reads three floats at `+0x31c` (**guess**: the actor's position) and calls `f_803d71c0` (rank 446) | read |
 
+### The scrub puzzle's messages
+
+The Deku scrub brothers tell each other the order they were defeated in by transceiver messages (type `0x77440000`).
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_82858c50` | `Transceiver_SendMessage(sender, _, header*, payload*)` | Sends a message between transceivers: copies the 0x18-byte payload into a block, builds a queue entry (header target id, type and the block) and pushes it with `f_80399740(manager, entry)` (the manager's holder is the GOT cell `0x84cda000+1792`). Returns a u32 (all ones: not sent; a header whose target id is all ones sends nothing). Callers `f_82858500`, `f_828585c0`, `f_82858640`, `f_82858750`, `f_828588a0`, `f_8294e9a0`, `f_8294eb80` | read |
+| `f_80399740` | `MessageQueue_Push(manager, entry*)` | Pushes a 0x28-byte entry on one of two rings (selected by the byte `manager+0x38`, capacity word at `+0x48` or `+0x50`) under the lock at `manager+0x70`: a double-buffered ring; returns 1, or 0 when full | read |
+| `f_8294e810` | `ScrubBrothersDefeatedOrder_Execute(node)` | Slot 39 of vtable 0x84a4f928. Finds the ScrubDekuLink-linked actors of the node's actor (list at actor+0x3d8: `f_83b05380` count, `f_83b053c0` item by index, names compared with "ScrubDekuLink"), resolves each, sends through `f_8294e9a0`, marks the node done (u32 at node+0x18 top bits). | read |
+| `f_8294e9a0` | `ScrubBrothersDefeatedOrder_Send(node, targetRef)` | Builds the header `{u32 target transceiver id = the target actor's +0x3e8, u32 message type 0x77440000, u8 0}` and a 0x18-byte payload at `node+0x38` (u32 `DefeatedOrder`, u8 bool at `+0x3c`), calls `f_82858c50(sender = node+0x28 = actor+0x3e0, _, header, payload)` and writes `node+0x34` = 1 if the call did not return all ones | read |
+| `f_82857520` | `ScrubDekuManager_OnMessage(node)` | Slot 39 of vtable `0x849f2a68` (class `ExecuteScrubDekuManagerAI`, name string `0x83d03c79`; reached through the thunk `f_82857810` = this - 0x20 from the message-receiver sub-vtable at `0x849f2bb8`): polls the node's transceiver (`f_82fc5340` on `node+0x40`); message `0x77440000` goes into the record of the brother whose id equals the sender id (three records at `node+0xa0`, `+0xb4`, `+0xc8`, each `{+0 u32 order, +8 u8 flag, +9 u8 received = 1, +0x10 u32 transceiver id}`); messages `0x77440001` to `0x77440005` set other flag bytes (`+0xab`, `+0xbf`, `+0xd3` and `+0x215`). The delivering message's sender id is `node+0x48`, its type `node+0x50`, payload u32 `node+0x54` and byte `node+0x58`. Returns 1 when it handled one | read |
+
+### The auto-placement component (the Stalchild spawner)
+
+A scene component with five spawn requests (0x1a58 bytes each, at `+0x90`, `+0x1ae8`, `+0x3540`, `+0x4f98` and `+0x69f0`). "At night" is not decided in these functions: the level logic turns the component on.
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80f65d30` | `AutoPlacementMgr_Create(heap, arg1, arg2)` | Allocates 0x96c8 bytes and runs `f_80f65d80`; returns the object: the scene component another project calls AutoPlacementMgr. Only a function pointer reaches it (no direct callers) | read |
+| `f_80f65d80` | `AutoPlacementMgr_Construct(this, src, arg)` | Vtable 0x84ba0628 (via GOT 0x84cab000+712); +8 u64 [src], +0x10 u64 arg, five requests of 0x1a58 bytes built by `f_80f65ed0` at +0x90, +0x1ae8, +0x3540, +0x4f98, +0x69f0, more at +0x8448. | read |
+| `f_8328c110` | `AutoPlacementRequest_Update(request)` | Per-frame state machine of one spawn request (32 kB; calls `f_8328e140`, `f_8328d870`, `f_8328dd40`, `f_8328f820`). Fields seen: u64 request cell at +0x14c8 (the pending create request; its state word low 16 bits 3 or 4 are tested; on state 4 the cell is dropped with `f_8038fde0` and the counter below is lowered), s32 counter at +0x14c0, s8 try counter at +0x1660, an actor-reference record at +0x1668 (the spawned actor; state 4 of the actor, its component at +0x270+0x68 gets a one-shot sound/effect call `f_8045fd50`), s32 state at +0x1380 set to 7 when the request is finished. Called through vtable 0x84bc0380 (`f_8096ef20`). | read |
+| `f_8328e140` | `AutoPlacementRequest_SpawnOne(request, element)` | Makes one enemy for a spawn request: the actor's name is the text at `request+0x1818` (the element supplies a text through `f_8328f700`), the base position three floats at `request+0x14ac`; it tries up to 50 times (counter u8 at `request+0x1660`) a table of candidate offsets at `request+0x14d0` (8-byte pairs) scaled by the float at `request+0x24`, each rejected by two checks (`f_8328ebc0`, then `f_8328ecf0` with the handle at `request+0x14b8`); then calls the create request `f_80392a70(actor manager, &name cell, &place block (on the stack), request+0x14c8 = the request cell, 1, 0, 0, 0)`, which matches the host's create signature (its B_NAME, B_PLACE and B_REQUEST) | read |
+
+### The push-block node (ExecuteMovableBoxControl)
+
+An AI node of the Execute category: vtable `0x849ce6f8` (slot 0 the type check `f_8277ab90`, slot 1 the type object `f_8277aba0`, slot 2 `f_8277ac10`, slot 3 `f_80e7a870`, slot 19 the name `f_8277ac90`, slot 28 `f_80f447f0`, slot 29 `f_82771790`, slot 30 `f_80d90e60`, slot 31 `f_80982470`) and a second base at `node+0x20` with vtable `0x849ce8b8` (this-adjusting destructor thunks `f_8277acb0` and `f_8277ad30`, slot 2 `f_8277ab40`; the data after it names the two link anchors). Node size 0x1f8.
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80e7a870` | `ExecuteMovableBoxControl_DeletingDtor` | The deleting destructor (slot 3): sets both vtables, destroys four port objects (at `+0x70`, `+0x90`, `+0xb0`, `+0xd0`), the base destructor `f_80c33cd0`, frees 0x1f8 bytes. Another project's offset list takes it for the constructor (the vtable stores it saw are destructor stores); the real constructor was not found | read |
+| `f_8277ac10` | `ExecuteMovableBoxControl_Dtor` | The complete destructor (slot 2): the same without the free | read |
+| `f_8277ac90` | `ExecuteMovableBoxControl_GetName` | Returns the node class name `ExecuteMovableBoxControl` (slot 19). | read |
+| `f_82771790` | `ExecuteMovableBoxControl_OnEnter` | Slot 29, OnEnter: resets `+0x40` (grid base) and `+0x4c` (goal) to NaN, fills them from the actor's links (`MovableBox_BasePosAnchor`, `Gimmick_AnswerPosAnchor`; the actor's link table is `actor+0x3d8`) and the answer-position path, then sets `+0xfc` (the push target vec3) from `f_80d8ef80(node, base, actorPlace, PushPerBlock)` or from the actor's place, and `+0x108` (the push start vec3, u32 at `+0x110`) = the actor's place at `+0x31c`. Read: the start, the two end blocks and the `f_80d8ef80` call; the link-name matching in the middle was only skimmed | read |
+| `f_80d90e60` | `ExecuteMovableBoxControl_OnUpdate` | Slot 30, OnUpdate (the movable boxes' and the Forest Temple box puzzle's classes; a tombstone update calls it through `f_82892650`). At the cut `+0xf44` a signed truncation of the update context's `+8` (the elapsed step, by the neighbouring movement code) is added to the count at `+0x124`; a condition clears it and reaching 3 sets a state byte. That truncation is a frame-step site above 60 fps that no patch covers (see [frame-time.md](frame-time.md)); its delta source and the visible settling it would break are inferred, not observed | read |
+| `f_80d8ef80` | `MovableBox_SnapPushTarget(node, base, place, pushPerBlock)` | Returns the grid-snapped push target as a vec3 in `v0..v2`: the displacement between `place` and `base` snapped to the block's size divided by `PushPerBlock` (the size from the actor's physics component); when the physics or component data is missing it returns `place` unchanged | read |
+| `f_80f447f0` | `ExecuteMovableBoxControl_DeclarePorts` | Slot 28: declares the ports PushPerBlock (int `+0x1d0`), MoveSpeed (float `+0x1d8`), PushPullMovability (int `+0x1e0`), IfCliffNearThenPushRate (float `+0x1e8`) and IsOnAnswerPos (bool `+0x1f0`) | read |
+
+### The counter node (ExecuteGenericCounter)
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80875060` | `CounterNode_Init` | Constructs the node (0x68 bytes), vtable 0x849bf200 at `+0`, zeroes `+0x08..+0x67`, byte `+0x1e` = 0xff | read |
+| `f_80606760` | `CounterNode_Start(node)` | Starts a counter: the length in frames `max(0, BaseFrameTime + r * max(0, RandomTimeMax))`, with `r` in [0, 1) from the game's shared xorshift generator (state at `[[0x84c9df08]]`, four u32), goes to `+0x2c`, `+0x20` and `+0x24`, the rate -1.0 to `+0x28`; then it writes the three outputs (0, the length, 0). Shared by four counter classes (11 callers: see Notes). The place `0x80606778`, its seventh instruction (`x0` copied into `x19`, `x0` still the node), is where a lift-time head patch can read the node: a place inside this function, not a function | read |
+| `f_80606730` | `CounterNode_OnEnter(node)` | Slot 29: calls `f_80606760`, then jumps to `f_8060eac0` | read |
+| `f_8060eaa0` | `CounterNode_OnUpdate(node)` | Slot 30: while bit 1 of the byte at `+0x18` is set, runs `f_8060eac0` | read |
+| `f_8060eac0` | `CounterNode_Step(node)` | Steps the timer at `+0x20` (`f_8060d3d0`) and writes the outputs: `+0x30` the fraction done (0..1), `+0x38` frames left (>= 0), `+0x40` frames elapsed | read |
+| `f_82703ee0` | `CounterNode_BaseFrameTime(node)` | Slot 40: returns the float behind the pointer at `+0x48` | read |
+| `f_82703ef0` | `CounterNode_RandomTimeMax(node)` | Slot 41: returns the float behind the pointer at `+0x50` | read |
+| `f_8262c0e0` | `AINode_Stub0` | The AI node base class's slot 37 stub (returns 0). It is not the counter's length getter, as another project's offset list takes it to be: the start never calls it | read |
+| `f_804b4280` | `CounterNode_DeclareParams(node)` | Slot 28: binds `PercentComplete` `+0x30`, `RemainingFrameTime` `+0x38`, `ElapsedFrameTime` `+0x40` (outputs), `BaseFrameTime` `+0x48`, `RandomTimeMax` `+0x50`, `ResultBeforeFinish` `+0x58`, `ResultOnFinish` `+0x60` | read |
+| `f_829e4e40` | `Blackboard_FindByHash(blackboard, hash)` | Returns the entry for a murmur3 key, 0 if absent (the caller then uses a static default); 4 callers | guess |
+
 ## Data
 
 | Address | Name | What it is | Sure |
@@ -127,6 +181,11 @@ AI: navigation, collision avoidance, the async sensor queries), [hot-path.md](ho
 | `0x84c48878` | `Element_Expression_vtable` | Slots 29 and 30 `f_837d12c0`, `f_837d12d0`; slot 39 `f_837d1520` | read |
 | `0x84ca40d0` | `got_ActorModule` | The GOT slot holding the Actor module (`0x84eb1920`, [jobs.md](jobs.md)), through which the actor jobs read the frame number at `+0x1c4` | read |
 | `0x83ce4a7c` | `str_AIainbPath` | `AI/%s.ainb`; with `Logic/%s.ainb` (`0x83df09d0`) used by `f_803fbc80` and `f_8071f0a0`, the actor resource path builders [actors.md](actors.md) names for AS | read |
+| `0x849bf200` | `CounterNode_vtable` | Vtable of the AI node `ExecuteGenericCounter` (42 slots): 19 name, 20 category `AI`, 28 `f_804b4280` declares the parameters, 29 `f_80606730` OnEnter, 30 `f_8060eaa0` OnUpdate, 39 `f_8060ec70` timer rate (-1.0), 40 `f_82703ee0` BaseFrameTime, 41 `f_82703ef0` RandomTimeMax | read |
+| `0x84a4f928` | `ScrubBrothersDefeatedOrderNode_vtable` | The AI node class `OneShotSendScrubDekuBrothersDefeatedOrderMessage` (name string `0x83d5d219`): slot 1 `f_8294ea40`, slot 2 `f_8294eab0`, slot 39 `f_8294e810` | read |
+| `0x849f2a68` | `ScrubDekuManagerNode_vtable` | The node class `ExecuteScrubDekuManagerAI`: slot 1 `f_828588f0`, slot 2 `f_82858960` (sets the two vtables, tail-calls the node base constructor `f_80c33cd0`), slot 39 `f_82857520` (at `0x849f2ba0`) | read |
+| `0x849ce6f8` | `ExecuteMovableBoxControl_vtable` | The primary vtable of the push-block node (the slots are listed above) | read |
+| `0x849ce8b8` | `ExecuteMovableBoxControl_vtable2` | The second base at `node+0x20`: this-adjusting destructor thunks, then interface functions; followed by data naming the two link anchors. Only the first three slots were read | guess |
 
 ## Structures
 
@@ -177,6 +236,33 @@ A node's graph instance (`[node+8]`, [sequences.md](sequences.md)) has its unit 
 |---|---|---|
 | `+0x1c0` | The previous frame number | read |
 | `+0x1c4` | The frame number, copied each module calc (at 0x83aff69c) from `+0x440` of the object `[0x84eb5f48]` holds, which `f_801c5ef0` adds 1 to from the Actor module's calc | read |
+
+### An ExecuteGenericCounter node (vtable `0x849bf200`, 0x68 bytes)
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x00` | u64: the vtable | read |
+| `+0x08` | u64: the graph instance (its `+0x08` is the unit, whose `+0x1f0` is the actor) | read |
+| `+0x18` | u32: node status: bit 1 running (the update steps while it is set); bits 30-31 result (existing `sequences.md`) | read |
+| `+0x20` | f32: timer value = **frames left** (counts down, 60 Hz frame units) | read |
+| `+0x24` | f32: the timer's previous value (set to the length at start) | read |
+| `+0x28` | f32: timer rate, -1.0 | read |
+| `+0x2c` | f32: **length in frames** | read |
+| `+0x30`, `+0x38`, `+0x40` | u64 (tagged: low 2 bits flags): pointers to the output floats PercentComplete, RemainingFrameTime, ElapsedFrameTime | read |
+| `+0x48`, `+0x50` | u64: pointers to the input floats BaseFrameTime, RandomTimeMax | read |
+| `+0x58`, `+0x60` | u64: the result values ResultBeforeFinish, ResultOnFinish | read |
+
+### An ExecuteMovableBoxControl node (0x1f8 bytes)
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x40` | vec3 grid base (NaN until set) | read |
+| `+0x4c` | vec3 goal (NaN until set) | read |
+| `+0x58` | vec3 copy of the actor's `+0x2ec` area | read |
+| `+0xfc` | vec3 push target | read |
+| `+0x108` | vec3 push start (the u32 at `+0x110`) | read |
+| `+0x124` | The count `f_80d90e60` adds the truncated step to (reaching 3 sets a state byte) | read |
+| `+0x1d0` to `+0x1f0` | The ports: PushPerBlock, MoveSpeed, PushPullMovability, IfCliffNearThenPushRate, IsOnAnswerPos | read |
 
 ## Notes
 
@@ -261,7 +347,26 @@ and each enemy's own parameters (141 `game__enemy__*` classes, from `game__enemy
 `EnemyGlobalParam` to the bosses'). The sensor queries go through the physics world's async queries
 (`AsyncQueryAabb(Sensor)`, [physics.md](physics.md)). **read** (the names), **guess** (the roles)
 
+### Scrubs, the spawner and the brain verbs
+
+- **The scrub brothers' message.** The brother's AI node (vtable `0x84a4f928`, execute = slot 39 `f_8294e810`) walks the actors linked by the name "ScrubDekuLink" (string `0x83e1fdfa`; the node's actor's link list at `actor+0x3d8`: `f_83b05380` the count, `f_83b053c0` an item by index) and for each target calls `f_8294e9a0`. The manager node (vtable `0x849f2a68`) collects the replies into its three brother records. **read**
+- **The Stalchild spawner.** `f_8328c110(request)` is the per-frame state machine of one request, called through the vtable cell at `0x84bc0380` by `f_8096ef20`; its fields seen: the request cell at `+0x14c8` (the pending create request; its state word's low 16 bits 3 or 4 are tested, and on state 4 the cell is dropped with `f_8038fde0` and the counter at `+0x14c0` lowered), the actor-reference record at `+0x1668` (the spawned actor; in state 4 the XLink component of that actor, `+0x270+0x68`, gets a one-shot sound or effect call `f_8045fd50`) and the s32 state at `+0x1380`, set to 7 when the request is finished. Only its head and the callees were read. **read** (shape only)
+- **The brain verb** is the u32 at `bsa+0x28` (`f_806933b0`); the BSA's current action record is the pointer at `bsa+0x1c0` (`f_800e08f0` returns 0 accepted, 2 no action record, 3 record locked). `f_800e08f0` copies the 0x60-byte request into the record: places and values at record `+0x00..+0x24`, **the verb u32 `request+0x28` to `record+0x28`** (0x11a means "keep the old verb" on both sides), `request+0x3c` to `+0x2c`, `request+0x44` to `+0x34` (value 16 special), the asking node `request+0x48` to `+0x38` (with `+0x40` = 1 when the request's flag byte says so), `request+0x58/+0x5c` to `+0x48/+0x4c`, the `request+0x50` pair to `+0x50`; sets `record+0x78` = 4 and `+0x7c |= 0xa` and scales the floats at `+0x60` and `+0x68`. `bsa+0x3c68` is the controller it asks first; `+0x3c50` and `+0x3c58` hold a pending request that is cancelled first. 9 callers. **read** (the copy and the return codes; the rest was only skimmed)
+- **The calc-skip word** (what the other project's "selective AI hold" would write) is the LOD component's u16 at `+0xc4`, not a brain flag: see [animation.md](animation.md), *The LOD component*. **read**
+
+### The counter node
+
+`ExecuteGenericCounter` (AI category, vtable `0x849bf200`, slot 19 the name, slot 20 the category, slot 28 `f_804b4280` binds its parameters, made by `f_80875060`) is a timer in 60 Hz frames: `BaseFrameTime` plus a random part up to `RandomTimeMax`; its outputs are `PercentComplete` (0 to 1), `RemainingFrameTime` and `ElapsedFrameTime`, and `ResultBeforeFinish` and `ResultOnFinish` are its result values. **read**
+
+- **Start and step.** `f_80606760` stores the length at `+0x2c` and the same value at `+0x20` (the frames left, counting down) and `+0x24`. The timer is stepped by `Timer_Step` (`f_8060d3d0`, [frame-time.md](frame-time.md)): value += rate x the scaled step, so the unit is a 60 Hz frame and writing `+0x20` shifts the pause (the next step goes on from the written value). Slot 29 `f_80606730` is OnEnter (start, then write the outputs); slot 30 `f_8060eaa0` is OnUpdate (writes the outputs while bit 1 of the byte at `+0x18` is set). **read**
+- **Shared start.** `f_80606760` has 11 callers (`f_80606670`, `f_806066a0`, `f_80606730`, `f_809d0e40`, `f_8268f260`, `f_82703f10`, `f_82704230`, `f_82704e50`, `f_82704e70`, `f_827050f0`, `f_82705110`); `f_80606730` sits in four vtables: `0x849bf200` ExecuteGenericCounter, `0x849bf798` ...DisableLOD, `0x849bfd30` ...WithCondition and `0x849bfe98` ...WithConditionAndAnytimeReset. A hook on the start must compare `[x0]` with `0x849bf200`. **read**
+- **A head hook** on `f_80606760` sees `x0` = the node (the only argument; no length is passed) and `x30` the caller's return address. The node's `+0x20..+0x2c` still hold the previous start's values then (zero before the first start: the constructor zeroes `+0x08..+0x67` except the byte `+0x1e`); this start's values are written before the function returns, and no hook at the return could use `x0` (callee-saved registers are restored). So a head hook should note the node and read `+0x20` and `+0x2c` a frame later. The base length comes from a virtual call (slot 40, `f_82703ee0`, the float behind `node+0x48`) made after the prologue, and slot 41 (`f_82703ef0`) gives `RandomTimeMax`. **read**
+- **Not the length getter.** Another project's offset list takes `f_8262c0e0` for the counter's length getter; in our vtable `+0x140` (slot 40) is `f_82703ee0`, and `f_8262c0e0` is slot 37's base stub (returns 0) that the start never calls. **read**
+- Whether the game's platforms (Dodongo's Cavern lifts and others) use this node at all is a data question: in a lift room, log each `ExecuteGenericCounter` node (`[node] == 0x849bf200`) with its `+0x20` and `+0x2c`; expected `+0x20` falls by about 1.0 per 60 Hz frame from `+0x2c`, and the node's actor `[[[node+8]+8]+0x1f0]` is an `Obj_DodongoCave_*` actor. This also settles whether the other three counter classes are used by any platform.
+
 ## Open questions
+
+- The spawner: `f_8328c110`'s body beyond its head, the night or area trigger (level logic, outside these functions) and who calls `f_80f65d30` (a function pointer). `f_800e08f0` beyond the request copy and the return codes; the real constructor of `ExecuteMovableBoxControl`, the link-name matching in its OnEnter and the rest of the secondary vtable `0x849ce8b8`.
 
 - What starts the AISchedule list job (`[[0x84ca23a0]]+0x978`) and on which pool it runs, and what its entries' owner
   fields (`+0x2c` = 5, `+0x30` bit 15) mean.

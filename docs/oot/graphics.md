@@ -47,7 +47,7 @@ The render targets' GPU pool is 0x13100000 bytes, sized for 2560×1440: a 3840×
 | `f_83b7a2c0` | `ModuleHeaps_Setup` | Makes the module heaps in two passes, through `f_83b7b340`; the first pass's Graphics heap is 0x34900000 bytes | read |
 | `f_83b7b340` | `ModuleHeaps_Make` | Makes the module heaps (the Graphics heap kept at 0x348ffe20, which had under 16 MB to spare), creating each through `f_809df710`. Then takes each heap's use (its vtable +120) off its module's budget (the configured size, a table of slots) and aborts below zero (`f_8351c280`) | tested |
 | `f_809df710` | `Heap_Create` | Takes a heap's size in `x0` (called from `f_83b7b340`, returning at 0x83b7b440); likely makes the heap | guess |
-| `f_8351c280` | `Abort` | The abort `f_83b7b340` calls when a module is over its budget | read |
+| `f_8351c280` | `Abort` | The abort `f_83b7b340` calls when a module is over its budget. A generic abort: 85 or more callers, among them the game-data setters when a ring is full or its round changed (see [game-data.md](game-data.md)). It calls the import stub `f_85059010` (`nn::diag::detail::AbortImpl`) and the game ends there | read |
 | `f_836cf4b0` | `Graphics_Init` | The graphics init; calls `f_80b72340` | read |
 | `f_80b72340` | `Graphics_MakeSpareHeap` | Makes a heap of what the Graphics heap can still give, through `f_809df700`. It would take the growth too (0x1b6cb48 bytes as shipped, 0x1996cb48 grown) and leave too little for the pool, so it keeps its shipped size | tested |
 | `f_809df700` | `Heap_CreateFrom` | Takes a heap's size in `x0` (called from `f_80b72340`, returning at 0x80b723ac); likely makes the heap | guess |

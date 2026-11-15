@@ -21,6 +21,7 @@ back over a higher value written from outside before either divide runs.
 | `f_83b6e300` | `FrameTime_Update` | The frame-time keeper (`[[0x84c9e890]]`): `+0` the scaled step, `+16` the step, `+20` 1/step, `+24` the scaled step, `+28` fps, per-slot copies at `+32 + 48k` | read |
 | `f_8042cd20` | `Frame_Limit` | The frame limiter: sleeps to 1 / `+0xfc` of the graphics module | tested |
 | `f_804fc0f0` | `Display_VrrEnabled` | Whether variable refresh is on (`+0x231`). While it is, the engine's adaptive controller writes `+0xfc`, any rate from 40 up | read |
+| `f_8060d3d0` | `Timer_Step(timer)` | A generic timer, 332 direct callers: `{value +0, previous +4, rate +8}`: previous = value, value += rate times the frame-time keeper's scaled step (or a per-slot copy of it); returns the new value in `s0`. At 60 fps the step is 1.0, so a timer's unit is a 60 Hz frame. The counter node steps its timer with it ([ai.md](ai.md)) | read |
 
 ## Movies and cutscenes
 
@@ -53,6 +54,18 @@ back over a higher value written from outside before either divide runs.
 | `f_80596c60` | `FractionalTimerB` | The same (fine) | read |
 | `f_80746660` | `FractionalTimerC` | The same (fine) | read |
 | `f_8156f0c0` | `FractionalTimerD` | The same (fine) | read |
+| `f_83423a90` | `IntegerBucketCompare` | Compares the integer buckets of a current value and of that value minus the step; it does not add a separately cut delta to a timer (fine) | read |
+| `f_8337b110` | `FloatPhaseAdd` | Adds time to a float phase and writes the fractional remainder after removing whole periods (fine) | read |
+| `f_80a28f90` | `ScaledTimeAccumulator` | Adds scaled time into a float accumulator before deriving whole cycles; the subtraction or wrap keeps the remainder (fine) | read |
+| `f_8055d8d0` | `PhasePrecisionIndex` | High-precision phase increments feed table indexing and interpolation, scaled by 2^32. Not a whole-frame timer: changing it as a display counter would be unsafe | read |
+| `f_833dc4c0` | `IntegerFractionSplit_A` | An integer-and-fraction splitting helper: the fraction is returned or stored separately, not a discarded elapsed step (fine) | read |
+| `f_83a6ce60` | `IntegerFractionSplit_B` | The same kind of helper (fine) | read |
+| `f_8333c4b0` | `WeightedRecordAccumulate_A` | Weighted record accumulation: the caller takes the coefficient from a selected record, not from the frame-step keeper; several integer fields are gated at weight 1 or more. No temporal provenance was found | read |
+| `f_8333c520` | `WeightedRecordAccumulate_B` | The same kind of accumulation (see `f_8333c4b0`) | read |
+| `f_83755490` | `TimeUnitConvert_A` | A large-unit time or tick conversion (the first pair scales by 1e9): not a demonstrated gate on a step under one frame | read |
+| `f_83755540` | `TimeUnitConvert_B` | The same kind of conversion | read |
+| `f_82733050` | `QuantizedPositionConvert` | Quantized position, angle or range values or indices, not an elapsed-step counter; it binds to horse rail following | read |
+| `f_807f75e0` | `QuantizedConvert` | Quantized shape or index conversions, not an identified elapsed-step counter | read |
 
 ## Data
 
@@ -63,6 +76,7 @@ back over a higher value written from outside before either divide runs.
 
 ## Notes
 
+- A signed truncation of the update context's step at `+0xf44` of `f_80d90e60` (the `ExecuteMovableBoxControl` OnUpdate, the movable boxes' and the Forest Temple box puzzle's class, called for a tombstone through `f_82892650`) is added to a count at `+0x124` (a state byte is set when it reaches 3). No patch covers it, so above 60 fps the count may stand; the context's `+8` behaves as a delta in the neighbouring movement integration, but its provenance and the visible settling it would break were not observed. A carry that survives the condition that clears the count could advance a later episode early. Row on [ai.md](ai.md). **read** (the arithmetic and the class), **guess** (the delta and the failure)
 - More sites counted in frames, from the later pages (each runs proportionally more often in real time above 60 fps): the actors' calc-skip intervals (`(frame - phase) mod interval`, the frame at `[0x84eb0d90]+0x440`) and the LOD module's `mod N` / `mod 5` staggering ([animation.md](animation.md)); AI and NPC component work every 10, 30, 60 or 150 frames by BaseProc id, and AIGroupParallelCalc's every-N ([ai.md](ai.md)). **read**
 - The physics world's base step is the literal 1/60 s at 0x83b89578 (`DF+0x24`), and the frame step reaches the solver through its step count, set each update from it (`DF+0x38`); LS rounds the count up above 60 fps (issue 1798, `host/oot_high_fps.h`; [physics.md](physics.md)). **read** Cloth also follows the frame's step.
 - `0x84d61fc8` (the global step) has one reader, `f_834a3680` ([physics.md](physics.md)'s scan). **read**

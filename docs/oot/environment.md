@@ -123,6 +123,15 @@ a **guess**), with the same getters; they differ at `+0x220`.
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_80f0e640` | `Clock_SetTime(clock, seconds, flag, day)` | What `f_834722d0` calls with `(seconds, 1, -1)`: stores the seconds and the day at `+0x48` and `+0x4c` and sets bits 1 (and 2, when `flag` bit 0 is set) of `+8`, then builds a larger request on the stack | read |
+| `f_83472280` | `WorldMgr_ReadTime(world)` | Returns (hidden result pointer x8) a 24-byte time snapshot: vtable pointer, then one u64 = seconds of the day (low) and day (high) of the clock block at `clock+0x20` (or `clock+0x50` while bit 0x200 of `clock+8` is set), then that block's u32 at `+0x10`; empty snapshot when `[world+0x510]` is null. Callers `f_803ff420`, `f_80401980` | read |
+| `f_83445090` | `Clock_LoadFromGameData(clock)` | Sets bit 8 of `clock+8`, reads the saved seconds and day from the game-data time object `[world+0x508]+8`, calls `Clock_SetTime(seconds, 0, saved day)`, stages the minute words, sets bit 0. The save-load / load-sequence set. Its only caller is `f_83472050`. (it was first guessed to be a visual-only time request; it loads the saved time) | read |
+| `f_83472050` | `WorldMgr_ApplyGameDataState(world)` | Takes the lock at `+0x4b0`, copies the saved environment values (three floats) into `world+0xdb8…` when they are non-zero (and sets bits 7 and 8 of `world+0x4d0`), calls `f_83445090` when the clock exists, then lets the four sub-objects at `+0x558…+0x570` refresh (slot 57) and clears request bit 23 of the block being filled. Callers: `f_832f8690`, `f_830513c0`. Read in outline: the control flow; the offsets are as the lifted code prints them | read |
+| `f_832f8690` | `SeqOneShotOnloadGameSaveDataWorldMgr_Calc` | The node calc (vtable `0x84bd4558`, slot 39): after a save is loaded, applies the saved state to the world manager through `f_83472050` (argument: `[[0x84c9e898]]`), i.e. the saved time goes into the clock; node done | read |
+| `f_828d7e20` | `OneShotAutoPlacementMgrSetIsTimeElapsedToNightByOcarinaSunSong_Calc` | Stores 72000 (20:00) into the auto-placement manager entry 0x23 at `+116`; node done. Run only by the Sun's Song flow | read |
+| `f_828b0ec0` | `ExecuteWmSetTime_OnUpdate` | Marks the node finished (OnEnter `f_828b0e80` did the set) | read |
+| `f_828b1060` | `ExecuteWmSetTimeTransitionForTimeline_OnUpdate` | The timeline's time transition: from start hour/minute to end hour/minute by the node's progress, through `f_83474aa0` into the world's request block (bit 0x2000000, times at block `+0x10e4…`); never calls Clock_SetTime. OnLeave `f_828b11a0` -> `f_83474e10`. Read in outline: the two functions and their stores | read |
+| `f_829428b0` | `OneShotRequestVisualOnlyTime_Calc` | Hour*3600 + minute*60 + second from the node's inputs plus a float, into `f_83474f00` -> `f_83445140` (the second time block); not Clock_SetTime. Read in outline: the node function and `f_83474f00`; `f_83445140` was not read | read |
+| `f_8347c020` | `GameData_ClockHeld` | A game-data lookup by a constant hash that returns a bit; `f_803edf70` calls it right after cutting the frame's seconds (`+60`) and stores 0 there when it is true, and takes the seconds from game data (`f_8347c450`) while it holds. So the clock stands while the bit holds. The name is a guess: which game-data bool it is, and what in a save holds it, is not known | guess |
 
 `f_803edf70`, which steps the seconds of the day (`+40`) and the day (`+44`), has its row in [frame-time.md](frame-time.md).
 It gets the taken request block and tests request bits `0x1000000` and `0x2000000`. The rate it steps by is set in
@@ -231,13 +240,19 @@ waits while a save loads, where both show up as waiters.
 
 | Offset | Field | Sure |
 |---|---|---|
-| `+8` | Flags: bits 1 and 2 set by `Clock_SetTime`; `0x30`, `0xc0` and `0x200` tested by the frame | read |
+| `+8` | Flags: bits 1 and 2 set by `Clock_SetTime` (a set leaves `+8` at 0x4, seen), bit 8 marked by the game-data load, `0x30`, `0xc0` and `0x200` tested by the frame | tested |
 | `+9` | Bit 1: read the second time block (`+0x50`) instead of the first (`+0x20`) | read |
-| `+40` | The seconds of the day (0 to 86399) | read |
-| `+44` | The day | read |
-| `+0x40` | The time division (0 day, 1 night) | read |
-| `+0x48`, `+0x4c` | The time and day asked for by `Clock_SetTime` | read |
+| `+40` | The seconds of the day (0 to 86399): 120 game seconds a real second, so a day in 12 real minutes; stopped by the pause menu and for 1 to 3 s at a map load | tested |
+| `+44` | The day, kept mod 8 (7 then 0 seen) | tested |
+| `+0xc`, `+0x10` | The minute of the day and the second of the minute (both are the save's "auxiliary words"); standing while the seconds stand | tested |
+| `+0x40` | The time division (0 day, 1 night): 1 at 20:15 and 00:15, 0 from 06:00 to 15:00 | tested |
+| `+0x48`, `+0x4c` | The time and day asked for by `Clock_SetTime` (a script set leaves `+0x4c` at -1, "leave the day") | tested |
 | `+0x68` | The lunar age | read |
+| `+0x20` | Block A: `+0x28` the seconds, `+0x2c` the day, `+0x30` a u32 that is zeroed whenever a requested time is applied (meaning not found) | read |
+| `+0x50` | Block B, the second time block the visual-only time uses (`+0x58`, `+0x5c`, `+0x60`); selected while bit 0x200 of `+8` is set | read |
+| world `+0x38d8` | A signed pending hour (negative: none): `WorldMgr_Calc` applies it with `Clock_SetTime(hour * 3600, flag 0, day -1)`, sets bit 13 of `world+0x4d0` (the bit that stops the clock) and writes -1 back; who writes it was not found | read |
+| world `+0x508` | The holder of the game-data time object `Clock_LoadFromGameData` reads (`+8` of it) | read |
+| world `+0x3768`, `+0x376c` | The two float multipliers on the step: read 1.0 throughout 200 s of sets and loads, and also in a game whose clock stood; nobody was found who writes them | tested |
 
 ### The environment object's sun and moon flags (`env+0x38`, 32-bit)
 
@@ -300,6 +315,24 @@ culled, so the depth is complete and the GPU's own sun occlusion should be right
 - The volume fog reads the light probes (`VolumeFogProbeBakeLightScale`, `…SkyLightScale`, `…BounceLightScale`): the
   probes past the pool's end were the white haze ([rendering.md](rendering.md), *Fixes by pass*).
 
+### What sets the time of day
+
+`Clock_SetTime` (`f_80f0e640`, arguments clock, seconds, flag, day) has exactly three direct callers. Flag bit 0 decides `clock+8`: set, bits 1 and 2 are set (a set to an earlier time of day counts a day, and bit 2 stays until a flag-0 set); clear, bit 2 is cleared (the day is not counted; the given day is stored when it is not -1). **read**
+
+1. **`f_834722d0` (`WorldMgr_SetTime`; flag 1, day -1): the script set.** Its only caller is `f_828b0e80`, `ExecuteWmSetTime` OnEnter (slot 29 of `0x84a02b58`; no direct callers: node graphs run it). Every Sun's Song, bed, tomb gimmick, Door of Time, cutscene and opening set arrives here, with nothing in the node that tells them apart. The debug `oot_set_time` also calls it. The nodes are used by one actor, `EventWorldManagerController`, from event flows; the flows set fixed hours only: the Sun's Song (and a bed, `LinkSleepInBed`) asks the clock's division first and sets day to 20:00, or 00:00 where the map says "the song makes a middle time here", night to 06:00, or 12:00 there; a tomb gimmick 20:00 and 06:00; the Door of Time, a Jabu Jabu cutscene and "escape a dungeon" 12:00 (05:30 once); two Hyrule Field cutscenes 07:00 and 07:30; the opening 06:00. **read** (nothing else in the flow data uses them; a string search, so an undercount is possible)
+2. **`f_803ec480` (`WorldMgr_Calc`), return site `f_803ed5cc`: a pending hour.** If the signed word at `world+0x38d8` is not negative the frame sets the time to that hour (flag 0, day -1) and stops the clock (see the structures). **read**
+3. **`f_83445090`, return site `f_834450f4`: the saved time.** Its only caller is `f_83472050`, called from `f_832f8690` (the node `SeqOneShotOnloadGameSaveDataWorldMgr`: the save-load set) and from `f_830513c0` (a load-sequence state machine, on its state 4 after a load-complete flag; run from `f_832962b0`). **read**
+
+**Not through `Clock_SetTime`:** the cutscene timeline's time transition (`ExecuteWmSetTimeTransitionForTimeline`, OnUpdate `f_828b1060` -> `f_83474aa0`) and the one-shot `OneShotRequestVisualOnlyTime` (`f_829428b0` -> `f_83474f00` -> `f_83445140`) only write the world's request block and the second time block; the real seconds at `+0x28` are untouched. The Sun's Song's 3 to 4 s lerp (19:30, 18:45, 05:45, 05:00) is of that kind. **read**
+
+**What a classifier can stand on** (a song or bed set against a cutscene set): (a) a wrap of `f_80f0e640` sees seconds, flag, day and the return address, which tells a load (flag 0, day given) and a pending hour (flag 0, day -1) from a script set (flag 1) with no table; (b) for a script set, the playing event's name `[[mgr+104]+8]` at that moment ([events.md](events.md)); the events' names live in the flow files, not in the image; (c) the node `OneShotAutoPlacementMgrSetIsTimeElapsedToNightByOcarinaSunSong` (calc `f_828d7e20`, vtable `0x84a12540`) exists only in the song's flow and stores 72000 (20:00) into the auto-placement manager's entry `0x23` at `+116`: a clean "Sun's Song toward night" signal; no signal for the other direction was found; (d) the map flag `IsSunSongMakesMiddleTime` chooses 00:00 or 12:00 over 20:00 or 06:00 (a string only, not traced); (e) the hour alone cannot separate them (06:00 and 12:00 overlap). **read**
+
+### The clock in play
+
+- A game's clock can **stand** and a set does not release it: a child early-story save (`coop-deku-tree-child`) kept the seconds at 06:00:00 in every scene and recorded the set requests at `+0x48` without applying them, while both multipliers read 1.0; a late-story adult save loaded directly into the Forest Temple ran at 120 s/s. So the state of the save decides, not loading into a dungeon. The branch of `f_803edf70` that takes the seconds from game data while `f_8347c020` holds fits a held clock (an inference). **tested** (the stand and the set; the cause is open)
+- A set to a time of day lower than the current one counts a day, a higher one does not (six sets: 13:18 to 14:00 no, 14:28 to 13:00, 13:28 to 13:00, 14:41 to 12:00 and 12:16 to 00:00 each plus a day, 00:16 to 20:00 no); a set is applied within one frame and the clock never stood after it. **tested**
+- **Scene rules** (the maps' world parameters): dungeons use a fixed default palette and the display reads a constant 06:00; the "fixed field" maps (Market, Kakariko, Graveyard, Zora's River and Fountain, Gerudo, Death Mountain Trail, Hyrule Castle) follow the clock's palette time table with a still sun; Hyrule Field has the full sun and moon (sunrise 04:00 in its own parameter); the "special field" maps (Kokiri Forest, Lost Woods, Sacred Forest Meadow, Zora's Domain) use the palette table and have no sun or moon model. **read**
+
 ### The environment objects (`EnvObj`)
 
 The lights placed in a map are gsys environment objects: `gsys__EnvObjSetParam`, `gsys__EnvObjSetMgrParam`,
@@ -310,6 +343,8 @@ The lights placed in a map are gsys environment objects: `gsys__EnvObjSetParam`,
 further. **read** (the names)
 
 ## Open questions
+
+- What in a save holds the clock (the `f_8347c020` bool), why a child early-story save's clock stood, and the meaning of the clock block's third word (`+0x30`) and of block B's day word (`+0x5c`). Whether `f_83445090` also fires on an ordinary map change or only on a save or title load: wrap `f_80f0e640` and log the return address (`x30`) during a door transition and a save load from the title; expected a script set at `f_834722d0`'s return site, a load at `f_834450f4`, a pending hour at `f_803ed5cc`. Whether `f_830513c0` state 4 runs for every map change; what `f_832962b0` is. The event names of the Sun's Song, a bed and the Door of Time: read `[mgr+104]+8` and the C string it points to once during each; expected three distinct names (this also confirms that `player+8` is the event's name).
 
 - What reads the `Occlusion` buffer of `effect_sun_occlusion_cs`, and what does it change: the lens flare's alpha and
   scale (`IsEnableOccludedAlpha`), the clouds' `SunOccBufSize`, the haze? Where is the program dispatched?

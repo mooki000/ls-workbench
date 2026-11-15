@@ -284,6 +284,7 @@ is where most of the counter and condition places are. **read**
 | `f_80527e90` | `Queue_SubmitOne(queue, handles)` | `f_80527f00`, then `nvnQueueSubmitCommands(queue, 1, handles)`. Hot rank 452 | read |
 | `f_80527f00` | `Queue_SubmitPending` | `nvnQueueSubmitCommands` and `nvnQueueFlush`. Hot rank 427 | guess |
 | `f_805902c0` | `Queue_SubmitFenced` | `nvnQueueWaitSync`, `nvnQueueSubmitCommands`, `nvnQueueFenceSync`, `nvnQueueFlush`, `nvnEventGetValue`, in that order. Hot rank 261 | read |
+| `f_80547f20` | `Framework_PresentFrame(fw)` | When the framework's state word (`fw+80`) is 2 and the byte at `[fw+384]+16` is 1 (and after a virtual call on the object at `fw+400`, when that is not null) it calls `nvnQueuePresentTexture` through the import slot `0x84d67138` with the queue `[[0x84e9f000+1736]]+104`, the texture `[[fw+384]+112]` and the index `[[fw+384]+128]`, then stores the index at `[[fw+384]+132]` and tail-calls `f_80547fc0`. The port's present hook (`hos_oot_coop_present`, from `nvnQueuePresentTexture` in `host/nvn_native.c`) therefore runs on the thread that makes this call | read |
 
 ## Notes
 

@@ -56,6 +56,9 @@ and pouch), [maps.md](maps.md) (the layouts, the actor packs and ActorParam, the
 | `f_81209b40` | `EngineComponents_Register` | Registers the engine's components by their ActorParam names: Blackboard, ModelInfo, ModelBind, ASInfo, ASOptimize, Animation, RetargetScale, AS, AIInfo, Physics, ELink, SLink, XLink, Reaction, EventMember, EventPerformer, BeforehandLoadEvent, Camera, GameParameterTable, LOD, CalcSkip, CppExecutorParam, NaviAnimator, Pathfinding, Obstacle, BoneBind, Destruction, MotionMatching | read |
 | `f_8122db20` | `GameComponents_Register` | Registers the game's components (about 109 entries), each a `{type, name, maker}` entry (from `0x84e42f90` on): Accessory to WorldInfo, with Life (0x280 bytes), Player, BSA (0xc0), Physics, HS, NpcMovementInfo, Weapon and others | read |
 | `f_829c3780` | `QueryActorGetBaseProcId_Evaluate` | Returns the node's actor's BaseProc ID, the 32-bit word at actor `+0x18`; the actor is the node's `f_80853d60` ([input.md](input.md)), and the name getter `f_829c38c0` | read |
+| `f_80853e00` | `Actor_GetLifeComponent(actor)` | `[[actor+0x270]+0x2b8]`, the actor's Life component ([player.md](player.md)), or 0 when the actor has no component table | read |
+| `f_82c3f780` | `Actor_GetComponent1d8(actor)` | `[[actor+0x270]+472]`, or 0 when there is no component table. The co-op duel code reads it as the equipment component; [ai.md](ai.md) lists the equipment component at `+0x1f8`, so the name is not settled | read |
+| `f_8084acc0` | `Actor_GetComponent358(actor)` | `[[actor+0x270]+856]`, or 0 when there is no component table: the same accessor as `Actor_VirtualKeys` (`f_80964e50`, [input.md](input.md)), a second copy. The co-op duel code reads it as a player component | read |
 
 ### The five jobs each actor runs
 
@@ -105,19 +108,45 @@ The other method slots GameActor overrides, from the engine's: 0, 1, 7–9, 11, 
 
 ### Request lifetime and placement
 
-These call roles come from `host/oot_coop_players.c` at `2f01e1b4bdb6e1629c54a998f0403519fe4e5c74`.
-They remain **guess**: the host's calling contract is not a fresh reading or test of each native body.
-Creation itself is `f_80392a70` above.
+These call roles first came from `host/oot_coop_players.c` at `2f01e1b4bdb6e1629c54a998f0403519fe4e5c74`. The rows marked **read** have since been read in the lifted code (take, drop, delete and the transform setters); the pending-queue rows are still the host's contract only. Creation itself is `f_80392a70` above.
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_8038fbd0` | `ActorRequest_Take` | Takes the actor from a completed create request for the caller. The host's `actor_take` calls it after the request reports ready, then tracks that actor's identity and lifetime | guess |
-| `f_8038fde0` | `ActorRequest_Drop` | Releases a create request that reports it was abandoned, without adopting an actor from it (`actor_take`) | guess |
+| `f_8038fbd0` | `ActorRequest_Take(request, flag, arg)` | Takes the actor a completed create request produced, for the caller (the host's `actor_take` calls it as `(request, 1, 0)` once the request reports ready, then tracks the actor's identity and lifetime). Under the BaseProc manager's lock (`[0x84eb0d90]+968`) and the request's own (`+0x10`) it takes the actor (request `+0x08`); when bit 0 of `flag` is set it first calls `f_800b4f30(actor, 1, arg)` (what that call does was not worked out); then `f_8038f990(manager, actor)`, which returns 0 for an actor whose state is 7 to 11 and otherwise sets bit 25 of the actor's `+0x30` atomically and, if it was clear, queues the actor with `f_800d3db0`. Returns the actor pointer, or 0 when the request has none | read |
+| `f_8038fde0` | `ActorRequest_Drop(request)` | Gives up a create request that reports it was abandoned (state, the low 16 bits of `+0x00`, equal to 4: the game gave it up), without adopting an actor from it (the host's `actor_take`): tail-calls `f_80b4e2e0(request, 0)`, which goes to `f_80b4e6e0(request)`; that clears the state bits by compare-and-swap, zeroes `request+8` and returns the request to the pool, all under locks, and the answer is 1. Any other state returns 0. It does not delete an actor | read |
 | `f_80b4e020` | `ActorRequest_FindPending` | Searches the pending-create queue using a matcher for the caller's retained request cell (`request_cancel`) | guess |
-| `f_80b4e6e0` | `ActorRequest_FreePending` | Cancels/releases the pending create request selected by the caller's queue check (`request_cancel`) | guess |
-| `f_80b4e2e0` | `ActorRequest_DeleteResult` | Cancels a request that is no longer pending by requesting removal of its actor result (`request_cancel`) | guess |
-| `f_800c6490` | `Actor_RequestDelete` | Requests generic actor removal for an already adopted actor (`puppet_remove`) | guess |
-| `f_80c8fd60` | `Actor_SetTransform` | Receives an actor and a row-major transform supplied by the host; the host also maintains the actor's known transform copies (`actor_place`) | guess |
+| `f_80b4e6e0` | `ActorRequest_FreePending` | Cancels/releases the pending create request selected by the caller's queue check (`request_cancel`). Reached with a request in state 4 from `f_8038fde0` it clears the request's state bits by compare-and-swap, zeroes `request+8` and returns the request to the pool under locks | guess |
+| `f_80b4e2e0` | `ActorRequest_DeleteResult` | Cancels a request that is no longer pending by requesting removal of its actor result (`request_cancel`). For a request in state 4 it goes on to `f_80b4e6e0`, which recycles the request (see `ActorRequest_Drop`) | guess |
+| `f_800c6490` | `Actor_RequestDelete(actor, mode)` | Requests an actor's removal (the host's `puppet_remove`, for an actor it adopted). Returns 0 at once when the actor's state (`+0x2c`) is 7 to 11 (already on its way out) or bit 16 of its flags (`+0x30`) is already set (both re-checked under the lock). Modes 0, 3, 4, 6 and 8 are first checked against a 9-bit field of `[[actor+0x1b0]+0x50]` (mask `0x1ff` shifted by 18, 27, 36, 45 and 54 for modes 0, 3, 4, 8 and 6; table at `0x83f8f1b0`); a field that is non-zero and not all ones calls the actor's vtable slot `+0xe8` instead and returns 0. Otherwise it sets bit 16 of `+0x30` atomically (mode 2 also bit 22, and queues the actor a second time when that bit was clear); when bit 16 was clear it queues the actor with the BaseProc manager (`f_800d3db0(manager, actor)`) and calls the actor's vtable slot `+0xe0` with the mode. Returns 1 on every path past the early exits. The manager's lock at `+968` is taken on the slow path only: a calling thread that is one of the manager's own threads skips it | read |
+| `f_80c8fd60` | `Actor_SetTransform(actor, matrix*, w2)` | Takes a row-major 3x4 float matrix (three rows of rotation, rotation, rotation, position) and, when the actor has a physics component (`[[actor+0x270]+0x50]`), passes position and rotation to `f_804e6630` with `pending` = bit 0 of `w2` inverted; if that returns true it stops. Otherwise (or with no physics component) it copies the matrix into the actor's own spare transform block (position at `+0x358`, rotation at `+0x364`; a position starting with the quiet NaN `0x7fc00000` zeroes the position block, a rotation starting with it fills the rotation block with the identity) and sets (when bit 0 of `w2` is 1) or clears bit 15 of the actor flags `+0x4a8` atomically. It does not touch `+0x31c` or `+0x328` and never sets bit 23: the host's bodies write those words themselves (`actor_place`, called with `w2` = 0). It and `f_804e6580` are two ways into the same sink, `f_804e6630`; the host's bodies use this one (pair sessions), the game's own node uses `f_804e6580` | read |
+| `f_804e6580` | `Actor_ApplyMtxToPhysics(actor, w1)` | The actor's vtable slot `+0x218` (slot 67; `0x84b46030`): hands the transform the caller has just written into the actor itself (position `+0x31c`, three floats; rotation `+0x328`, nine floats) to the actor's physics component (`[actor+0x270]+0x50`). Does nothing when the actor's state (`+0x2c`) is 1. Otherwise it first sets bit 23 of the actor flags `+0x4a8` atomically (the "warp" bit of another co-op project; set even when the actor has no physics component), then, when it has one, calls `f_804e6630(component, &position, &rotation, pending)` with `pending` = bit 0 of `w1` inverted (`w1` = 0 for the normal call: the new transform is also queued as the body's pending target). The game's own AI node `ExecuteActorForceSetMtx` (`f_82642e50`) writes `+0x31c..+0x34b` and tail-jumps to this slot with `w1` = 0 | read |
+| `f_804e6630` | `PhysicsComponent_SetTransform(component, position*, rotation*, pending)` | Moves the actor's physics body (body = `[component+0x20]`; none: returns 0). `position` is three floats, `rotation` nine floats (a 3x3); either pointer may begin with the quiet NaN `0x7fc00000` to mean "keep the current value": taken from the body's pending target (body `+0x1d0`, when body `+0x228` has bit 0 or bit 1 set: one is queued) or else from the actor at `component+0x38` (`+0x31c` / `+0x328`). With bit 0 of `pending` set it stores the result as the body's pending target (a 3x4 matrix, 48 bytes at body `+0x1d0`, marked in body `+0x228` bits 0 and 1) and flags the object at body `+0x1c8` (byte `+0x1f2` bit 7; without it body `+0x22e` bit 7). It then applies the new place to the body's character controller (body `+0x190`): through the owning object's virtual call (vtable `+0xc8`, with the 3x4 block) when that object's controller is the body's, else directly (position `f_80182250`, rotation `f_806d8a40`, each skipped when its pointer began with the NaN), and finishes through `f_804e6870`; bit 0 of the result is returned. After storing a pending target, if the object at body `+0x1c8` has a non-zero count at `+0x130` it walks the pointer array at `+0x138` and calls `f_837fcca0` on each entry's `+0x10` that is not null. 26 direct callers, `f_804e6580` and `f_80c8fd60` among them | read |
+| `f_82642e50` | `ExecuteActorForceSetMtx_Run` | The script node that sets an actor's transform from its inputs: computes position and rotation from the node's matrix inputs, stores them at actor `+0x31c..+0x34b`, then tail-jumps to the actor's vtable slot `+0x218` (`f_804e6580`) with `x1` = 0. The name is the other co-op project's (its node-run address converts to this function), the behaviour read here. Inputs: a nine-float block (the rotation) through `[[node+0x20]]` and a three-float block through the tagged pointer at `node+0x28`; the actor is `[[[node+8]+8]+0x1f0]` | read |
+| `f_80b4fbc0` | `ActorRequestCell_Release(cellAddr)` | If `*cell` is non-null calls `f_8038fde0` (the drop of the request) and clears the cell. | read |
+
+### The instance record and the create path
+
+An actor made from a placement or a request carries an instance record and the name of its actor file; the create path stores both (see *Structures*).
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80a04860` | `QueryGenericGetInstanceId_Evaluate` | Slot 33 of the AI query node `QueryGenericGetInstanceId` (the cell is `0x84aa99e0`; no direct callers): after its input preamble (`f_80a04900`) it follows `[[[node+8]+8]+0x1f0]` (the actor) `-> +0x3d8 -> +0x88`, stores that u64 at `node+0x20` and formats it as decimal text (`%llu`) into the node's output string at `node+0x28`, the `InstanceIDString`. It is where the decimal placement hash comes from that the chest's opened-flag name (`IsTreasureBoxOpen.<hash>`) is made of; that consumer was not traced here | read |
+| `f_83b04310` | `ActorInstance_Reset(record)` | Resets an instance record to its idle values: scale words 1.0, the u64 id at `+0x88` all ones, flags and links cleared, a quiet NaN at `+0xf0..`. Called twice by the instance add `f_83b072b0` | read |
+| `f_83af0700` | `Actor_SetInstanceAndName(actor, record, name)` | Stores `record` at actor `+0x3d8` and `name` at actor `+0x260` (and marks the 384 bytes from `+0x260`); the create path `f_82c4e160` calls it with the create parameters' `+0x00` and `+0x10` | read |
+| `f_82c4e160` | `Actor_CreateFromParams(params, factory, flags)` | The create path after a request is ready: the factory (`x1`, virtual call at vtable `+0`) makes the actor; `Actor_SetInstanceAndName` records the parameters' instance record and name; with `flags` bit 0 set, bits 8 and 9 of the actor's flag word `+0x4a8` follow the parameters' bytes `+9` and `+10` | guess |
+| `f_814e6c90` | `Libc_Malloc(size)` | The C library's `malloc`: a block of `size` bytes from the process allocator (through the hook at `0x84d68658`), or 0 with `errno` = 12 when none; 187 direct callers. A co-op project's guest-heap allocations (a spawn director's, the play requests') use it | read |
+
+### The Shooter component and its shots
+
+A shooter (Link's slingshot and boomerang, enemies that shoot) keeps a list of shot records; each shot makes one actor through the create request. See *The Shooter component* in Notes.
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80c36cf0` | `ShooterComp_ShootOne(record, shooter, desc)` | Makes one shootable actor for a Shooter component: copies the actor name from `desc`, builds a creation request (shooter's position, identity rotation, unit scale, creator = shooter actor and Shooter type object, two override records KeyHash and OverrideParamNum), calls the create request `f_80392a70` at 0x80c372fc with the record's cell as request out, stores the result in the record and returns 0/1/3 (2 = previous request still pending). Sets no velocity. | read |
+| `f_800f36a0` | `ShooterComp_TickShots(comp)` | Walks the Shooter component's entries (`+0x20`, count `+0x2c`) and their records; asks `f_83056970` for each record's state and calls `ShooterComp_ShootOne` for states 1 and 4 and up; state 0 goes to `f_83056240`, state 3 to `f_83056bd0`; writes the entry's "all ok" bit. Called from `BSA_Update` (`f_800eb9c0`) on `[comps+0x3d8]`. What it calls is read; the name is a guess | read |
+| `f_809b2df0` | `ShooterComp_TickShotsGuarded(comp)` | Same loop as `f_800f36a0` behind a guard (owner state `[actor+0x2c]` in 7..11, `[actor+0x30]` bit 16 clear, manager no-create flag clear); returns the AND of the records' results. Called by `f_809b2ff0`. | guess |
+| `f_82ed07d0` | `ShooterComp_Slot10` | Slot 10 of vtable `0x84b6ff90`: when `+0x18` is empty takes the owner actor from `*arg`, then loops the entry list and calls `ShooterComp_ShootOne` (call at 0x82ed114c). | guess |
+| `f_83056970` | `ShotRecord_GetState(record)` | Returns the record's state 0 to 9 from its flags (`+0xdb`, `+0xdc`, `+0x30`) and the request cell's u16 state; the Shooter loops fire on states 1 and 4 and up. Its first half and its two callers were read; the meaning of the states is a guess | guess |
 
 ### Resident actors
 
@@ -139,6 +168,20 @@ CancelSleepRot).
 | `f_80963920` | `ResidentActorMgr_SleepStep(mgr)` | One step of putting the residents to sleep; true when done | guess |
 | `f_80964800` | `ResidentActorMgr_FindByName(mgr, &name)` | Looks a resident up by name; the player's names (`Player`, `Player_Base`, `Player_Child`, `Player_Adult`) are matched as one | read |
 
+### The foliage cut queue
+
+Cutting grass and bushes: callers put a cut request on a queue that the foliage scene's consumer reads (see *The foliage cut queue* in Notes).
+
+| Function | Name | What it does | Sure |
+|---|---|---|---|
+| `f_80ba0800` | `FoliageModule_PushCut(module, cut)` | Copies a 0x3c-byte cut request into a free slot of the foliage scene and queues it (see Q4); ignores radius < 0.01; returns 0 when no module scene or no free slot, else 1. | read |
+| `f_80ba08f0` | `MpmcQueue_Push(queue, item)` | Bounded sequence-ring push of a pointer, wakes the consumer, returns 1 / 0 (full). Used for the cut queue at S+0x20. | read |
+| `f_82ec3ef0` | `Actor_QueueSwingFoliageCuts(component, steps)` | Per-frame swing handler of the component at `[comps+0x3b8]`: from the label `0x82ec4880` (an instruction inside this function, not a function) it pushes one cut slot per frame step to the foliage queue (radius halved, three swing points from the attack volume). Called only by `f_82c3d740` at 0x82c3e428. The producer part is read; the first half (an animation-slot loop) was only skimmed | read |
+| `f_829876a0` | `OneshotTryCutFoliage_Calc` | Slot 39 of the AI node of that name (vtable `0x84a6a848`): builds a cut from position, radius and kind ports and calls `f_80ba0800`. | read |
+| `f_8305e390` | `Foliage_CutFromHit` | A hit-reaction style handler (`x1` the hit record, `x0` a component whose `+0x18` is the actor) that cuts through `f_80ba0800` (call at 0x8305e464): radius 2.0, NaN swing points, for certain hit kinds. Called through a function pointer (no vtable cell found). Only the part that builds and passes the cut was read | guess |
+| `f_8305e4c0` | `Foliage_CutFromHit2` | The same kind of handler (call at 0x8305e5c4); the cut's kind byte is 0 where `f_8305e390`'s is 4 | guess |
+| `f_80458ab0` | `Foliage_CutFromSensorWalk` | A per-frame walk over a manager's actor list that cuts at each match, building the request from sensor data (call at 0x80458c9c); reads the module through the GOT cell | guess |
+
 ### The update settings
 
 Reflection visitors: each names a parameter and the field it fills (offsets in *Structures*).
@@ -156,11 +199,11 @@ Reflection visitors: each names a parameter and the field it fills (offsets in *
 | Address | Name | What it is | Sure |
 |---|---|---|---|
 | `0x84eb0d90` | `g_BaseProcMgr` | The BaseProc manager (0x470 bytes): the request queues, the create and delete threads; `f_83acfb90` runs the BaseProc phase on it ([jobs.md](jobs.md)) | read |
-| `0x84eb1888` | `g_ActorMgr` | The actor manager: the class table at `+8`, the actor heaps (`f_83afb830`); reached through the GOT slot `0x84c9f3e0` from about 116 functions, jobs 1 and 4's runs among them | read |
-| `0x84c9f3e0` | `got_ActorMgr` | The GOT slot holding `0x84eb1888` | read |
+| `0x84eb1888` | `g_ActorMgr` | The variable that holds the pointer to the actor manager (0 in the static image, filled at run time). The code reaches it through the GOT cell `0x84c9f3e0` and loads it twice: the cell gives this address, the variable gives the manager (`[0x84eb1888]`; `host/` reads it that way). The manager has the class table at `+8` and the actor heaps (`f_83afb830`); about 116 functions use the cell, jobs 1 and 4's runs among them | read |
+| `0x84c9f3e0` | `got_ActorMgr` | The GOT cell holding `0x84eb1888`, the address of the variable that holds the actor manager | read |
 | `0x84b45e18` | `GameActor_vtable` | The only actor class's vtable (96 slots). `hos_oot_lift_player` checks for it | read |
 | `0x84c7b7a8` | `ActorBase_vtable` | The engine's actor base vtable | read |
-| `0x84b6c460` | `CharacterObj_vtable` | The vtable of a 0x1d20-byte object made by `f_80d1fbb0` (which `f_8122db20` lists under the name "InactiveCounterRef"; **guess** that the pairing is right). Other actors than Link have one; its `+16` record is named "Player" for Link (`hos_oot_is_player`), and Actor_WriteLife's actor (`f_804bd8c0`, [player.md](player.md)) is one, its life component at `+7184` | read |
+| `0x84b6c460` | `CharacterObj_vtable` | The vtable of a 0x1d20-byte object made by `f_80d1fbb0` (which `f_8122db20` lists under the name "InactiveCounterRef"; **guess** that the pairing is right). Other actors than Link have one; its `+16` record is named "Player" for Link (`hos_oot_is_player`), and the object `f_804bd8c0` steps (x19, `[actor+0x270]+0x2b8`, the Life component of [player.md](player.md)) is one: its `+7184` is the life cell's pointer | read |
 | `0x84c7bed8` | `ActorJob0_vtable` | Job 0's functor (run `f_800b73d0`) | read |
 | `0x84c7bf00` | `ActorJob1_vtable` | Job 1's functor (run `f_800b3ce0`) | read |
 | `0x84c7bf28` | `ActorJob2_vtable` | Job 2's functor (run `f_83af59c0`) | read |
@@ -169,6 +212,9 @@ Reflection visitors: each names a parameter and the field it fills (offsets in *
 | `0x84c79680` | `BaseProcCreateAndDeleteThread_vtable` | The create and delete threads' vtable (slot 14 `f_83ad0bf0`) | read |
 | `0x83d2d9a4` | `str_GameActor` | "GameActor" | read |
 | `0x83d7c824` | `str_BaseProcCreateAndDeleteThread` | "BaseProcCreateAndDeleteThread" | read |
+| `0x84b6ff90` | `ShooterComp_vtable` | Address point of the Shooter component's vtable (slot 1 returns type object `0x84e43cd8`, slot 10 = `f_82ed07d0`, slot 27 returns the Japanese label for "shooter", slot 28 the editor icon `ShooterParam`). Instances are 0x140 bytes made by `f_80e641d0`. | read |
+| `0x84b8e6c8` | `CreateInitCallback_vtable` | Closure with one captured pointer to a bool: slot 0 `f_83056e40(closure, creationInfo)` sets bit 0x10000 in the u32 at creationInfo+0x14 from that bool; slot 3 is a no-op. The shoot function passes one that carries the shooter's `actor+0x6a4` bit 0. | read |
+| `0x84e42540` | `g_FoliageModule` | The pointer to the foliage module (0 in the image, filled at run time; 50 or more functions load it, none was found that stores it); `+0xf0` holds an object whose `+0x338` is the foliage scene. The GOT cell `0x84c9f2c8` holds this address | read |
 
 ## Structures
 
@@ -184,9 +230,27 @@ Reflection visitors: each names a parameter and the field it fills (offsets in *
 | `+0x2c0` … `+0x2e0` | The five jobs (`f_83af21f0`) | read |
 | `+0x31c` … `+0x324` (796–804) | The position, three floats (the host's flight reads them as Link's position) | read |
 | `+0x330`, `+0x348` (816, 840) | Two matrix elements the host takes the heading from | read |
-| `+0x3d8` | An object whose `+0x58` holds the settings a job's `+0x20` byte is taken from (`+0x9c`, `+0xbe`) | read |
+| `+0x3d8` | The actor's instance record (stored by `f_83af0700` with the name at `+0x260`): its `+0x58` holds the settings a job's `+0x20` byte is taken from (`+0x9c`, `+0xbe`) and its u64 at `+0x88` is the placement's hash (see *The instance record*) | read |
 | `+0x470` | A 0x100-byte block made with the jobs | read |
 | `+0x5f8` | The word slot 57 returns | read |
+| `+0x2c` | u32 state: 1 makes `f_804e6580` refuse; 3 "made" and 4 "in the map" are the values the host relies on (tested by its bodies); 7 to 11: on its way out, `f_800c6490` and `f_8038f990` refuse | read |
+| `+0x30` | u32 flags: bit 16 delete requested (`f_800c6490`), bit 22 set by delete mode 2, bit 25 set by `f_8038f990` | read |
+| `+0x260` | A pointer to the actor file's name string (stored by `f_83af0700`; `Obj_TBox_A_01` for a chest, seen in play; the same field as `+608` in the co-op notes) | tested |
+| `+0x328` | The rotation, nine floats (a 3x3); `+0x31c` is the position, `+0x330` and `+0x348` are among its elements | read |
+| `+0x358`, `+0x364` | The spare transform `f_80c8fd60` writes: position, three floats; rotation, nine floats | read |
+| `+0x4a8` | u32 flags: bit 23 set by `f_804e6580`, bit 15 set or cleared by `f_80c8fd60`, bits 8 and 9 set by `f_82c4e160` from its parameter bytes `+9` and `+10` | read |
+
+### The instance record (`[actor+0x3d8]`)
+
+Reset by `f_83b04310`. **read**
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x58` | An object holding the settings a job's `+0x20` byte is taken from | read |
+| `+0x88` | u64 id, the placement's hash (the original byte-YAML key): all ones (`0xffffffffffffffff`) for an actor the game made without a placement. Found in play for chests and for a placed enemy | tested |
+| `+0x94` | u16 flags (bit 2 cleared by the reset) | read |
+| `+0xf0` | A quiet NaN from the reset | read |
+
 
 ### An actor job (`f_83af21f0`)
 
@@ -240,10 +304,74 @@ IsAlwaysDisableInEventMember `+0x9e`. **read** (`f_83c0dd50`)
 | `+0x60`, `+0x9d`, `+0x64`, `+0x54`, `+0x80` | EnableClothSkip, IsAlwaysClothSkip, EnableClothSkipRescue, ClothSkipNearestPriority, IsClothSkipKeepAtInit | read |
 | `+0x98` | EnableXLinkSkip | read |
 
+### A shot record (0xf8 bytes, an element of a Shooter list entry)
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x18` | u64 request cell: a pointer to the request record (u16 state at its `+0`: 3 ready, 4 done or taken) | read |
+| `+0xdb` | u8 last create result code | read |
+| `+0xdc` | u8 requested flag | read |
+| `+0xde` | u8 cleared at each shot | read |
+| `+0xe0` | u8 pending flag | read |
+
+### The Shooter component (vtable `0x84b6ff90`, 0x140 bytes) and its list entries
+
+| Offset | Field | Sure |
+|---|---|---|
+| `+0x10` | u64 parameter object | read |
+| `+0x18` | u64 owner actor | read |
+| `+0x20` | u64 list of 0x38-byte entries | read |
+| `+0x2c` | u32 entry count | read |
+| `+0x130` | u32 cleared by slot 10 | read |
+| `+0x139` | u8 flag | read |
+| entry `+0x00` | u32 valid | read |
+| entry `+0x08` | u32 count (or the u8 at `+0x34`) | read |
+| entry `+0x10` | u64 array of 0xf8-byte records | read |
+| entry `+0x18` | the projectile actor's name (a string object) | read |
+| entry `+0x20` | u32 key hash | read |
+| entry `+0x34`, `+0x36` | u8 count; u8 flags (bit 1 all shots of the entry made, bit 2 forwarded) | read |
+
+### The foliage scene S (`[[module+0xf0]+0x338]`) and a cut slot (0x3c bytes)
+
+| Offset | Field | Sure |
+|---|---|---|
+| module `+0xf0` | u64: null means cuts are refused; `[+0xf0]+0x338` is S | read |
+| module `+0x141`, `+0x2b0` | Gate bytes read by the hit reaction `f_82c01120`: `+0x141` bit 0 set skips, `+0x2b0` bit 1 set skips; `[S+8]` bit 1 must be set | read |
+| S `+0x20` | The cut queue: u32 capacity (a power of two, mask = capacity - 1) | read |
+| S `+0x28` | u64 ring base: 16-byte entries, the item pointer then a sequence word | read |
+| S `+0x30` | The consumer index (producers do not touch it) | read |
+| S `+0x38` | u64 producer ticket | read |
+| S `+0x48` | u64 base of the slot array (0x3c bytes a slot; a free slot's first u32 is the next free index) | read |
+| S `+0x50` | u64 free-list head: low u32 the index (0xffffffff empty), high u32 a counter that rises by one per pop (an ABA guard) | read |
+| slot `+0x00` | vec3 centre | read |
+| slot `+0x0c` | f32 radius | read |
+| slot `+0x10` | f32 (the producers set 0.3) | read |
+| slot `+0x14` | u8 kind (kind << 2 in the oneshot node; 4 in `f_8305e390`; 0 in `f_8305e4c0`) | read |
+| slot `+0x18`, `+0x24`, `+0x30` | Three vec3 swing points; the first float is the quiet NaN `0x7fc00000` when not given | read |
+
 ## Notes
 
 - Job 0 sets the actor's time group before slot 51 runs: it fills its core's frame-time slot (`keeper+0x20+0x30*core`) with the step scaled by the group's rate and its inverse, scales slot 51's step by the group's rate over group 0's and keeps the ratio at `actor+0x2e8`; the group comes from slot 57 ([animation.md](animation.md)). **read**
 - The component-offset map is on [ai.md](ai.md); the base slots 60, 61 and 63 also run AI units, and `f_8018dba0` is called from slot 51 as well as slot 52. `f_802ca820` (hot rank 64) has the shape of job 1's run (`f_800b3ce0`): another actor-job run. **read**
+
+### The Shooter component
+
+- **What it is.** `f_80c36cf0` is a plain helper (no vtable slot) of the actor's Shooter component: class vtable `0x84b6ff90`, found at `[actor+0x270]+0x3d8`, 0x140 bytes, made by `f_80e641d0`, registry name `ShooterRef` (the registry table's maker column sits one entry early: the maker printed next to `ShooterRef` builds a class labelled "shop" and the one next to `ShootableRef` builds this Shooter class). Three callers walk the component's shot list and call it once per record, first asking `f_83056970` for the record's state and calling only for state 1 and states 4 and up: `f_82ed07d0` (slot 10 of the class's vtable; call at 0x82ed114c), `f_800f36a0` (run from `BSA_Update` on `[comps+0x3d8]`; call at 0x800f37cc) and `f_809b2df0` (the same loop behind a guard, run from `f_809b2ff0`; call at 0x809b2f64). **read**
+- **Arguments.** `x0` one shot record; `x1` the shooter context (its first 8 bytes the shooter actor; the callers store `[component+0x18]` there); `x2` the shot description: `+0` a pointer to a string object whose first word is the projectile actor's name (copied into a 0x40-byte local string), `+8` u32 the `Shootable_KeyHash` value, `+12` u32 (goes to the create call's `x4`), `+16` u8 the `Shootable_OverrideParamNum` value (the loops pass a constant 12 or a byte of the list entry). **read**
+- **What it does.** It checks the record's request cell first: a non-null cell in state 4 is released (`f_80b4fbc0`) and `record+0xdc` cleared; a non-null cell in any other non-zero state returns 2 (a previous request still pending, nothing created). Otherwise it clears `record+0xe0` and `+0xde`, builds a creation request and calls `f_80392a70` with the manager, the name, the request, `record+0x18` (receives the request cell), `desc+12` and a small closure object (vtable `0x84b8e6c8`: slot 0 `f_83056e40` sets bit 0x10000 in the u32 at the creation info's `+0x14` when the shooter actor's byte at `+0x6a4` has bit 0, slot 3 `f_80c379a0` does nothing). The request holds the shooter actor's position (`+0x31c`), the identity rotation, unit scale, the shooter actor as creator (`request+0x80`), the Shooter type object `0x84e43cd8` as creator type (`request+0x88`) and two parameter overrides of 0xc8 bytes, `Shootable_KeyHash` (tag 0xc) and `Shootable_OverrideParamNum` (tag 0xa). The result code is 0 queued, 1 the manager refuses creates (its byte `+0x109` bit 1), 2 an empty name; it goes to `record+0xdb`, `record+0xdc` is set to 1 if not set, and the function returns 0, 1 or 3. **No velocity or aim is set here**: the created shootable has to read the two overrides and its creator itself (an inference; not read). **read**
+- **Two places inside it,** the first instruction after the prologue (`0x80c36d24`: `x22` the shooter context, `x21` the description, the name `[[x21]]`) and the create call (`0x80c372fc`, returning to `0x80c37300`); the create function's own refusal path is at its start (byte `+0x109` bit 1 of the manager). Neither is a function.
+
+### The foliage cut queue
+
+- **The module and the queue.** `[0x84e42540]` is the foliage module and `[[module+0xf0]+0x338]` the scene S whose queue the cuts go to (the structures above). `f_80ba0800(module, cut)` returns 0 if `module+0xf0` is null or the free list is empty; does nothing and returns 1 when the radius at `cut+0x0c` is below 0.01; otherwise pops a free slot, copies the 0x3c bytes, sets `slot+0x10` to 0.3, pushes it with `f_80ba08f0(S+0x20, slot)` and returns 1. It ignores a failed push, so a full queue leaks the slot (no hand-back was seen). `f_80ba08f0` is a bounded multi-producer queue push on a sequence-numbered ring: take the next ticket, need the entry's sequence word to equal it, write the item, publish ticket + 1, call `f_85786920` (wakes the consumer) and return 1; a full ring returns 0 and a ticket race retries. **read**
+- **Callers of `f_80ba0800`:** `f_829876a0` (slot 39 of the AI node `OneshotTryCutFoliage`, vtable `0x84a6a848`; position from two ports, the radius from a float port, the kind byte shifted left 2, three NaN points), `f_8305e390`, `f_8305e4c0` and `f_80458ab0`. The module argument is `[0x84e42540]` in all but `f_80458ab0`. **read**
+- **The sword's cut producer** is not a function of its own: `0x82ec4880` is an instruction label inside `f_82ec3ef0` (the function spans `0x82ec3ef0` to `0x82ec4d00`). From that label the code halves the swing radius (times 0.75 first when the attack state is 2), reloads the module, checks `module+0xf0` and the 0.01 limit, pops a free slot itself (the same pop), fills all 0x3c bytes (centre from the actor's position, radius, 0.3, the kind byte, three swing points from the attack volume's start, middle and end, or NaN when the attack component is not in state 1 or 2) and pushes with `f_80ba08f0` (call at 0x82ec494c), without `f_80ba0800`. `f_82ec3ef0(C, &steps)` is called only by `GameActor_Calc51` (`f_82c3d740`, call at 0x82c3e428) with C = `[components+0x3b8]`, only when C is non-null and `C+0x22` has bit 1; inside it walks the actor's animation slots (the AS chain at `components+0x40`) and the attack component at `components+0x458` (state u32 at `+0x1e4`), and runs only for actors whose current state tests true in `f_82ec4d00` / `f_80b41a80`. **read** (the producer part)
+
+### The engine's list and the actor list
+
+- **The engine's circular list** (as read in `f_800d3db0`, the BaseProc manager's insert and remove, and `f_80389b00`, a walk of such a list): the head is its own sentinel; `+0x00` points to the last node and `+0x08` to the first (both the head itself when empty), `+0x10` is the u32 node count and `+0x14` the s32 offset of the node inside its object (an object is node minus that offset). A node is `{+0x00 previous, +0x08 next}`; insert writes the old last node's next and the head's last and adds one to the count; removal clears the node and counts down. Walk `+0x08` for the first-to-last order. **read**
+- **The actor list** was not found in any function that walks it (searched: every function that loads a manager's `+0x118`, adds `0x670` or subtracts `0x538`), so these offsets are another project's live claim: `[0x84eb1888]` is the manager M, the head is `[M+0x118] + 0x670` with the count u32 at `+0x10` of it, the actor's node is at `actor+0x538` (so the head's offset word `+0x14` should read `0x538`) and the node's `+0x10` holds the actor pointer. The engine list's layout agrees with their "u32 at head + 0x10 is its length" and "owner = node - 0x538". **guess** (the offsets `0x118`, `0x670`, `0x538`, `+0x10`)
+- **Two ways to move an actor, one sink.** `f_804e6580` (actor vtable slot `+0x218`; what the game's own node `ExecuteActorForceSetMtx` calls) and `f_80c8fd60` (what the host's bodies call) both end in `f_804e6630`. Slot `+0x218` takes the transform the caller wrote into `+0x31c..+0x34b` and sets bit 23 of `+0x4a8`; `f_80c8fd60` takes a row-major 3x4 matrix, never sets bit 23 and keeps a spare copy at `+0x358`. For an enemy's copy the game's own path (slot `+0x218`) is the one another project's runs proved; the host's is proved only for puppets. **read**
 
 ### From a placement to a running actor
 
@@ -300,6 +428,10 @@ From the code's size and what it calls, not measured (**guess** unless a measure
 
 ## Open questions
 
+- The actor list's offsets: in a field read `[0x84eb1888]` = M and `[M+0x118]` = L; the u32 at `L+0x680` should be the actor count (changing with the room), the s32 at `L+0x684` should read `0x538`, and nodes at `L+0x670` walked by `+0x08` should have owners `+0x10` = node - `0x538`. Read `[actor+0x3d8]+0x88` of a pot or a chest (not all ones) and of a rupee dropped from a cut bush (all ones). Place a field enemy with each of slot `+0x218` and `f_80c8fd60`: does it stay (another project found only slot `+0x218` does)?
+
+- The Shooter and the foliage cuts: at the hook point `0x80c36d24` of a slingshot shot print `[[x2]]` as a C string and `[x1]` (expect Link and the name of the created actor), and read the created actor's velocity fields one frame later to see who sets them. In a field scene read `[0x84e42540]`, `[module+0xf0]` and `[[module+0xf0]+0x338]`: expected non-null. During a sword swing log the byte `C+0x22` (C = `[comps+0x3b8]`) and the state at `[comps+0x458]+0x1e4`; expected bit 1 set and state 1 or 2 when the three swing points are not NaN. Which component C and `[comps+0x458]` are (a swing or attack tracker is the guess); who creates the foliage module pointer and reads the queue (the renderer side); what `module+0x141` and `+0x2b0` mean; who calls `f_8305e390` and `f_8305e4c0` (function pointers, no vtable cell found); how a created shootable gets its velocity.
+
 - Which job is which phase (PreCalc, PostCalc, PostSensor, PostUpdateMatrix, and a "Blank" one?), and the order the
   five run in within stage 5.
 - How many actors exist and how many jobs are pushed a frame in a busy scene (Kokiri Forest, Hyrule Field): a live count
@@ -309,6 +441,5 @@ From the code's size and what it calls, not measured (**guess** unless a measure
 - Who reads `actor+0x3d8` and what its `+0x58` object is (LODParam or the calc skip's InitParameters).
 - What slots 50, 51, 53, 55 and 56 do, and where AS and the AI graphs are updated.
 - The PreActor: what it holds, when an actor becomes one and back, and what "PreActorRendererUpdateJob" draws.
-- What `0x84b6c460`'s object really is: the component registry's pairing gives "InactiveCounterRef", which its size and
-  its life pointer don't fit.
+- Whether `0x84b6c460`'s object is the Life component: its fields (the life and maximum cells, the request block, the hit record) are the Life component's and `f_804bd8c0` steps it, while the component registry pairs its maker `f_80d1fbb0` with "InactiveCounterRef" and lists Life at 0x280 bytes. The registry's maker column is one entry early at the Shooter entry (see *The Shooter component* in Notes); whether it is early here too was not checked.
 - What the six create and delete threads' core masks are (the settings at `+0x60` to `+0x74` are filled at run time).

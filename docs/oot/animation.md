@@ -60,6 +60,12 @@ frame's seconds and `+4` the step, both from the current core's frame-time slot 
 | `f_83b74d30` | `LODModule_Calc(mod, frame)` | Slot 2 (hot rank 139, 2,824 instructions): under the mutexes at `+0x908` and `+0x998` runs the listeners at `+0x960`; checks the frame's flag set for the key 0x9f0b75e7 (as the AS calc does for its own), builds view volumes (`sinf`, `cosf`, `tanf`; **guess**: one per camera), staggers per-entry flags by the frame number (0x1000 in the entry's `+0xc4` when `(BaseProc ID − frame) mod N` is not 0, 0x400 when `mod 5` is not 0), starts the helper jobs (`f_80428800`, with the count `+0x8c0`: **guess**) and runs `f_80021ca0` on its own thread (at 0x83b7614c) | read |
 | `f_83b78880` | `LODWorkerDelegate_Invoke` | The delegate's invoke (vtable `0x84c84c20`, slot 0): calls the method on its object, going straight to `f_80021ca0` when that is the method | read |
 | `f_80021ca0` | `LODModule_Worker(mod)` | Hot rank 9, 7,340 instructions. Adds one to `+0x8d0` and pops entries off the lock-free stack at `+0x8c8` (compare-and-swap) until the list's end. Per entry (the actor at `+0x10`): reads its main rigid body's transforms (`f_80158940`, `f_80158c10`, each NaN-checked, the error 剛体[%s]にNan(%s)が指定されました, "NaN set on rigid body [%s] (%s)", with `mLastTransform` or `mPrevTransform`); fills a sphere query (position at `+0x80`, radius at `+0x8c`) and steps its states (`+0x24`), reading results after `nvnMemoryPoolGetFlags` (6 calls) and an invalidate; distances and angles (`sqrt` ×8, `acos`); adds step × `[keeper+0x1c0]` × the actor's group rate to `+0x98`; sets the 64-bit state at `+0xb8` and writes the interval byte of jobs 0 to 3 (`functor+0x14`: 1, or 2 for job 3) and tests `(frame − phase) mod interval` for each (from 0x80024f18). Work: per actor entry, with mutexes (9 locks) around shared parts | read |
+| `f_80389b00` | `LODModule_ApplyCalcSkipPolicy(list, ctx)` | Walks an offset list (head `+8` first link, s32 offset at head `+0x14`) of LOD components (the object at `[actor+0x270]+0xb0`; see *The LOD component* in Notes). `ctx`: `[ctx+0]` the LOD module (a guess, not verified at the call site), `[ctx+8]` and `[ctx+0x10]` statistic structures. Per component it reads the module's mode bits (u8 `+0x9f0`: bit 3 force-skip mode, which sets `+0xc4 |= 0x1ddf` for plain components; bit 2 clear mode, `+0xc4 &= 0xe220`), the component's flags (u64 `+0xb8`) and level bytes (`+0xb4`, `+0xb5`), derives bits 5 to 7 of `+0xc4`, then asks the policy object at `module+0x950` (slot 0x40, or 0x48 when the component is not "plain": `flags & 0x200000028f != 0x80`) and writes its answer into the low 4 bits of the u16 at `+0xc4` (the place `0x80389df8`, the instruction after the policy call, `x21` the component and `x0` the answer, is not a function; another project's hook site), clears bit 0 of the bytes `+0xc6` and `+0xc7`, applies the module's override mask (u32 `+0x930`) to bits 4 to 8 and 10 to 12, then calls policy slot 0x58 (the level; above 3 stops) and, if bit 0 is set, slot 0x68 (confirm): true sets byte `+0xc7` bit 0 and pushes the component on a per-level skipped list (capacity 36 per list, statistics at `ctx[0x10] + level*0x250 + 0x240`). Called twice by `LODModule_Calc` (`f_83b74d30`), once for each of two lists. The policy object's class has no string; by the names `engine__cskip__InitParameters`, `EnableCalcSkipGlobal` and `CalcSkipRescue*` it is most likely the engine's calc-skip system (a guess) | read |
+| `f_80ccd060` | `Actor_LODComponent(actor)` | `[[actor+0x270]+0xb0]`, or 0 when the actor has no component table. 63 callers | read |
+| `f_829ee250` | `QueryBsaIsBrainSkip_Evaluate(node)` | Writes bit 0 of the u16 at `+0xc4` of the LOD component of the node's actor (`f_80ccd060(f_80853d60(node))`) to the node's output (`f_80854960(node+0x20, bool)`); no component: the output is untouched. Vtable cell `0x84a93c00`. The BSA update (`f_800eb9c0`) and the perception receiver update (`f_800f8910`) read the same bit from `[[actor+0x270]+0xb0]+0xc4` | read |
+| `f_82a20bc0` | `LODQuery_Bit1_Evaluate(node)` | The same shape as `f_829ee250` for bit 1 of `+0xc4` (also read by `f_82b31ce0`). Vtable cell `0x84aa6e90`. The query's own name was not resolved | read |
+| `f_80ccd080` | `ExecuteSetLODFlagBit39_Run(node)` | Sets or clears bit 39 (`0x8000000000`) of the u64 `+0xb8` of the actor's LOD component from the node's bool input (the pointee of the pointer at `node+0x20`); marks the node done | read |
+| `f_80ccd040` | `LODComponent_ClearEnableBit(comp, n)` | Atomically clears bit `n + 3` of the u32 at `comp+0x9c` | read |
 
 ### The AS module and the animation resources
 
@@ -74,7 +80,7 @@ The AS module's vtable is `0x84c7ab88` (slot 2 the calc, slot 7 the set-up, slot
 | `f_80fd36e0` | `ASModule_MakeHeap` | Slot 9: asks for a heap named "ASModule" for the module (`f_80fd3e10`) | read |
 | `f_83b17cf0` | `AnimationComponent_Bind` | The Animation component's resources (976 instructions): `Model/%s.anim.bfres`, the events `AnimationEvent/Animation/*.baev`, `Model/%s.%s.bfres` and RetargetScale | guess |
 | `f_809727c0` | `ModelResources_Paths` | Builds an actor's model paths: `Model/%s.%s.bfres`, `Model/%s.anim.bfres` from its ModelProjectName, and the PreActorRenderInfo | guess |
-| `f_8299a830` | `QueryASGetCurrentFrame_Evaluate` | The script query's slot 39: from the node's actor (`+0x1f0` of its owner), the components (`actor+0x270`), the AS reference (`+0x40`, then `+0x18` twice); for the slot index input below the slot count (`AS+0x18`), takes slot `[AS+0x20] + 0x48 × i`, whose `+0x10c` is the current frame (a float); outputs it and frame ÷ the clip's length (its node's vtable `+0x40`, at least 1) | read |
+| `f_8299a830` | `QueryASGetCurrentFrame_Evaluate` | Slot 39 of the class `QueryASGetCurrentFrame` (vtable cell `0x84a75840`; no direct callers): from the node's actor (`[[node+8]+8]+0x1f0`), the components (`actor+0x270`), the AS reference (`+0x40`, then `+0x18` twice, the same chain as `f_80994b80` and `ASControl_GetFrame`), for the slot index input below the slot count (`AS+0x18`) it takes the entry `[AS+0x20] + 0x48 × i`, whose first qword is the slot object, and reads the slot object's `+0x10c`, the current frame (a float); outputs it and the frame ÷ the clip's length (its node's vtable `+0x40`, at least 1) | read |
 
 ### Actor requests, duration and frame setting
 
@@ -88,6 +94,9 @@ from `anim_play`; its `AS_SLOT_FRAME` comment and `anim_read` distinguish the cu
 | `f_837d57c0` | `ASControl_GetDuration` | Validates the slot and active node, then dispatches its duration getter; unavailable returns zero. This is not the slot's current playback frame (`AS_SLOT_FRAME`) | read |
 | `f_802222a0` | `Actor_RequestASNode` | Takes an actor, slot and locally named animation-node request, applies rate/start/blend options and returns whether the native request succeeds; already-playing can also succeed. Success alone does not establish visible bone output (`anim_play`) | read |
 | `f_837d5d70` | `ASControl_SetFrame` | Resolves the slot's active animation node and dispatches a frame-setting operation with the supplied float; absent/out-of-range nodes return without action (`anim_play`) | read |
+| `f_837d5e70` | `ASControl_GetFrame(control, slot)` | The slot's current frame: the float at the slot object's `+0x10c`; 0.0 when the slot number is negative or not below the control's slot count (`control+0x18`). `control` is `[[[actor+0x270]+0x40]+0x18]+0x18` (what `f_80994b80(actor)` returns) and the slot object is the first qword of the entry `[control+0x20] + 0x48 * slot`. The same word `QueryASGetCurrentFrame_Evaluate` reads; not the start frame (`+0xe8`) | read |
+| `f_837d5d40` | `ASControl_SetRate(control, slot, s0 = rate)` | Writes the rate float at the slot object's `+0xd4` (the multiplier the update applies to the frame step); out-of-range slots are ignored | read |
+| `f_837d7250` | `ASControl_UpdateFrames(control, s0 = step)` | The sequencer's per-frame update, run from `f_802cfca0` and `f_808eadc0` (direct calls): for each entry of the control's two lists (`[control+0x100]`; an entry is used when the u16 at `+0x18` has bit 6 set and the s16 at `+0x1a` is -2) it multiplies the step by the slot's rate (`+0xd4`) and advances the slot's frame state (`f_80b527a0` on slot object `+0x210`: the accumulators at `+0x220`, `+0x224`, …) at most once per slot per call, guarded by a 32-bit slot mask; then it tells the frame sink at `control+0x28` the frame (a virtual call: vtable `+0x50` for the first list, `+0x58` for the second; the second list reads its frame floats from slot object `+0x220` indexed by the s16 at entry `+0x30`) and, when the entry's output byte at `+0x1d` is not negative, stores the frame as the slot's current frame (`+0x10c`). This is where a slot's `+0x10c` is written | read |
 
 ### The components that carry animation
 
@@ -136,6 +145,7 @@ Job 0 (`f_800b73d0`, [actors.md](actors.md)) calls slot 50, then slot 51; slot 5
 | `0x84ea56f8` | `g_ASSystemDisposer` | The AS system's disposer (`+0x2e0` of it) | read |
 | `0x83cb0005` | `str_ASPath` | `AS/%s.asb` | read |
 | `0x83d15b99` | `str_AnimBfresPath` | `Model/%s.anim.bfres` | read |
+| `0x84eb5ec0` | `g_LODModule` | The singleton cell of the LOD module; its secondary part's cell is `0x84eb5ec8` (destructor `f_83b74ca0`) | read |
 
 ## Structures
 
@@ -150,23 +160,30 @@ Job 0 (`f_800b73d0`, [actors.md](actors.md)) calls slot 50, then slot 51; slot 5
 | `+0x8d0` | Workers that have started, counted atomically | read |
 | `+0x908`, `+0x998` | Two mutexes the calc takes | read |
 | `+0x960` | A list of listeners the calc calls (their `+0x28` object's slot 0) | read |
-| `+0x9f0` | Flags; bit 2 set by the set-up | read |
+| `+0x930` | u32 override mask (bits 4 to 8 and 10 to 12 seen) | read |
+| `+0x950` | The policy object (`f_80b246e0` keeps it from `info+0x30`) | read |
+| `+0x9f0` | Flags; bit 2 set by the set-up; bit 2 is also the clear mode and bit 3 the force-skip mode of `f_80389b00` | read |
 
-### A LOD entry (one an actor)
+### A LOD entry (one an actor): the LOD component, `[actor+0x270]+0xb0`
 
 | Offset | Field | Sure |
 |---|---|---|
 | `+0x10` | The actor | read |
+| `+0x18` | A pointer to an object whose `+0x150` pointer `f_80389b00` follows (owner or body part; not identified) | read |
 | `+0x20` | The entry's list node | read |
 | `+0x40`, `+0x48`, `+0x50`, `+0x60` | Pointers to the actor's parts the worker reads (**guess**: model, physics, AS and calc-skip components) | read |
 | `+0x80` | −1 when unset (an index) | read |
 | `+0x90` | A 16-bit index, 0xffff when unset | read |
 | `+0x92` | A byte counted up once a pass, to at most 11 (resetting `+0xb0`) | read |
 | `+0x98` | Time accumulated: step × the global rate × the actor's group rate | read |
-| `+0x9c` | Flags changed atomically | read |
-| `+0xb4`, `+0xb5` | Two bytes (a level and its previous value: **guess**) | read |
-| `+0xb8` | The 64-bit state the worker computes | read |
-| `+0xc4` | 16-bit flags the calc sets (0x400, 0x1000, 0x2000) | read |
+| `+0x9c` | u32 enable bits changed atomically (`f_80ccd040` clears bit n + 3) | read |
+| `+0xb4`, `+0xb5` | The LOD level code (0 none; the pair 5 and 0 at `+0xb5` counts as "not active" in `f_80389b00`) and its sub-level | read |
+| `+0xb8` | The 64-bit state the worker computes: the flags. Bits tested include 0, 1, 2, 3, 7, 12, 23, 33 (the "plain" mask `0x200000028f` must equal exactly `0x80`), 36, 38, 39 (set by `f_80ccd080`) and 41; their meanings are a guess | read |
+| `+0xba` | A byte: bit 6 tested | read |
+| `+0xbd` | A byte: bit 1 tested in the bit-5 decision | read |
+| `+0xbf` | A byte: bit 0 tested by `f_800cdbe0` | read |
+| `+0xc4` | The per-frame decision flags (u16): bits 0 to 3 are the low nibble of the policy's answer (bit 0 "this actor's calc is skipped this frame": read by the BSA update, the perception receiver and `QueryBsaIsBrainSkip`; bit 1 read by `f_82a20bc0` and `f_82b31ce0`; bit 2 and bit 3 and bit 4 have readers not confirmed to read this component), bits 4 to 8 and 10 to 12 further decisions (overwritten from the policy only where the module's mask `+0x930` has the bit), and the calc also writes 0x400 and 0x1000 (the staggering, `f_83b74d30`) and 0x2000 | read |
+| `+0xc6`, `+0xc7` | Bytes: bit 0 cleared each pass; `+0xc7` bit 0 set when the policy confirms the skip (slot 0x68) | read |
 | `+0xc8` | Which of jobs 0 to 3 the interval applies to (bits 0–3) | read |
 
 ### A sequencer (AS) and its slots
@@ -176,10 +193,20 @@ Job 0 (`f_800b73d0`, [actors.md](actors.md)) calls slot 50, then slot 51; slot 5
 | actor components `+0x40` | The AS reference; its `+0x18`, then that object's `+0x18`, is the sequencer | read |
 | AS `+0x18` | The number of slots | read |
 | AS `+0x20` | The slots, 0x48 bytes each, the slot object first | read |
-| slot object `+0x10c` | The current frame, a float | read |
+| slot object `+0x10` | The name pointer of the node it plays | read |
 | slot object `+0x48` | The node that knows the clip's length (its `+0x50`, vtable `+0x40`) | read |
+| slot object `+0xd4` | The rate, a float (written by `f_837d5d40` and by the play request) | read |
+| slot object `+0xe8` | The start frame the last play request asked for (a float; stored when it is not negative, in one slot or in every slot when the request's byte `+0x21` is 1). Not advanced by playback: it stays put while the clip runs | read |
+| slot object `+0x10c` | The current frame, a float (written by `ASControl_UpdateFrames`; read by `ASControl_GetFrame` and `QueryASGetCurrentFrame_Evaluate`) | read |
+| slot object `+0x210`, `+0x220` | The frame state the update advances (accumulators from `+0x220`) | read |
 
 ## Notes
+
+### The LOD component
+
+The component at `[actor+0x270]+0xb0` is the engine's LOD component, not the BSA. The engine's component registry (`f_81209b40`) makes one 24-byte entry per component in this order: 0 BlackboardRef, 1 IModel, 2 ModelInfoRef, 3 ModelBindRef, 4 ASInfoRef, 5 ASOptimize, 6 AnimationRef, 7 RetargetScaleRef, 8 ASRef, 9 AIInfoRef, 10 PhysicsRef, 11 ELinkRef, 12 SLinkRef, 13 XLinkRef, 14 IXLinkSub, 15 (no name), 16 ReactionRef, 17 EventMemberRef, 18 EventPerformerRef, 19 BeforehandLoadEventRef, 20 CameraRef, 21 GameParameterTableRef, **22 LODRef**, **23 CalcSkipRef**, 24 (no name), 25 CppExecutorParam, 26 NaviAnimatorRef, then Pathfinding, Obstacle, BoneBind, Destruction and MotionMatching. An actor's component table offset is 8 times the index: this fits the four offsets that were already trusted (AS `+0x40`, AIInfo `+0x48`, Physics `+0x50`, XLink `+0x68`), so `+0xb0` is LODRef (its parameter class is `engine__component__LODParam`, [actors.md](actors.md)) and `+0xb8` is CalcSkipRef. The BSA is not one of the engine's 28: it is `+0x188`, the game's own registry; its brain verb is `bsa+0x28`. The inference is "table slot = 8 x registry index", checked on those four entries. Another project's "BSA component at `+0xb0`" is therefore not the BSA, and its "selective AI hold" would write the calc-skip decision word `+0xc4`, which the LOD module rewrites every frame and whose later policy calls (slots 0x58 and 0x68) still run: a held bit 0 is a plain bit of `+0xc4`, not a confirmed skip, though sound for the BSA reader (which reads `+0xc4` itself). **read**
+
+Bit 0 of `+0xc4` is "this actor's calc is skipped this frame" by its readers' use: the BSA update goes to its normal work when the bit is clear and into a gated block when it is set, which fits "set = skipped" (not proven). The calc-skip presets have five classes (All, Proc, Kinematics, Appearance, XLink); their order was not proven. **read**
 
 ### Who runs what, each frame
 
@@ -189,8 +216,7 @@ Job 0 (`f_800b73d0`, [actors.md](actors.md)) calls slot 50, then slot 51; slot 5
   the same job, on the same thread. **read**
 - **The LOD module** runs as a module calc in the module phase: one copy of its worker on the module's thread and five
   more as jobs, all draining one stack. Which stage its calc job sits in was not traced. **read**
-- **The AS module's calc** is tiny. The sequencer's per-actor work (advancing each slot's frame, firing its events) runs
-  elsewhere and was not found: no function that writes a slot's `+0x10c` stood out among the hot ones.
+- **The AS module's calc** is tiny. The sequencer's per-actor work runs elsewhere: `ASControl_UpdateFrames` (`f_837d7250`, called from `f_802cfca0` and `f_808eadc0`) advances each slot's frame and stores it at the slot object's `+0x10c`; firing the slot's events was not found. The play request `f_802222a0` (the request block: `+0x00` actor, `+0x08` the node name pointer, `+0x10` slot s32 (negative none), `+0x14` rate f32, `+0x18` start frame f32 (negative none), `+0x1c` blend f32, `+0x20` u8 skip when the slot already plays that name (a string compare against the name pointer at slot object `+0x10`; equal counts as success), `+0x21` u8 (1: the start frame goes to every slot), `+0x22` u8 flag for the start mode, `+0x28` the node request object, called through its vtable first) stores the request's start frame into slot object `+0xe8` and its rate into `+0xd4`. **read**
 - **The model's calc** (`f_8009bb80`, rank 8, under the render slot work `f_800998a0`) is the drawing side's
   ([hot-path.md](hot-path.md)); among other work it rebuilds each shape's bounds from the skeleton's world matrices
   (`f_800a8400`), from the shape list at model `+0x158` and its 0x70-byte records at `+0x100`, the skeleton at `+0xf8`.
@@ -230,6 +256,8 @@ with about 140 callers. The AS component's resource binder (`f_803fb0c0`, slot o
 "ASComponent") loads the sequencer's events (`AnimationEvent/AsNode/*.baev`) through it. **read**
 
 ## Open questions
+
+- The LOD component: read the first qword of `[[actor+0x270]+0xb0]` and `+0xb8` for Link and for one far Stalchild; expected two different vtables (LOD and calc skip), and the u16 at `+0xc4` of the first changing with distance and visibility. For an enemy far outside the view read `+0xc4` bit 0 over several frames and check whether its brain verb (`bsa+0x28`) still updates; expected: set while its brain does not run. Read `[[0x84eb5ec0]+0x950]` and its vtable, slots 8, 9 and 13: expected the engine's calc-skip system. What bits 2 and 3 of `+0xc4` mean beyond their readers (`f_80166100`, `f_800c34e0`/`f_800cdbe0`; bit 4: `f_8014ba80`, `f_804dd430`), the identity of the object at `+0x18` and whether `ctx[0]` of `f_80389b00` is the module.
 
 - Where a clip is sampled and blended, and where the bones' world matrices are computed (in the model's calc, in the AS
   component's update, or in a library whose strings were stripped). Havok Animation's types are in the binary
