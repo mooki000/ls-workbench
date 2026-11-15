@@ -429,9 +429,7 @@ From the code's size and what it calls, not measured (**guess** unless a measure
 ## Open questions
 
 - The actor list's offsets: in a field read `[0x84eb1888]` = M and `[M+0x118]` = L; the u32 at `L+0x680` should be the actor count (changing with the room), the s32 at `L+0x684` should read `0x538`, and nodes at `L+0x670` walked by `+0x08` should have owners `+0x10` = node - `0x538`. Read `[actor+0x3d8]+0x88` of a pot or a chest (not all ones) and of a rupee dropped from a cut bush (all ones). Place a field enemy with each of slot `+0x218` and `f_80c8fd60`: does it stay (another project found only slot `+0x218` does)?
-
 - The Shooter and the foliage cuts: at the hook point `0x80c36d24` of a slingshot shot print `[[x2]]` as a C string and `[x1]` (expect Link and the name of the created actor), and read the created actor's velocity fields one frame later to see who sets them. In a field scene read `[0x84e42540]`, `[module+0xf0]` and `[[module+0xf0]+0x338]`: expected non-null. During a sword swing log the byte `C+0x22` (C = `[comps+0x3b8]`) and the state at `[comps+0x458]+0x1e4`; expected bit 1 set and state 1 or 2 when the three swing points are not NaN. Which component C and `[comps+0x458]` are (a swing or attack tracker is the guess); who creates the foliage module pointer and reads the queue (the renderer side); what `module+0x141` and `+0x2b0` mean; who calls `f_8305e390` and `f_8305e4c0` (function pointers, no vtable cell found); how a created shootable gets its velocity.
-
 - Which job is which phase (PreCalc, PostCalc, PostSensor, PostUpdateMatrix, and a "Blank" one?), and the order the
   five run in within stage 5.
 - How many actors exist and how many jobs are pushed a frame in a busy scene (Kokiri Forest, Hyrule Field): a live count

@@ -258,7 +258,6 @@ with about 140 callers. The AS component's resource binder (`f_803fb0c0`, slot o
 ## Open questions
 
 - The LOD component: read the first qword of `[[actor+0x270]+0xb0]` and `+0xb8` for Link and for one far Stalchild; expected two different vtables (LOD and calc skip), and the u16 at `+0xc4` of the first changing with distance and visibility. For an enemy far outside the view read `+0xc4` bit 0 over several frames and check whether its brain verb (`bsa+0x28`) still updates; expected: set while its brain does not run. Read `[[0x84eb5ec0]+0x950]` and its vtable, slots 8, 9 and 13: expected the engine's calc-skip system. What bits 2 and 3 of `+0xc4` mean beyond their readers (`f_80166100`, `f_800c34e0`/`f_800cdbe0`; bit 4: `f_8014ba80`, `f_804dd430`), the identity of the object at `+0x18` and whether `ctx[0]` of `f_80389b00` is the module.
-
 - Where a clip is sampled and blended, and where the bones' world matrices are computed (in the model's calc, in the AS
   component's update, or in a library whose strings were stripped). Havok Animation's types are in the binary
   (`HK_JOB_TYPE_ANIMATION_SAMPLE_AND_BLEND`, the compressed animation kinds), but no hot function names them.

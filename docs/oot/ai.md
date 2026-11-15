@@ -367,7 +367,6 @@ and each enemy's own parameters (141 `game__enemy__*` classes, from `game__enemy
 ## Open questions
 
 - The spawner: `f_8328c110`'s body beyond its head, the night or area trigger (level logic, outside these functions) and who calls `f_80f65d30` (a function pointer). `f_800e08f0` beyond the request copy and the return codes; the real constructor of `ExecuteMovableBoxControl`, the link-name matching in its OnEnter and the rest of the secondary vtable `0x849ce8b8`.
-
 - What starts the AISchedule list job (`[[0x84ca23a0]]+0x978`) and on which pool it runs, and what its entries' owner
   fields (`+0x2c` = 5, `+0x30` bit 15) mean.
 - Who calls the AI component's slot 6 (`f_800b5400`) and the base slots 60, 61 and 63, and whether the four unit indices

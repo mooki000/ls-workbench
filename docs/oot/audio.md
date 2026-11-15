@@ -139,7 +139,7 @@ an "apply parameters", an input/output setter, and thin `Remove`/`Is…Enabled`/
 | `f_83b809d0` | `MovieAudio_Create` | The movie player's sound: starts "MovieAudioRendererThread" | guess |
 | `f_83b816f0` | `MovieAudio_OpenOutputStream` | `OpenOutputStream` (the 8-argument form) on the default virtual output device; `f_83b81890` writes and closes it. Not reached in the logs | read |
 
-### The ocarina and the alto root
+### The alto root, the ocarina and its sound module
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
@@ -294,7 +294,7 @@ relative to the first update of `game::NpcVoiceResource`, and what resets `Reset
 
 - **The ocarina manager.** `f_80e9c570` builds it (0x27680 bytes, made by `f_80e9c510`; vtable `0x84bc1978`): `+0x08` a copy of `[src]`, `+0x10` the argument, `+0x18` u8 0, `+0x20` u64 `0xffff00ff`, a base part at `+0x30`, then **19 name pointers at `+0x40` to `+0xd0`** (8 bytes each), table indexes 0 to 18: LowB, LowC, LowCsharp, D, Dsharp, E, F, Fsharp, G, Gsharp, A, Asharp, B, C, Csharp, HighD, HighDsharp, HighE, HighF; each is the asset name "Ocarina_<note>". `+0xd8` is one more pointer, to the empty text `0x83f04f8c` (the constant the host calls EMPTY_TEXT); `+0xe0` holds 52 bytes (13 u32 values copied from `0x83f2db74`; they are not the CRC32 of the twelve song names or of "Correct", with or without the prefixes "Ocarina_", "Melody_" and "Song_"); the note state follows (`+0x114` to the end, not read). The five playable notes are table index D 3, F 6, A 10, B 12 and HighD 15; another project's wire numbers (the index plus 1: 4, 7, 11, 13, 16) agree. Which button plays which note is an inference from the on-screen prompt, not from this function. **read**
 - **The alto root.** `[0x84ea4e08]` points to a 0x158-byte object that is not a sound object: `+0x18` is the sound-user factory and `+0xc0` / `+0xc8` the providers (structures above). Seven module makers call the factory's ready test and make-user slots with their name strings ("Ocarina" `f_80d3f360`, "UI_GlobalSound" `f_8104d7d0`, "FieldEnvSound" `f_80bae0d0`, "EnvBird" `f_80bae240`, "EnvGrassInsect" `f_80baef50`, "BaseEnvSound" `f_811cace0`, and `f_80f3a7a0`, `f_80c7f0e0`). Another project's reading of the cell as "the SLink system that makes users" is right in effect; "sound root" is not the name. **read**
-- **The handle and the user.** A handle (8 bytes: pool kind, pool index, serial) and the user's list are on [effects.md](effects.md), *The XLink user chain*. `f_804609e0` is referenced only here: the readiness test. **read**
+- **The handle and the user.** A handle (8 bytes: pool kind, pool index, serial) and the user's list are on [effects.md](effects.md), *The XLink user chain*. `f_804609e0` is the readiness test of that chain. **read**
 - **The Ocarina sound module.** The vtable `0x84bf6df0` (0xe0-byte module, constructor `f_80f37c30`, made at `0x80f3845c` inside the module-group factory `f_80f37d80`, which makes about a dozen sound modules) has `f_80d3f360` in slot 2: it makes the xlink2 user named "Ocarina" through the root's factory, stores the result at `module+0x40` (the bank handle; the user hangs one deeper at that object's `+0x8`) and `module+0x38` into the user object's `+0x138`, and looks up two named parameter objects by hash (`0xadaa4403`, `0x813bd046`) in the table behind GOT `0x84ca0000+1744`, storing them at `module+0x98` and `+0xa0`. Another project recognises the module by comparing an object's first qword with `[[cell]]+0x10`. **read**
 
 ### Frame rate
@@ -316,5 +316,4 @@ side (the SoundModule job, [jobs.md](jobs.md)) runs once a game frame. **read**
 - How the movies' sound reaches the output in LS, since the movie player's `OutputStream` path is never logged.
 - How the alto root's `+8` object's name string becomes `Product.111` (the object is the start-up description's `+0x28` one; `f_80fcf1e0` supplies a default when its name is empty).
 - Which object `f_801e9c80` and `f_806ab700` feed (the aux effects), now that they read no samples.
-
 - Who reads the ocarina manager's note table at `+0x40` (candidates not read: `f_8289a250`, `f_805e3e50`, `f_80ac3c60`, `f_8267c470`, `f_82678f80`, `f_8337b730`) and where the played note index is stored; what the 13 values at `+0xe0` are. Which note button is which: break on `f_80460630` while each of the five note buttons is pressed and read the asset name pointer in `x1`; expected "Ocarina_D", "_F", "_A", "_B", "_HighD" in the controls' order. The root factory's slot 5 was read as "make a user" and not traced further.

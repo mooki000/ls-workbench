@@ -345,7 +345,6 @@ further. **read** (the names)
 ## Open questions
 
 - What in a save holds the clock (the `f_8347c020` bool), why a child early-story save's clock stood, and the meaning of the clock block's third word (`+0x30`) and of block B's day word (`+0x5c`). Whether `f_83445090` also fires on an ordinary map change or only on a save or title load: wrap `f_80f0e640` and log the return address (`x30`) during a door transition and a save load from the title; expected a script set at `f_834722d0`'s return site, a load at `f_834450f4`, a pending hour at `f_803ed5cc`. Whether `f_830513c0` state 4 runs for every map change; what `f_832962b0` is. The event names of the Sun's Song, a bed and the Door of Time: read `[mgr+104]+8` and the C string it points to once during each; expected three distinct names (this also confirms that `player+8` is the event's name).
-
 - What reads the `Occlusion` buffer of `effect_sun_occlusion_cs`, and what does it change: the lens flare's alpha and
   scale (`IsEnableOccludedAlpha`), the clouds' `SunOccBufSize`, the haze? Where is the program dispatched?
 - Does the depth that the sun occlusion and the scene analysis read lose the objects the z-prepass culling leaves out?

@@ -486,5 +486,4 @@ The four blackboard keys are proved by the murmur3 of their names (seed 0; all f
 - ~~Whether the game gives the hclWorld a time-stepping helper~~: it makes one but leaves it off (`f_80e66b2c`).
 - hknpMeshShape's slots 23 and 24 exactly, and what `f_81b8c000` collides against.
 - Whether Havok's own thread pool (`hkDefaultTaskQueueEx`) ever runs, or only the game's pools.
-
 - The wave controller: in the Deku Tree basement water room read `block+0x08` (expected 18.0 in x), `block+0x14` (expected 4.0) and `block+0x38` twice a second apart: expected a rise of `2*pi/18` per second while `Move` is true and no change while it is false. Who constructs the controller (only its two destructors build the address `0x84b8ca28`), how to find it from the driver actor, the algebra of the starting phases and the layout of the body record at `body+0x88` are not known; the block has no vtable of its own that was seen.

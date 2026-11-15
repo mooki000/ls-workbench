@@ -390,5 +390,4 @@ Levers, each with where it would act and its risk. None has been tried.
 - The unidentified library at 0x814ee000–0x81502000 ([hot-path.md](hot-path.md)) lies beside vfx3's expression
   evaluator (`f_814e52a0`) and the view set-up calls into it (`f_814e6be0` from `f_8027d040`): whether it is vfx3's
   maths or something shared.
-
 - Which sub-object `[user+0x48]` or `[user+0x50]` (picked by bit 0 of `+0x18`) the readiness test means: read `[user+0x18]`, `+0x48` and `+0x50` of a copy's ELink user; expected bit 0x1000 set and the pointer picked by bit 0 non-null. The second class's sound branch (`f_8113ee40`, `f_8337c980`) was described only as "a manager posts the key".
