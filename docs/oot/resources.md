@@ -73,11 +73,19 @@ with the dictionary pack), [master-quest.md](master-quest.md) (the mounts the ga
 | `f_836d80e0` | `Path_Extension` | The text after a path's last "." (the empty string when there is none) | read |
 | `f_836d8180` | `Path_AddCompressionExt` | Appends ".szs" (kind 1) or ".zs" (kind 2) to a path string, within its capacity | read |
 | `f_83bb3eb0` | `GeneralFormatAsync_Init` | Creates the resource system's `GeneralFormatAsync_` work pool: priority-24 workers, one per selected core among 0 to 5. What its jobs do to a resource is not worked out | read |
+| `f_808103c0` | `RsdbManager_Create` | The database manager's create function, called through a member pointer by `ModuleHeaps_Make` (`f_83b7b340`, at `0x83b7b478`). Waits for each table handle it was given (a list at `+256`, its count at `+248`, 224 bytes apiece) and aborts (at `0x80810724`) when `f_80717dd0` says a load failed; then fetches the named tables (ActorInfo, EventSetting, AnalyzedEventInfo and others) into its slots | read |
+| `f_80717dd0` | `ResourceHandle_HasFailed` | True when a handle's load failed: the record's state is 9, 12 or 15, or the handle's own code is 5 to 15 | read |
 
 `f_8002f220` (`Resource_Request`, [maps.md](maps.md)) is the request call most loaders use; `f_80036c20` turns a layout's
 work path into its RomFS path. The terrain's resources have their own manager and prefetch hook
 (`TeraFileResourceMgr_Init`, `f_80f6cf50`, and `f_80387f40` in [textures.md](textures.md)); the terrain manager names a
 "resource sharc deploy work" heap.
+
+A database table (`RSDB/*.rstbl.byml.zs`) larger than its entry in the resource size table fails to load, and the
+database manager then aborts at start (`f_808103c0`): a mod that replaces the size table must carry entries for every
+table another source serves bigger than the game's own. Seen in a game (a replaced size table beside larger served
+tables aborted 2.4 s after launch every time; the same tables with their entries merged into it started); the function
+that compares a file with its entry was not located. **tested**
 
 ### Decompressors and their threads
 
