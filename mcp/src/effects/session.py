@@ -36,6 +36,7 @@ DENIED_OPTIONS = frozenset({"fullscreen", "window_mode", "window_size", "monitor
     "frame_generation", "vram_budget", "memory_budget", "profile", "dlss", "dlss_model", "ultrawide"})
 DEFAULT_FIELDS = frozenset({"map", "event", "loading", "age"})
 FIELDS = DEFAULT_FIELDS | {"pos", "life", "max_life", "rupees"}
+SAMPLE_CLOCK_SKEW = 0.05   # seconds a sample's stamp may be ahead of the reader's clock and still count as just taken
 
 
 def number(value, *, integer=False):
@@ -75,7 +76,8 @@ def sample_from(reply: dict, *, max_age_ms: int, expected_map: str | None = None
     frame = number(raw.get("frame"), integer=True)
     sampled = number(raw.get("t"))
     now = time.monotonic()
-    age = (now - sampled) * 1000 if sampled is not None and sampled <= now else None
+    # (the game prints its clock to the millisecond: a sample read within a millisecond of its stamp can be stamped a hair ahead)
+    age = max(0.0, (now - sampled) * 1000) if sampled is not None and sampled - now <= SAMPLE_CLOCK_SKEW else None
     fresh = age <= max_age_ms if age is not None and frame is not None else None
     keys = DEFAULT_FIELDS if selected is None else set(selected)
     game = GameSample(map=text(raw.get("map") if frame is not None else reply.get("map"), 80) if "map" in keys else None,
@@ -306,7 +308,7 @@ class SessionService:
             sample = sample_from(reply, max_age_ms=max_age_ms, expected_map=predicate.map)
             if initial is None:
                 initial = sample.frame
-            if predicate.kind in {"controllable", "field"} and sample.fresh is None:
+            if predicate.kind in {"controllable", "field"} and sample.fresh is None and sample.capabilities.get("freshness") is not True:
                 return PredicateResult(matched=None, sample=sample, frames_waited=None, elapsed_ms=(time.monotonic()-start)*1000,
                     reason="freshness_unsupported")
             matched = {"frames": sample.frame is not None and initial is not None and sample.frame-initial >= (predicate.frames or 0),

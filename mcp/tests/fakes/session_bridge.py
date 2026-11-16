@@ -37,6 +37,7 @@ class FakeBridge:
         self.on_quit = None
         self.age_map = None          # the map the other age's reload ends in (None: the same map)
         self.reload_delay = 0        # seconds the age reload is an event for (0: instant)
+        self.future = 0              # the next N status samples are stamped far ahead of the reader's clock (no age can be computed)
 
     async def start(self):
         self.server = await asyncio.start_unix_server(self.client, self.path)
@@ -102,7 +103,9 @@ class FakeBridge:
         elif cmd == "status":
             game = {"map": self.map, "age": self.age, "loading": self.loading, "event": self.event}
             if self.sampled:
-                game.update(frame=self.frame, t=time.monotonic()-(10 if self.stale else 0))
+                ahead = 60 if self.future > 0 else 0
+                self.future = max(0, self.future - 1)
+                game.update(frame=self.frame, t=time.monotonic()-(10 if self.stale else 0)+ahead)
             self.game_fields(game)
             response.update(protocol=1, state=self.state, map=self.map, game=game)
         elif cmd == "wait":

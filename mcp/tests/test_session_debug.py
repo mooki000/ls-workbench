@@ -169,6 +169,30 @@ async def test_age_arrives_when_the_other_ages_map_has_loaded_and_link_is_in_con
         await fake.close()
 
 
+def test_a_sample_stamped_a_hair_ahead_of_the_reader_is_fresh():
+    # The game's clock is printed to the millisecond: a status read within a millisecond of its sample can carry a stamp that is
+    # a fraction of a millisecond ahead of the reader's. A real session lost a teleport's arrival to it (fresh None, "unsupported").
+    now = time.monotonic()
+    sample = sample_from({"frame": 1, "game": {"frame": 1, "t": now + 0.0005, "event": False, "loading": False, "map": "SyntheticZone"}},
+        max_age_ms=500)
+    assert sample.fresh is True and sample.age_ms == 0 and sample.controllable is True
+    far = sample_from({"frame": 1, "game": {"frame": 1, "t": now + 5, "event": False, "loading": False, "map": "SyntheticZone"}}, max_age_ms=500)
+    assert far.fresh is None and far.capabilities["freshness"] is True
+
+
+async def test_a_wait_does_not_give_up_on_a_sample_that_is_briefly_unusable(sandbox):
+    # Freshness IS supported by this game (the samples carry a frame and a time); a stamp that cannot be aged is not "unsupported".
+    root, deps, service, client = sandbox
+    run_id, fake, session = await attach_debug(root, deps, service)
+    try:
+        fake.future = 5
+        terminal, record = await submit(client, deps, "session_teleport", run_id=run_id, destination_id=1)
+        assert terminal.state == State.COMPLETED and record["arrived"] is True and record["controllable"] is True
+        assert record["state"]["game"]["map"] == "SyntheticAnnex"
+    finally:
+        await fake.close()
+
+
 # ---- launch switches
 
 async def test_launch_env_lines_follow_the_profile(sandbox):
