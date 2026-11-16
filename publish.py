@@ -30,6 +30,10 @@ SKILL_MAP = {
     'ls-skill-upkeep': 'ls-skill-upkeep',
     'ls-field-data': 'ls-field-data',
     'ls-pr-tagging': 'ls-pr-tagging',
+    'ls-hold-chain': 'ls-hold-chain',
+    'ls-restack': 'ls-restack',
+    'ls-windows-laptop': 'ls-windows-laptop',
+    'ls-relay-lan': 'ls-relay-lan',
 }
 LIVE_LAYOUT = 'legacy'  # cutover.py changes only the installed source layout
 HARNESS_MAP = {name: Path(name).name for name in (
