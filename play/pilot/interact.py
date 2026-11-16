@@ -39,7 +39,7 @@ DECIDING = ('chest', 'talk', 'interact', 'pickup', 'enter', 'ocarina', 'item', '
 INTERACT_LABELS = {
     # new (this module): label -> what kind of interaction it attempts
     'open-chest': 'chest', 'open-chest-force': 'chest', 'talk': 'talk', 'talk-force': 'talk', 'advance-text': 'text',
-    'pickup': 'pickup', 'pickup-nearest': 'pickup', 'pickup-2': 'pickup', 'pickup-3': 'pickup', 'enter-door': 'enter',
+    'pickup': 'pickup', 'pickup-nearest': 'pickup', 'pickup-2': 'pickup', 'pickup-3': 'pickup', 'pickup-dive': 'pickup', 'enter-door': 'enter',
     'ocarina-play': 'ocarina', 'ocarina-out': 'ocarina', 'ocarina-away': 'ocarina', 'item-use': 'item', 'ztarget': 'target',
     'camera-sweep': 'camera', 'try-chest': 'chest', 'try-person': 'talk', 'try-sign': 'sign', 'try-item': 'pickup',
     'try-door': 'enter', 'try-stone': 'sign', 'try-item-use': 'item', 'try-ztarget': 'target', 'try-camera': 'camera',
@@ -412,6 +412,11 @@ def collect_candidates(area, goal, target, f, mem, plan):
                              f'walk onto {name} ({d:.1f} m away{", along the planned way" if lead else ""}) to pick it up, advance a message if one opens, report what changed'))
         keys[label] = f'{x:.1f}:{z:.1f}'
     mem['cand_keys'] = keys
+    last = last_entry(mem)
+    if last and last[0] in ('pickup', 'pickup-nearest', 'pickup-2', 'pickup-3') and last[1] == 'none' and f.dist is not None and f.dist <= 1.0:
+        # (pi-solo-2b: the field's rupees lie on a pond's floor, Link swam over them at 0.17 m and nothing changed; the HUD said `Dive (Hold)` on A)
+        out.append(Candidate('pickup-dive', [f'pickup {target.x:.2f} {target.z:.2f} radius {TUNE["pick_radius"]:g} timeout 12 dive 3'],
+                             'the item is on the floor of the water under Link (Dive (Hold) on A): hold A over it for 3 s, report what changed'))
     if f.pkind in ('take', 'other') and f.dist is not None and f.dist < 2.5:
         out.append(Candidate('pickup-press', [f'pickup {target.x:.2f} {target.z:.2f} radius 0.6 timeout 10 press'],
                              'walk onto the spot and press A at its prompt (an item that is lifted or taken, not touched)'))
@@ -595,6 +600,10 @@ def pick_chest(ctx, have, mem):
 
 def pick_collect(ctx, have, mem):
     last = last_entry(mem)
+    if last and last[0] == 'pickup-dive':   # (the dive is tried once; what it found does not matter: leave the spot)
+        return 'next-target'
+    if 'pickup-dive' in have and last and last[0].startswith('pickup') and last[1] == 'none':
+        return 'pickup-dive'
     if last and last[0].startswith('pickup') and last[1] in ('picked', 'none', 'stuck', 'timeout', 'held', 'cut'):
         if last[1] == 'picked' or count_label(mem, last[0]) >= 2:
             return 'next-target'

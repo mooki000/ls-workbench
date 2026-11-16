@@ -898,6 +898,28 @@ def sidelane_checks():
               f'blocked door: a step to the left, the door again, a step to the right, the door a third time, then leave ({seen})')
         check(interact.went_nowhere({'history': [('enter-door', 'blocked', 0.0, None)]}), 'a blocked enter-door counts as a move that went nowhere')
 
+    # pi-solo-2b: the rupees of the field lie on a pond's floor (the target's y is 2 m under Link; the walk reached them at 0.17 m and nothing changed):
+    # after one pickup that ended none at the spot, a dive is offered once (hold A over it), and after the dive the target is left
+    with WithWorld():
+        rt = Target('pond-rupee', 4.0, -2.0, y=-2.0, kind='item')
+        g = Goal('collect', [rt], count=5)
+        here = interact.with_near('Test_Area', state(pos=[4.0, 0.0, -2.0]))
+        fresh = interact.candidates('Test_Area', g, rt, here, {})
+        check('pickup-dive' not in labels(fresh), 'no dive before a pickup was tried at the spot')
+        mem = {'history': [('pickup', 'none', 0.0, None)]}
+        cs = interact.candidates('Test_Area', g, rt, here, mem)
+        dive = next((c for c in cs if c.label == 'pickup-dive'), None)
+        check(dive is not None and dive.lines == ['pickup 4.00 -2.00 radius 0.35 timeout 12 dive 3'],
+              f'after a pickup that ended none at the spot, a dive is offered ({dive.lines if dive else None})')
+        away = interact.with_near('Test_Area', state(pos=[0.0, 0.0, 0.0]))
+        check('pickup-dive' not in labels(interact.candidates('Test_Area', g, rt, away, {'history': [('pickup', 'none', 0.0, None)]})),
+              'no dive when Link is not at the spot')
+        check(interact.pick(ctx_of(g, rt, here, mem, cs, [])) == 'pickup-dive', 'the picker takes the dive after a pickup that found nothing')
+        mem['history'].append(('pickup-dive', 'none', 0.0, None))
+        cs2 = interact.candidates('Test_Area', g, rt, here, mem)
+        check(interact.pick(ctx_of(g, rt, here, mem, cs2, [])) == 'next-target', 'after the dive (whatever it found) the target is left')
+        check(interact.INTERACT_LABELS.get('pickup-dive') == 'pickup', 'the dive counts as a pickup attempt in the metrics')
+
     # P6: a song goal that names a flag is met by the flag only; the notes pressed prove nothing
     song = Goal('play_song', [Target('spot', 0.0, 0.0)], notes='L R A', flag='Song.Heard=1')
     song.cond.note({'kind': 'ocarina', 'outcome': 'done', 'result': 'played', 'changes': {}}, state())

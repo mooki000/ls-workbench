@@ -45,14 +45,15 @@ Steps (one a line; # starts a note):
                               map, prompt [before, after], flags (watched), hashes (the change scan's, clocks left out), text
                               (closed|open), scene
   advance [timeout <s>]       A every 1.2 s while a text box holds Link: closed / none (no text open: nothing sent) / timeout
-  pickup <x> <z> [radius <r>] [timeout <s>] [press]   walk onto the spot (a rupee is taken by touching it), advance a text
-                              that opens, `press` also presses A at a prompt there: picked / none / stuck / timeout / held / cut
+  pickup <x> <z> [radius <r>] [timeout <s>] [press] [dive <s>]   walk onto the spot (a rupee is taken by touching it), advance a text
+                              that opens, `press` also presses A at a prompt there, `dive` holds A for that long when the walk reached the spot
+                              and nothing changed (a rupee on a pond's floor: the HUD says `Dive (Hold)`): picked / none / stuck / timeout / held / cut
   enter <x> <z> [through <x> <z>] [timeout <s>]   walk to a door or load zone, press A at its prompt, walk on through: entered
                               (the map changed, control is back) / opened (through, same map) / blocked / timeout
   faceat <x> <z> [degrees]    short stick pushes until Link faces the point (default 20 degrees): done / timeout
   ztarget [ms]                hold ZL (default 1200): targeted (the camera or Link turned 4 degrees or more) / none
   camera <left|right|up|down> [ms] | camera to <yaw> [tolerance]   the right stick: turned / none (the yaw before and after)
-  ocarina <note> ... | ocarina out | ocarina away   D-pad Left takes the ocarina out (the game's log says `oc: the note wait
+  ocarina <note> ... [hold <ms>] [gap <ms>] | ocarina out | ocarina away   D-pad Left takes the ocarina out (the game's log says `oc: the note wait
                               turned on`), the notes (L R A Y X, the game's own note buttons) are pressed 0.45 s apart, B puts it
                               away: played / out / away / no-ocarina (no note wait in 3.5 s)
   item [button] [ms]          press the item button (default ZR, 150 ms) and report what changed: used / none
@@ -1248,6 +1249,9 @@ class Executor:
                 self.tick(0.05)
         closed, _ = self.advance_text(time.time() + timeout)
         self.wait(0.6)   # (the counters and flags settle)
+        if not closed:   # (the deadline can fall inside the 0.6 s Link must be free before the text counts as closed: the settle is that time)
+            now = self.g.st or {}
+            closed = not text_open(now) and now.get('event') != 1 and now.get('loading') != 1
         return self.changes(before, self.snap(), mark), closed, st.get('prompt')
 
     def no_prompt(self, prompt):
@@ -1297,13 +1301,18 @@ class Executor:
         return self.outcome('closed' if closed else 'timeout', ch, f'{presses} A presses')
 
     def step_pickup(self, args):
-        pos, kv, fl = split_opts(args, flags=('press',), keys=('radius', 'timeout'))
+        pos, kv, fl = split_opts(args, flags=('press',), keys=('radius', 'timeout', 'dive'))
         if len(pos) != 2:
-            raise ValueError('pickup <x> <z> [radius <r>] [timeout <s>] [press]')
+            raise ValueError('pickup <x> <z> [radius <r>] [timeout <s>] [press] [dive <s>]')
         x, z, radius = float(pos[0]), float(pos[1]), float(kv.get('radius', 0.35))
         if radius <= 0:
             raise ValueError('radius must be above 0')
         timeout = seconds_of(kv, 20.0)
+        dive = None
+        if 'dive' in kv:   # the item lies on a pond's floor (the HUD says `Dive (Hold)` on A): hold A over it
+            dive = float(kv['dive'])
+            if not 0.5 <= dive <= 8.0:
+                raise ValueError('dive <s>: 0.5 to 8 seconds')
         self.fresh()
         before, mark = self.snap(), self.g.n_states
         result, detail = self.walk(x, z, radius, timeout)
@@ -1313,6 +1322,9 @@ class Executor:
                     and not text_open(self.g.st or {}):
                 self.wait_input(self.g.press('A', 100))
                 self.wait(0.8)
+            if dive is not None and result == 'reached' and not any(k in self.changes(before, self.snap(), mark) for k in ('rupees', 'life', 'flags', 'text')):
+                self.wait_input(self.g.press('A', int(dive * 1000)))
+                self.wait(1.0)
             self.advance_text(time.time() + 15.0)
             self.wait(0.4)
         ch = self.changes(before, self.snap(), mark)
@@ -1483,10 +1495,24 @@ class Executor:
         return self.face_point(float(args[0]), float(args[1]), float(args[2]) if len(args) == 3 else 20.0)
 
     def step_ocarina(self, args):
-        usage = 'ocarina <note> ... (notes: ' + ' '.join(NOTE_BUTTONS) + ') | ocarina out | ocarina away'
+        usage = 'ocarina <note> ... [hold <ms>] [gap <ms>] (notes: ' + ' '.join(NOTE_BUTTONS) + ') | ocarina out | ocarina away'
         if not args:
             raise ValueError(usage)
-        mode = args[0] if args[0] in ('out', 'away') and len(args) == 1 else None
+        notes, opts, i = [], {}, 0
+        while i < len(args):   # (hold: how long each note button is held, default 150 ms; gap: the pause after each note, default 450 ms)
+            if args[i] in ('hold', 'gap'):
+                if i + 1 >= len(args) or not args[i + 1].isdigit() or args[i] in opts:
+                    raise ValueError(usage)
+                opts[args[i]] = int(args[i + 1])
+                i += 2
+            else:
+                notes.append(args[i])
+                i += 1
+        hold, gap = opts.get('hold', 150), opts.get('gap', 450)
+        if not notes or not 50 <= hold <= 3000 or not 0 <= gap <= 5000:
+            raise ValueError(usage)
+        args = notes
+        mode = args[0] if args[0] in ('out', 'away') and len(args) == 1 and not opts else None
         if mode is None and (any(a not in NOTE_BUTTONS for a in args) or len(args) > 40):
             raise ValueError(usage)
         mark_oc = len(self.g.oc_lines)
@@ -1516,8 +1542,8 @@ class Executor:
         if mode == 'out':
             return 'out', 'the ocarina waits for a note; ' + lines()
         for note in args:
-            self.wait_input(self.g.press(note, 150))
-            self.wait(0.45)
+            self.wait_input(self.g.press(note, hold))
+            self.wait(gap / 1000.0)
         self.wait(2.5)   # (the game hears the song, plays it back, acts on it)
         away()
         self.advance_text(time.time() + 12.0)

@@ -1480,6 +1480,7 @@ class WorldBridge(DuelBridge):
         self.text_left, self.scene_left, self.set_flags = 0, 0, {}
         self.notes, self.zr, self.a_log, self.oc_on, self.ocarina = [], 0, [], False, ocarina
         self.lock_turn, self.zr_effect, self.pressed_log = lock_turn, zr_effect, []
+        self.note_log, self.held_s = [], 0.0
         super().__init__(*args, **kwargs)
 
     def near_thing(self):
@@ -1519,6 +1520,7 @@ class WorldBridge(DuelBridge):
                 self.log("[hos X] oc: the note wait turned off (the action's kind 1)")
             elif b in ('L', 'R', 'A', 'Y', 'X'):
                 self.notes.append(b)
+                self.note_log.append((b, self.frame + 1, round(self.held_s, 3)))
             return
         if b == 'A':
             self.a_log.append(self.frame + 1)
@@ -1542,8 +1544,14 @@ class WorldBridge(DuelBridge):
         nxt = self.frame + 1
         for s in list(self.inputs):
             if s['start'] == nxt:
+                self.held_s = (s['end'] - s['start']) / 60.0
                 for b in s['buttons']:
                     self.pressed(b)
+                    if b == 'A':   # a thing under water: taken by an A held long enough (the dive) while Link is over it
+                        for t in self.things:
+                            if t.get('dive') and not t.get('used') and self.held_s >= t['dive'] and \
+                                    math.hypot(self.pos[0] - t['x'], self.pos[2] - t['z']) <= t['r']:
+                                self.effect(t)
             if s['start'] <= nxt < s['end'] and s['axes'].get('rx'):
                 self.cam = hsap.wrap(self.cam + 2.0 * s['axes']['rx'])
         for t in self.things:
@@ -1589,6 +1597,18 @@ def interact_step_checks():
         check(c['result'] == 'none' and len(sim.bridge.a_log) == 4,
               'force presses A anyway; with nothing changing the step ends none')
         check(sim.bridge.rupees == 20, 'the rupees were taken once')
+
+    # a chest whose text closes while the step's time runs out (hold A2: the deadline fell inside the 0.6 s Link must be free before the text counts
+    # as closed, the step said `timeout` with `text closed` and the chest flag set): whenever the text is closed when the step ends, the result is opened
+    swept, late = 0, 0
+    for tenths in range(20, 36):
+        with WorldSimulation(boot_events=0, follow=False, things=[{**CHEST, 'text': 2}]) as sim:
+            sim.executor([f'chest timeout {tenths / 10:g}', 'end']).run()
+            a = sim.steps()[0]
+            swept += 1
+            if sim.bridge.text_left == 0 and not sim.game.st.get('event'):
+                late += a['result'] != 'opened'
+    check(swept == 16 and late == 0, f'a chest whose text closed by the time the step ended is never `timeout` ({late} of {swept} timeouts 2.0 to 3.5 s ended so)')
 
     # a person: talked when the text opened and closed; open when it never closes in time
     people = [{'x': 0.0, 'z': 0.4, 'r': 1.0, 'prompt': 'Talk', 'text': 3}]
@@ -1646,6 +1666,19 @@ def interact_move_checks():
         a = sim.steps()[0]
         check(a['result'] != 'picked' and sim.bridge.rupees == 0 and sim.bridge.pos[2] < 2.2,
               f"a pickup whose walk was stopped short, with only a hash changed, is not a pickup ({a['result']}: {a['detail']})")
+    # a rupee on a pond's floor (pi-solo-2b: Link swam over it at 0.17 m and nothing changed; the HUD said `Dive (Hold)` on A): only with `dive <s>`
+    pond = {'x': 0.0, 'z': 3.0, 'r': 0.5, 'dive': 2.0, 'rupees': 5}
+    with WorldSimulation(boot_events=0, follow=False, things=[pond]) as sim:
+        sim.executor(['pickup 0 3 radius 0.3 timeout 10', 'pickup 0 3 radius 0.3 timeout 10 dive 2.5', 'end']).run()
+        a, b = sim.steps()
+        holds = [(r['buttons'], r['frames']) for r in sim.bridge.requests if r['cmd'] == 'press' and r['buttons'] == 'A']
+        check(a['result'] == 'none' and holds == [('A', 150)] and b['result'] == 'picked' and b['changes']['rupees'] == [0, 5],
+              f"pickup without dive leaves a rupee under water; with `dive 2.5` it holds A 2.5 s there and takes it ({a['result']}, {b['result']}: {b['detail']}; holds {holds})")
+    with WorldSimulation(boot_events=0, follow=False, things=[{**pond, 'z': 8.0}], walls=[(-3, 2.0, 3, 2.6)]) as sim:
+        sim.executor(['pickup 0 8 timeout 6 dive 2', 'end']).run()
+        a = sim.steps()[0]
+        check(not [r for r in sim.bridge.requests if r['cmd'] == 'press' and r['buttons'] == 'A'],
+              f"dive is only tried where the walk reached the spot: no A was held after a walk that ended short ({a['result']}: {a['detail']})")
     on_spot = {'x': 0.0, 'z': 3.0, 'r': 0.5, 'touch': True, 'flag': '0x0000f00e'}
     with WorldSimulation(boot_events=0, follow=False, things=[on_spot]) as sim:
         sim.executor(['pickup 0 3 radius 0.3 timeout 10', 'end']).run()
@@ -1732,6 +1765,16 @@ def interact_gear_checks():
         check('note wait turned on' in a['detail'] and 'note wait turned off' in a['detail'] and 'L R A' in a['detail'],
               f"the detail has the notes and the game's oc lines ({a['detail']})")
         check(not sim.bridge.oc_on, 'the ocarina is away afterwards')
+        check([h for _, _, h in sim.bridge.note_log] == [0.15] * 3 and all(b[1] - a[1] >= 27 for a, b in zip(sim.bridge.note_log, sim.bridge.note_log[1:])),
+              f'notes are held 150 ms and start 0.45 s apart by default ({sim.bridge.note_log})')
+    # hold and gap: longer notes with longer pauses (the five-note songs of pi-solo-2a did not wake the windmill's flag at 150 ms / 0.45 s)
+    with WorldSimulation(boot_events=0, follow=False) as sim:
+        sim.executor(['ocarina L R A hold 400 gap 600', 'end']).run()
+        a = sim.steps()[0]
+        log = sim.bridge.note_log
+        check(a['result'] == 'played' and sim.bridge.notes == ['L', 'R', 'A'] and [h for _, _, h in log] == [0.4] * 3 and
+              all(b[1] - a_[1] >= 58 for a_, b in zip(log, log[1:])),
+              f"ocarina ... hold 400 gap 600: each note held 0.4 s, the next started 1.0 s after the one before ({log}; {a['detail']})")
     with WorldSimulation(boot_events=0, follow=False, ocarina=False) as sim:
         sim.executor(['ocarina A', 'end']).run()
         a = sim.steps()[0]
@@ -1808,9 +1851,9 @@ def interact_walk_checks():
 
 def interact_bad_checks():
     bad = ['chest now', 'chest timeout', 'chest timeout x', 'talk quick', 'advance x', 'advance timeout', 'interact timeout',
-           'pickup', 'pickup 1', 'pickup a b', 'pickup 1 2 radius', 'pickup 1 2 radius 0', 'enter', 'enter 1', 'enter 1 2 through 3',
+           'pickup', 'pickup 1', 'pickup a b', 'pickup 1 2 radius', 'pickup 1 2 radius 0', 'pickup 1 2 dive', 'pickup 1 2 dive 0.1', 'pickup 1 2 dive 99', 'enter', 'enter 1', 'enter 1 2 through 3',
            'enter 1 2 through a b', 'ztarget x', 'ztarget 5', 'ztarget 99999', 'camera', 'camera sideways', 'camera left x',
-           'camera left 5', 'camera to', 'camera to x', 'faceat', 'faceat 1', 'faceat 1 2 3 4', 'ocarina Q', 'ocarina out L',
+           'camera left 5', 'camera to', 'camera to x', 'faceat', 'faceat 1', 'faceat 1 2 3 4', 'ocarina Q', 'ocarina out L', 'ocarina L hold', 'ocarina L hold 10', 'ocarina L hold 9000', 'ocarina L gap x', 'ocarina hold 300', 'ocarina out hold 300',
            'ocarina away R', 'item Q', 'item A x', 'item A 5', 'rendezvous', 'rendezvous a b c', 'rendezvous x timeout']
     with WorldSimulation(boot_events=0, follow=False) as sim:
         sim.executor(bad + ['wait 0.1', 'end']).run()
