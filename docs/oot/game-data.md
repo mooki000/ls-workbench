@@ -133,6 +133,8 @@ Every setter queues a write on its container's ring and the applier (below) does
 | `0x8b95f6eb` | Bool | `IsClear`, a field of CaptionData | tested |
 | `0xfb4b52f6` | Struct | `DefeatedEnemyNum`; its fields include `Enemy_DungeonBoss_Ganon` (0x2b9afb24) and `Enemy_DungeonBoss_Ganondorf` (0x367c8cc6), also fields of struct 0x42b90553 (name not found) | tested |
 | `0x58131bc2` | Struct | `DebugParam`, not saved (SaveFileIndex −1). Fields found: `IsEnterMQScene` (0x3c3171e5; the full name `DebugParam.IsEnterMQScene` is 0x11b16e68), `IsSetChildhoodManually` (0x078ef520), IsSkipForceResetGameData, IsGameDataAllResetOnSceneDestroy, IsOverturnTerrainSetupAndLoadBanc, IsRequestedResetGimmick, IsOverrideTraversePos, IsKeepLoading | tested |
+| `0xdd80b066` | Struct | `AutogenGameDataLogicNode` (murmur3 checked): 191 members in the game's list, 190 of them Bools saved in `progress.sav` (reset type 8, file 0). The list gives its members by hash only: the 15 looked at (room and dungeon state, for example a refill's respawn marker in a Bottom of the Well room) have no name in the game's data | read |
+| `0xf5a32cdc` | Struct | `DungeonInfo` (murmur3 checked): the per-dungeon values. Members: the Bools `IsGetMap` (0x58aeb8fb), `IsGetCompass` (0xc7692e3f) and `IsGetBossKey` (0x5fb83617), which the HUD's getters read (`f_80ec0210`, `f_80eaa260`, `f_80ec0350`, [menus.md](menus.md)), and `SmallKeyNum` (0x1af87831), the small key count. The hashes were computed from the names, not seen in a run | read |
 | `0xbe9f04bd` | | `Account`: GameDataList's SaveTypeHash for `account.sav` (`Option` is 0xa60ba395, `Caption` 0x26f3523b) | tested |
 
 ## Data

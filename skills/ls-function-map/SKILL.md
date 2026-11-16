@@ -10,7 +10,7 @@ description: >
 # The function map: look it up first, add what you learn
 
 The game ships without symbols, so the lifted code calls every function `f_<address>`. The map says what the ones
-somebody already looked at do: about 1,650 rows over 31 pages, one page per part of the game, each row with how sure it
+somebody already looked at do: about 1,700 rows over 31 pages, one page per part of the game, each row with how sure it
 is. Reading it takes seconds; working a function out again from lifted C takes an hour and may get it wrong.
 
 - Pages and conventions: `/home/mooki/Code/hookshot-workbench/docs/oot/` (`README.md` is the index).
@@ -54,17 +54,24 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
   Searching many of these files in one call can silently miss matches; search one file at a time.
   The link map names the file in one grep: `grep -m1 '(.text.f_803edf70)' <worktree>/work/build/sa/build/longshot.map`
   shows the object (`code_001.o` is `code_001.c`), which beats searching the code files.
-- The guest image is on disk too: `<worktree>/work/build/sa/image/image.bin` (base `0x80000000`, so the offset is the
-  address minus the base) holds the relocated vtables, registry tables and every string. A vtable slot is
-  `vtable + 8 * slot`; read a string or a table at its address directly instead of searching the C for who loads it.
+- The guest image is on disk too: `<worktree>/work/build/sa/image/image.bin` (its first byte is guest address
+  `0x80000000`, so a file offset is the address minus `0x80000000`; that is the image's base, **not** the main module's,
+  which is `0x80020000`: see the bullet on another project's addresses below) holds the relocated vtables, registry
+  tables and every string. A vtable slot is `vtable + 8 * slot`; read a string or a table at its address directly
+  instead of searching the C for who loads it.
 - Which file holds an address is decided per build. Do not work it out from a `chunks.txt` or an image listing that
   belongs to another build's work folder; search the files of the build you are reading.
 - Strings are not in the C: a thread or class name is loaded from the game image by address. To get from a name in a
   log to its function, find who references the string's address, or start from a neighbour the map already has.
 - Thread names are not unique: a pool's workers share one name (six `BaseProcCreateAndDeleteThread`, one
   `PreActorModelCompose` per core). A name in a log line or a sampler does not identify which worker it was.
-- Another project's addresses (a co-op mod's, say) are offsets into the game's main module: our address is theirs plus
-  `0x80020000` (their `0x57af30` is `f_8059af30`; data converts the same way). Every one checked by reading the
+- Another project's addresses (a co-op mod's, say) are offsets into the game's main module, which is loaded at
+  **`0x80020000`**: our address is their offset **plus `0x80020000`**, and their offset is our address minus
+  `0x80020000`. Their `0x57af30` is `f_8059af30`; their `0x33e4200` is `f_83404200` (`0x033e4200 + 0x80020000`), data
+  converts the same way (their `0x4e94840` is `0x84eb4840`). Do not use `0x80000000` (the image file's base above): it
+  lands `0x20000` too low, and their `0x33e4200` becomes `f_833e4200`, an address where no function starts (once
+  copied into reports as the HUD refresh, which is `f_83404200`). A converted address is a function only if a
+  `void f_<address>(Ctx` line exists for it: check that before you write a row. Every one checked by reading the
   function was the one their comment names, but treat their name as a lead. An offset can land inside a function
   (their `0x49dcb0` is a place inside `f_804bd8c0`, not a function: find the function that contains it and put the
   place in its row as `at 0x...`), and a name can belong to the next class's function; read it before you trust it.

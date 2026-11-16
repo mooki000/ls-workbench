@@ -112,9 +112,10 @@ from its name.
 | `f_80973640` | `RetargetScaleRef_Make` | "RetargetScaleRef" | guess |
 | `f_808bf3b0` | `ASRef_Make` | "ASRef": the sequencer; its reference is at `components+0x40` (`f_8299a830`) | guess |
 | `f_808fd020` | `ModelBindRef_Make` | "ModelBindRef" | guess |
-| `f_80c6dc00` | `BoneBindRef_Make` | "BoneBindRef" | guess |
 | `f_83af0180` | `LODRef_Make` | "LODRef": the actor's LOD component, the LOD module's entries (**guess**) | guess |
 | `f_808aaf80` | `CalcSkipRef_Make` | "CalcSkipRef" | guess |
+
+The makers above were taken from the registry's maker column, which is one entry early at the entries checked: the maker listed next to BoneBind, `f_80c6dc00`, makes the Destruction component (its row is on [actors.md](actors.md)). If the whole engine table is shifted, each maker here makes the component listed after the one it is named for, and BoneBind's own maker is another function. That was not checked row by row, so these names stay **guess**.
 
 ### The actor's update: bones, IK and the controllers
 

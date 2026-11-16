@@ -86,3 +86,12 @@ The file names are not in the code: they come from the game data's `SaveDirector
 - LS's side is `host/nn_fs.c`: `MountSaveData` mounts `save:` on `<game>\user\save\<user id>`, once, at boot;
   `mount()` adds or replaces a mount's folder; `host_path()` turns `save:/slot_00/progress.sav` into the file on disk, one to
   one.
+
+### Game Over and Try Again
+
+No function of this path has a row yet; what is known comes from the names in the game's sequence and event-flow data, not from lifted code, and none of it was hooked or run.
+
+- **The Retry graph.** Game Over's Try Again goes through the sequence graph `Sequence/Retry.module`: from its node names it loads the latest save's index and then runs `OnLoadGameSaveData` and `ChangeBanc`. **guess**
+- **A node in two graphs.** `SeqExecuteAutoSaveMgrLastGameOverSave` is a node of both the Retry graph and the `EventToTitle` graph (`Sequence/EventToTitle.module`). **guess**
+- **The Game Over event flow.** `DmF_SY_GameOver.bfevfl` has two entry points, Retry and Title, and a screen that checks the return to the title. **read** (from the flow file's names)
+- **What a load opens.** In a trace of the game's file opens for the title's Continue, `save:/slot_NN/progress.sav` is opened twice before the state leaves the menu for loading. **tested** for Continue; whether Try Again opens the same file in the same way, and whether it avoids the title's own event flow (`TitleEvent.bfevfl`), was not seen.

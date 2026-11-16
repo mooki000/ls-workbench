@@ -188,6 +188,13 @@ age-less maps are ever reached through this query was not checked. **read** (the
   child or adult map by `Sequence_IsChildhood` ([game-data.md](game-data.md#known-values)).
 
 
+### The teleport's destinations
+
+- **A list of the port's, not a table of the game's.** The destinations the debug tools offer are `oot_destinations` in `host/hos_main.c`: 31 pairs of a map (named for Link's age) and a start position, picked by index. No table of the game's entrances is documented on these pages; the arrival event puts Link at the destination's start position (*The map change's arrival event* above). **read**
+- **Two destinations can share a map.** Hyrule Field and Lake Hylia are both `HyruleField_*` maps and differ only in the start position. Destination 7 is the Lake Hylia side (Link lands swimming); destination 3, the Market, and destination 0, Kokiri Forest, are dry. **tested** (a real game; a picture of the swimming arrival was looked at)
+- **The age change** flips Link's age at once and reloads the current map as the other age through the same map-change event; the arrival is control in the other map. **tested**
+- **After a map change** the first seconds are a fade from black: a picture taken at arrival can be black, and was lit once the tool waited 120 presents. The game saves a few seconds after a debug map change (its "Saving..." text shows), so the slot files hold the new place only after that. **tested**
+
 ## Open questions
 
 - Skip a playing cutscene (a Navi talk or the Door of Time) with `f_83b5af30(entry)` from the game thread and read `[entry+0x220]+0x28` and `+0x2c` over the next ten frames: expected bit 0x20 set, then the state leaves 3 (to 6, the end state) within a few frames. Who reads bit 0x20 of the playback object's `+0x28` was not found (the base class's other slots are empty stubs; the derived classes' overrides were not enumerated).

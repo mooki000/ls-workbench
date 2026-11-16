@@ -197,15 +197,21 @@ the code on this page. **read** (the offsets and users), **guess** (the names)
 | Offset | Field | Sure |
 |---|---|---|
 | `+0x48` | The AI component (**guess**: AIInfo): the controller units (below) | read |
+| `+0xf0` | Destruction: the 0x170-byte object `f_80c6dc00` makes. An actor with Destruction, Life, Death and Drop and with no Target and no Player component reads as a breakable ([actors.md](actors.md), *The Death component and a break*) | read |
 | `+0x118` | Logic (`QueryLogicGetBool`, `ExecuteLogicSet*`) | guess |
 | `+0x138` | AISchedule (the `*AISchedule*` nodes; the AISchedule update) | read |
 | `+0x188` | BSA (`ExecuteBSAInvokeActionVerb*`, `ExecuteBSASetActionVerb`, `ExecuteBSARequestUpdateBrainNextFrameDelegate`; the BSA update) | read |
+| `+0x1c0` | Death: the component `f_803c88b0` steps (0xe8 bytes, made by `f_809e5480`); its flags are at `+0x20` | read |
+| `+0x1c8` | Drop (made by `f_80c84f80`) | read |
 | `+0x1f8` | Equipment (`QueryActorIsEquipment`, `QueryEquipmentIsEquiped`); slot 51 calls its `+0x100` every 60 frames | guess |
 | `+0x260` | Model (`OneShotModelSetAlpha`, `OneShotSetModelVisible`, `OneShotShopItemSetModelLodManual`; `f_800d43d0`) | guess |
-| `+0x2c0` | Liftable (`QueryLiftableIs*`) | guess |
+| `+0x2b8` | Life: the 0x1d20-byte object of [player.md](player.md) (made by `f_80d1fbb0`); `f_80853e00` returns it | read |
+| `+0x2c0` | Liftable (`QueryLiftableIs*`; made by `f_809bfe60`) | read |
 | `+0x308` | Nest, the enemy's territory (`QueryNestIsOutsideOfTerritory`, `QueryEnemyGetHomeOrNestPositionAndRotation`) | guess |
 | `+0x330` | The perception receiver (`OneShotPerceptionChangeSenseScale`, `QueryPerceptionGetSenseSightParam`, `EnemyCommmonPerceptionTargetSearchAndSetModule`) | read |
+| `+0x358` | Player | read |
 | `+0x3a0` | Ridable (`QueryRidableIs*`, `SelectorBSAHorseWanderAI`) | guess |
+| `+0x418` | Target: null for a non-enemy (75 of 75 non-enemy packs with Destruction and Life lack it, 17 of 17 enemy and boss packs have it) | read |
 | `+0x460` | Read by `ExecuteWindmill`, `QueryIsInHidingHole`, `QueryAIScheduleGetRescueWarpAnchor`; slot 51 calls `f_803d8750` on it every 30 or 150 frames (**guess**: WorldInfo) | read |
 
 ### The AI component's units (components `+0x48`)

@@ -55,6 +55,11 @@ The map, the song icons and a dungeon's floor widget are the HUD screen's; the p
 | `f_805a3500` | `HudMap_LinkFloor(screen)` | The floor id of Link's room in the shown map (-99: none); the update compares it with `+0x1368` | guess |
 | `f_83403f20` | `HudMap_MarkFloorSlots(screen)` | After a floor change: lights the floor mark whose index equals `floor - lowest` among up to five slots (`[screen+0x388]`, count `+0x380`) | guess |
 | `f_80b48380` | `HudMap_Open(screen)` | Sets the map widget up for a map: calls `f_80b482c0` and the other floor/pane setup (`f_80b48710`, `f_80b48ac0`, `f_80b49240`, `f_80b48dc0`, `f_80b486c0`, `f_80b4bed0`, `f_80b487a0`) | guess |
+| `f_83404200` | `HudMap_Refresh(screen)` | The HUD's refresh of its map state for the shown map (x0 the HUD screen, vtable `0x84c08300`). It sets a mark (`+0x1360 = 1`), resets two sub-objects (`+0x13d0`, `+0x1420`), runs three name tests on the shown map (`f_805a6420`, `f_805a7260`, `f_805a6d00`) and keeps their answers (`+0x235c`, `+0x235d`, `+0x2357`), reads the shown dungeon's three Bool members IsGetMap, IsGetCompass and IsGetBossKey again (`f_80ec0210`, `f_80eaa260`, `f_80ec0350`) into the screen's own copy of them (bytes `+0x1538`, `+0x1539`, `+0x153a`; `+0x153b` is a fourth answer, from the first test or `f_80b4c1c0`), then, when the third test's answer is set (a dungeon's map, as far as read), calls `HudMap_Open` (`f_80b48380`) and sets the floor widget's state (`+0x1358`) to 5, else calls `f_80b48940` and sets it to 4, and ends with `f_80789f30` and, unless `+0x137c` is 30, `f_802f0df0` and `f_83403310`. The minimap and the Map page draw from that copy, which is filled only at the screen's init and here. The game runs it from the floor widget only: `f_83404bf0` when byte `+0x12c` has bit 0x02 or 0x10 set, and one path of `f_83404ac0`; as far as read that is its own get scene, the Map page and a room load, and nowhere else. A map, compass or boss key set by a flag write during play (co-op's) therefore stays off the minimap until one of those. The port's co-op code runs it itself, from the HUD screen's own update (`hos_oot_hud_tick`, `host/oot_hud_refresh.c`); that call was tested against a fake guest and never in the game | read |
+| `f_83404bf0` | `HudMap_StepIdle(screen)` | The floor widget's state 0 (see `f_834039a0`): when byte `+0x12c` of the request word has bit 0x02 or 0x10 set it clears `+0x1534` and tail-calls the HUD refresh `f_83404200`; otherwise it counts `+0x1520` down to 0 and, by the value at `+0x135c` (0 to 3), tail-calls `f_83404d80`, `f_83404e30`, `f_83404ed0` or `f_83404f90` | read |
+| `f_80ec0210` | `DungeonInfo_GetIsGetMap` | Whether the shown dungeon has its map: the Bool member `IsGetMap` (member hash `0x58aeb8fb`) of that dungeon's struct handle (`+616` of a component found from the world manager by a virtual lookup), 0 when there is no such component. It calls `f_80199f70` with the handle and the hash. `f_80eaa260` is the same for `IsGetCompass` (`0xc7692e3f`) and `f_80ec0350` for `IsGetBossKey` (`0x5fb83617`). Read by the HUD refresh. The struct is a dungeon's own; the port's co-op code reads these members from `DungeonInfo` (`0xf5a32cdc`, [game-data.md](game-data.md)), which is likely the same struct (not checked in the lifted code) | read |
+| `f_80eaa260` | `DungeonInfo_GetIsGetCompass` | See `f_80ec0210`: the shown dungeon's `IsGetCompass` | read |
+| `f_80ec0350` | `DungeonInfo_GetIsGetBossKey` | See `f_80ec0210`: the shown dungeon's `IsGetBossKey` | read |
 
 ## Data
 
@@ -96,19 +101,26 @@ Its base part is *A menu screen* above (`+0x20` the focus holder, `+0x28` the la
 |---|---|---|
 | `+0x00` | u64: the vtable `0x84c08300` | read |
 | `+0x108` | object: a bit set cleared by `f_83403a70` (bits 0x10000, 0x100000, 0x20000, 0x200000) | guess |
-| `+0x12c` | u32: request/edge bits: 0x10000 or 0x100000 = floor up, 0x20000 or 0x200000 = floor down; bit 4 of the byte = (re)initialise the floor widget | read |
+| `+0x12c` | u32: request/edge bits: 0x10000 or 0x100000 = floor up, 0x20000 or 0x200000 = floor down; bit 4 of the byte = (re)initialise the floor widget; bits 0x02 and 0x10 of the byte ask the idle state (`f_83404bf0`) for a refresh (`f_83404200`) | read |
 | `+0x2d8` | u64: animation object of the floor-count display (frame = count-1) | read |
 | `+0x388` / `+0x380` | u64 / u32: the floor mark slots (array pointer, count) | guess |
 | `+0x390` | u64: the shown map's info object: `+0x37c` s32 floor count, `+0x384` s32 base floor id, `+0x360` s32 current map index | read |
 | `+0x1358` | u32: floor widget state 0..5 (dispatch `f_834039a0`; 2 = the selector `f_83404cc0`) | read |
 | `+0x135c` | u32: widget sub-state (0..3; read by `f_83404bf0`, `f_83403a70`) | guess |
+| `+0x1360` | u32: a mark the refresh `f_83404200` sets to 1 | read |
 | `+0x1364` | s32: -1 at construction; role not determined | read |
 | `+0x1368` | s32: **floor shown** (changed only by `f_83404cc0`) | read |
 | `+0x136c` | s32: **floor count** (written by `f_80b482c0`) | read |
 | `+0x1370` | s32: **lowest floor id** (written by `f_80b482c0`) | read |
 | `+0x1374`, `+0x1378` | s32, s32: -1 at construction; role not determined | read |
+| `+0x137c` | s32: a value the refresh compares with 30 (30 at construction) | read |
+| `+0x13d0` | A sub-object the refresh resets | read |
 | `+0x1420` | char[0x40]: an inline string (the current map/room name) with its length at `+0x1428`; used by `f_805a3500` | guess |
 | `+0x1500` | u8: bitmask of the dungeon's floors (bit i = floor i) | read |
+| `+0x1520` | s32: a countdown the idle state `f_83404bf0` runs down to 0 | read |
+| `+0x1534` | A byte the idle state clears before a refresh | read |
+| `+0x1538` to `+0x153b` | Four bytes: the screen's copy of the shown dungeon's IsGetMap, IsGetCompass and IsGetBossKey (`+0x1538`, `+0x1539`, `+0x153a`) and a fourth answer (`+0x153b`, from the first name test or `f_80b4c1c0`). Filled at the screen's init and by `f_83404200`; the minimap and the Map page draw from it | read |
+| `+0x2357`, `+0x235c`, `+0x235d` | Bytes: the answers of the three name tests of `f_83404200` (`f_805a6d00`, `f_805a6420`, `f_805a7260`; the third test's answer, `+0x2357`, decides between `HudMap_Open` and the other setup) | read |
 | `+0x1480`, `+0x1498`, `+0x14d0` | u64: pane pointers the map widget keeps (`f_80b49ce0` reads them to place the picture and its icons) | read |
 
 ## Notes
@@ -124,6 +136,8 @@ Its base part is *A menu screen* above (`+0x20` the focus holder, `+0x28` the la
 - **The floor widget.** `+0x1368` is the floor shown, `+0x136c` the floor count and `+0x1370` the lowest floor, all signed 32-bit. `f_80b482c0` scans the floor bitmask at `+0x1500` (bit i is floor i of the dungeon) over the first `[mapinfo+0x37c]` bits, with `mapinfo = [screen+0x390]`, finds the lowest and highest set bits, stores `+0x1370 = [mapinfo+0x384] + lowest bit` (the dungeon's base floor id plus the bit) and `+0x136c = highest - lowest + 1`, and sets the floor-count animation (`[screen+0x2d8]`) to frame count - 1. `+0x1368` changes only in the stepper `f_83404cc0`: one floor up or down on the request word's bits (`+0x12c`: 0x10000 or 0x100000 up, 0x20000 or 0x200000 down), and only while `lowest <= floor <= lowest + count - 1`. So the top floor is `lowest + count - 1`, as `host/oot_menu.c` assumes; "2F = 1, 1F = 0, B1 = -1" is data (base floor id plus the bit), not code. The constructor sets `+0x1364 = -1`, `+0x1368`, `+0x136c` and `+0x1370` to 0 and `+0x1374` and `+0x1378` to -1. **read**
 - **Link's floor.** `f_805a3500` returns the floor id of the room Link is in (-99 when none) and the update compares it with `+0x1368`. **read** (the -99 and the comparison), **guess** (the name)
 - **The panes of the map's pictures** (`P_ReplaceField_00`, `P_ReplaceFieldMini_00`, `P_ReplaceFieldMiniFront_00`, `P_ReplaceDungeon_00`, `P_ReplaceDungeonMini_00`, `P_MapBg_00`, `N_PatternField_00`, `N_PatternDungeon_00`, `N_PatternFieldMini_00`, `N_PatternDungeonMini_00`) have their names in one string table at `0x83f36290`. No function among the ~37 that touch that page names them and no pointer table holds them: the HUD keeps its panes as pointers in its own fields (for example `+0x1380`, `+0x1398`, `+0x14d0`), so finding them by name on the layout is how an outsider does it. **read**
+- **The map's item copy and when it is refreshed.** The minimap and the Map page draw the shown dungeon's map, compass and boss key from the screen's own copy (`+0x1538` to `+0x153a`), not from the flags. The copy is filled at the screen's init and by `f_83404200`, which the floor widget calls on its get scene, the Map page and a room load (as far as read). A flag write that gives the dungeon one of them during play does not show until the next of those. The member hashes are the murmur3 (x86, 32 bit, seed 0) of the names `IsGetMap`, `IsGetCompass` and `IsGetBossKey`, computed and compared. **read**
+- **A wrong address from another project's offset.** Another project's offset `0x33e4200` for this refresh was converted with `0x80000000` instead of `0x80020000`, which gives `f_833e4200`, an address where no function starts. With `0x80020000` it is `f_83404200`, `HudMap_Refresh`. The conversion is in [README.md](README.md), *Other projects' addresses*. **read**
 
 ## Open questions
 
