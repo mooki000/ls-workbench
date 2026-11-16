@@ -44,7 +44,9 @@ dictionary in `Pack/ZsDic.pack.zs`. **tested**
   function was checked against a known name, `SelectedCaptionIndex` → `0x1a49c4f6`. Hashing every identifier in the
   executable (163,375 strings) matched neither account flag below, so the names live in data, if anywhere. **tested**
 - **The code reads values by hash**, through the game-data manager, with the hash built in registers. Look for MOVZ/MOVK
-  pairs such as `0x5097` / `0xa299` (that is, 0xa2995097). **read**
+  pairs such as `0x5097` / `0xa299` (that is, 0xa2995097). A flag can also be read as a member of a struct, by the plain
+  hash of the member's name rather than the flat hash of `Struct.member`; the played flags are read both ways, so a scan
+  for the flat hash alone misses the struct reads (`f_805a1170`, under *Reading values*). **read**
 
 ## Functions
 
@@ -85,6 +87,8 @@ Every setter queues a write on its container's ring and the applier (below) does
 | `f_8059a4e0` | `GameDataMgr_GetUInt(mgr, out*, hash)` | Reads a UInt's live u32 (entry 0x28 bytes, +0x1c) by hash from K=0x788, UIntArray fallback; ignores the ring | read |
 | `f_83781680` | `GameDataMgr_GetKey64(mgr, out*, key)` | Binary search (ascending, unsigned) of the 16-byte records at mgr+0xc60 (count mgr+0xc58); stores the u8 live value (+0xc), returns 1 if found | read |
 | `f_80183d20` | `GameDataMgr_GetIntQueued(mgr, out*, hash)` | Int read that first scans the pending ring newest-to-oldest (assign = value, add = accumulate) and then the table; the only queue-aware getter found | read |
+| `f_805a1170` | `GameDataMgr_GetStructBool(mgr, out*, handle, memberHash)` | Reads one Bool member of a game-data struct by its member hash (the plain hash of the member name, not the flat `Struct.member` hash): finds the member through the handle's table (`handle+0`: table `+8`, size `+20`, as in `f_809d39e0`), which gives the member's flat hash, copies that Bool's live value byte (entry `+22`) to `*out` and returns 1; a member not found tail-calls `f_805a12c0` with 0; a handle whose byte `+12` has bit 0 set is handed to `f_837645e0` first (not read). The played flags' struct is read this way | read |
+| `f_80403cc0` | `StoryFlagTable_FillBits(group, bitset*)` | Walks one of 5 groups of 47 story-progress flag hashes (a rodata table of 235 at `0x83f2a9f8`; `group` 0 to 4) and sets bit *i* of a bitset of 64-bit words for the flag at table index *i* when it is set; three entries are read by rules of their own (through `f_804029e0`). Caller `f_805996e0` packs flag groups into one record | read |
 
 ### The applier and its module
 
