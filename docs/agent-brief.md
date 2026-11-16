@@ -78,11 +78,18 @@ Their rules bind you as they bind everyone. The ones that matter most:
    ...); it becomes the squash commit. The description opens with why the change is needed, in one or two plain
    sentences; then what changed, how it was tested (GPU, driver, place in the game, frame rates before and after where
    speed is claimed), what was not tested, and screenshots when the change shows on screen. Link the issue.
-5. **AI assistance is recorded** with trailers, as the maintainers do, naming the model that did the work: since
-   2026-11-11 16:30 new agents run on GPT-6 Astra (`Assisted-by: GPT-6 Astra` and
-   `Co-Authored-By: GPT-6 Astra <noreply@openai.com>`); agents picked up from before keep
-   `Assisted-by: Claude Opus 5.5` and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. At the end of each
-   commit message. At most 12 sub-agents run at once (the user's word of 2026-11-11).
+4b. **A regression** (worked in an earlier build, broken in a newer one) gets the label `regression` with
+   `priority/critical`, above every other bug (the user's word, 2026-11-14). Its pull request and its issue start with one
+   line before everything else, so the Discord post shows it: `**Regression:** <what breaks> since <first bad build>,
+   caused by <full link to the change>. <last good build> was fine.` plus the workaround if there is one.
+5. **AI assistance is recorded** with trailers, as the maintainers do, naming the model that did the work. Since
+   2026-11-14 10:20 new agents run on Claude Sonnet 5.5 (`Assisted-by: Claude Sonnet 5.5` and
+   `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`, the two lines directly under each other at the end of
+   each new commit message). Agents started between 2026-11-11 16:30 and then run on GPT-6 Astra and keep
+   `Assisted-by: GPT-6 Astra` and `Co-Authored-By: GPT-6 Astra <noreply@openai.com>`; agents from before that keep
+   `Assisted-by: Claude Opus 5.5` and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. If your task text
+   names other trailers than the model you are, use the ones for the model you are and say so in your report. A
+   replayed commit keeps its own message. At most 16 sub-agents run at once.
    **A check is updated, never removed**: when main or a review changes what a test covers, bring its checks to the
    new code; do not delete one to make a rebase pass (a reviewer sent two of our pull requests back for that on
    2026-11-11).
@@ -196,6 +203,14 @@ Their rules bind you as they bind everyone. The ones that matter most:
 
 The user wants every pull request at the level of his own earlier ones for the other port: "lots of detail and images".
 `skill://ls-pr-evidence` has the form and the checklist; read it before you write a body. In short:
+
+- **When you edit an existing description, the forge's template forms stay exactly as they are**: the lines
+  `main: <hash> (<date>)` and `this PR: <branch> @ <hash>`, table column heads `main @ <hash>` and `this PR @ <hash>`,
+  the labels `**Tested:**`, `**Not tested:**`, `**Needs other testers:**`, the checklist boxes' own text, and the
+  origin line under the last `---` (`Moved from NotRexed/Hookshot#N.` or `New on this forge; not opened on
+  GitHub.`). "No at-signs" means no user mentions; it never means rewriting these. The description check reads them
+  literally: three bodies failed it on 2026-11-13 because a worker reworded them. Put what you want to add after
+  the label, not into it.
 
 - **Collect the evidence while you work**, under `reports/<Topic>-files/`: the environment (system, GPU and driver, base
   and head commit, date, load), the test's lines on the branch and against main's source, the whole suite's totals
