@@ -596,8 +596,10 @@ class Recovery:
         if dist is not None and dist <= target.radius + ARRIVE_SLACK_M and target.kind in ('reach', 'item') and not target.follow:
             if mem.get('last'):
                 cands = [c for c in cands if c.label not in ('go', 'go-near', 'back-off', 'side-left', 'side-right')] or cands
-            else:
-                cands = [c for c in cands if c.label in ('talk-through', 'next-target')] or cands
+            else:   # (a pickup is the action at an item target, not a way to it: one that found nothing may be tried again or dived for; one that took the item is the end of it)
+                took = (mem.get('history') or [None])[-1]
+                took = bool(took and str(took[0]).startswith('pickup') and took[1] == 'picked')
+                cands = [c for c in cands if c.label in ('talk-through', 'next-target') or (c.label.startswith('pickup') and not took)] or cands
         if len(cands) == 1:
             return cands, ('choice', cands[0].label, 'one valid candidate')
         key = (tuple(c.label for c in cands), signature(st))

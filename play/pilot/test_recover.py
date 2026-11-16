@@ -502,6 +502,15 @@ def gate_checks():
     check(forced is None and [c.label for c in cs] == ['settle', 'press-a', 'next-target'], 'on the last target the way there is not offered again, the rest is')
     cs, forced = rec.gate(rs, [C('talk-through'), C('go'), C('next-target')], T(), near, {}, dist=2)
     check(forced is None and [c.label for c in cs] == ['talk-through', 'next-target'], 'an event that holds Link keeps talk-through')
+    # pi-solo-4: a rupee on a pond's floor (an item target of a collect goal that is not the last): Link stands on it, the pickup found nothing,
+    # and the dive that follows must still be offered (the arrival rule used to leave only next-target, so the blue rupee was never dived for)
+    cs, forced = rec.gate(rs, [C('pickup', ['pickup 0 30']), C('pickup-dive', ['pickup 0 30 dive 3']), C('next-target'), C('give-up-goal')], T('item', radius=0.5), near, {'history': [('pickup', 'none', 5.0, 0.02)]}, dist=0.3)
+    check(forced is None and [c.label for c in cs] == ['pickup', 'pickup-dive', 'next-target'],
+          f'an item target of a collect goal keeps its pickups when Link stands on it ({[c.label for c in cs]}, {forced})')
+    cs, forced = rec.gate(rs, [C('go', ['run 0 30']), C('pickup', ['pickup 0 30']), C('next-target')], T('item', radius=0.5), near, {}, dist=0.3)
+    check(forced is None and [c.label for c in cs] == ['pickup', 'next-target'], 'but the way there is still not offered again')
+    cs, forced = rec.gate(rs, [C('pickup', ['pickup 0 30']), C('next-target')], T('item', radius=0.5), near, {'history': [('pickup', 'picked', 5.0, 0.02)]}, dist=0.3)
+    check(forced == ('choice', 'next-target', 'one valid candidate'), 'after a pickup that took the item the target is left without a question')
     mem = {'blocked_lines': [((0, 0), ['run 0 30'])]}
     cs, forced = rec.gate(rs, [C('go', ['run 0 30']), C('go-near', ['walk 0 28']), C('settle')], T('door'), st, mem)
     check([c.label for c in cs] == ['go-near', 'settle'] and forced is None, 'a move that already ended stuck from here is not offered again')
