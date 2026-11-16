@@ -40,7 +40,7 @@ INTERACT_LABELS = {
     # new (this module): label -> what kind of interaction it attempts
     'open-chest': 'chest', 'open-chest-force': 'chest', 'talk': 'talk', 'talk-force': 'talk', 'advance-text': 'text',
     'pickup': 'pickup', 'pickup-nearest': 'pickup', 'pickup-2': 'pickup', 'pickup-3': 'pickup', 'pickup-dive': 'pickup', 'enter-door': 'enter',
-    'ocarina-play': 'ocarina', 'ocarina-out': 'ocarina', 'ocarina-away': 'ocarina', 'item-use': 'item', 'ztarget': 'target',
+    'ocarina-play': 'ocarina', 'ocarina-play-slow': 'ocarina', 'ocarina-out': 'ocarina', 'ocarina-away': 'ocarina', 'item-use': 'item', 'ztarget': 'target',
     'camera-sweep': 'camera', 'try-chest': 'chest', 'try-person': 'talk', 'try-sign': 'sign', 'try-item': 'pickup',
     'try-door': 'enter', 'try-stone': 'sign', 'try-item-use': 'item', 'try-ztarget': 'target', 'try-camera': 'camera',
     'try-ocarina': 'ocarina', 'approach-enemy': 'fight',
@@ -60,6 +60,7 @@ TUNE = {
     'face_deg': 25.0,                                         # `face-*` is offered when the target is more than this off
     'talk_m': 1.7, 'pick_radius': 0.35, 'low_life_frac': 0.3, 'max_rounds': 24,
 }
+SLOW_HOLD_MS, SLOW_GAP_MS = 400, 450   # the second play of a song the game did not answer: each note held this long, this far apart
 PROMPT_WORDS = {   # generic English verbs of an action prompt; the real words of the game go into prompts.json
     'open': ('open',), 'talk': ('talk', 'speak', 'chat'), 'check': ('check', 'read', 'look', 'examine', 'inspect'),
     'take': ('take', 'have', 'grab', 'pick', 'get', 'lift'), 'crawl': ('crawl',), 'climb': ('climb',),
@@ -467,8 +468,15 @@ def song_candidates(area, goal, target, f, mem, plan):
     if target is not None and f.dist is not None and f.dist > max(2.0, target.radius):
         out.append(go_near(area, f, target, mem, plan, max(1.0, min(2.0, target.radius))))
     if notes:
-        out.append(Candidate('ocarina-play', [f'ocarina {" ".join(notes)}'],
+        timing = (f' hold {goal.cond.hold_ms}' if goal.cond.hold_ms else '') + (f' gap {goal.cond.gap_ms}' if goal.cond.gap_ms else '')
+        out.append(Candidate('ocarina-play', [f'ocarina {" ".join(notes)}{timing}'],
                              f'take the ocarina out (D-pad Left), play {" ".join(notes)} (the five note buttons), put it away; report what changed'))
+        last = last_entry(mem)
+        if (goal.cond.hold_ms or 0) < SLOW_HOLD_MS and count_label(mem, 'ocarina-play') >= 1 and count_label(mem, 'ocarina-play-slow') < 1 \
+                and goal.cond.flag is not None and not (last and last[1] == 'no-ocarina'):
+            # (pi-solo-3: the game's songbook shows the notes; whether quick ones are heard is not known: once more with each note held 0.4 s)
+            out.append(Candidate('ocarina-play-slow', [f'ocarina {" ".join(notes)} hold {SLOW_HOLD_MS} gap {SLOW_GAP_MS}'],
+                                 f'play {" ".join(notes)} again, each note held {SLOW_HOLD_MS} ms with {SLOW_GAP_MS} ms between (a song the game did not hear may be too quick)'))
     out.append(Candidate('ocarina-out', ['ocarina out'], 'take the ocarina out and leave it waiting for a note'))
     out.append(Candidate('ocarina-away', ['ocarina away'], 'put the ocarina away'))
     out.append(Candidate('wait-song', ['wait 3'], 'wait 3 s for the song\'s effect'))
@@ -654,11 +662,14 @@ def pick_enter(ctx, have, mem):
 
 def pick_song(ctx, have, mem):
     last = last_entry(mem)
-    if last and last[0] in ('ocarina-play',) and last[1] in ('played',):
-        return 'wait-song' if count_label(mem, 'wait-song') < 1 else 'next-target'
-    if last and last[0] == 'ocarina-play' and last[1] == 'no-ocarina':
+    plays = count_label(mem, 'ocarina-play') + count_label(mem, 'ocarina-play-slow')
+    if last and last[0] in ('ocarina-play', 'ocarina-play-slow') and last[1] in ('played',):
+        return 'wait-song' if count_label(mem, 'wait-song') < plays else 'next-target'
+    if last and last[0] in ('ocarina-play', 'ocarina-play-slow') and last[1] == 'no-ocarina':
         return 'next-target'
-    if count_label(mem, 'ocarina-play') >= 3:
+    if last and last[0] == 'wait-song' and plays:   # (the quick notes were not heard: once slowly, then the song is left)
+        return 'ocarina-play-slow' if 'ocarina-play-slow' in have else 'next-target'
+    if plays >= 3:
         return 'next-target'
     if 'go-near' in have and not (last and last[0] == 'go-near'):
         return 'go-near'
@@ -777,6 +788,8 @@ class InteractCond:
         self.min_kinds = int(g.get('min_kinds', 3))
         self.to_area = g.get('to')
         self.notes = [n for n in str(g.get('notes', '')).replace(',', ' ').split() if n] or self.song_notes(g.get('song'))
+        self.hold_ms = int(g['hold_ms']) if g.get('hold_ms') else None   # the ocarina's note timing (hsap's own when not named)
+        self.gap_ms = int(g['gap_ms']) if g.get('gap_ms') else None
         self.rendezvous = str(g.get('rendezvous', 'chest-1'))
         self.wait_s = float(g.get('wait_s', 150.0))
         self.quiet_s, self.min_battle_s = float(g.get('quiet_s', 8.0)), float(g.get('min_battle_s', 3.0))

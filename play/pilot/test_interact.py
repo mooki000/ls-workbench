@@ -931,6 +931,77 @@ def sidelane_checks():
           f'the goal text of a song with a flag names the flag as the proof ({song.cond.describe()})')
 
 
+# ---- hold B1's A3 replay (pi-solo-3), each played against the old behaviour first
+
+def pisolo3_checks():
+    import pilot
+    # the pickup's history word: a candidate of a run to a far spot and a pickup there is recorded with the pickup's result (pi-solo-3: the
+    # first rupee's candidate was run, run, run, pickup; the pickup ended `none`, the history said `reached`, so no dive was ever offered)
+    run_ok = step('run 101.9 174.0 radius 1', 'reached', moved=23.0, detail='0.65 m from the point')
+    pick_none = step('pickup 192.36 199.51 radius 0.35 timeout 53', 'none', detail='0.19 m from the point; nothing changed')
+    pick_got = step('pickup 192.36 199.51 radius 0.35 timeout 53', 'picked', changes={'rupees': [17, 22]})
+    hs = pilot.history_step
+    check(hs([run_ok, run_ok, pick_none])['result'] == 'none', 'a run to the spot and a pickup that found nothing: the pickup\'s word')
+    check(hs([run_ok, pick_got])['result'] == 'picked', 'a run and a pickup that took the rupee: picked')
+    check(hs([pick_none])['result'] == 'none', 'a pickup alone: its own word')
+    check(hs([run_ok, step('wait 1', 'done')])['result'] == 'reached', 'a run and a wait: the run\'s word (a wait decides nothing)')
+    check(hs([pick_none, run_ok])['result'] == 'reached', 'a pickup and then a run: the move last made')
+    check(hs([None, run_ok, None])['result'] == 'reached' and hs([None]) is None and hs([]) is None, 'no step, no word; gaps are skipped')
+    check(hs([run_ok, {'ev': 'bad', 'src': 'pickup', 'why': 'x'}])['result'] == 'reached', 'a refused line is not a result')
+    with WithWorld():
+        rt = Target('pond-rupee', 4.0, -2.0, y=-2.0, kind='item')
+        g = Goal('collect', [rt], count=5)
+        here = interact.with_near('Test_Area', state(pos=[4.0, 0.0, -2.0]))
+        mem = {'history': [('pickup', hs([run_ok, pick_none])['result'], 23.0, 0.19)]}
+        cs = interact.candidates('Test_Area', g, rt, here, mem)
+        check('pickup-dive' in labels(cs) and interact.pick(ctx_of(g, rt, here, mem, cs, [])) == 'pickup-dive',
+              'after the far pickup that found nothing the dive is offered and taken')
+
+    # the Song of Storms as the game's own songbook shows it (pi-solo-3: ZL held 800 ms opened the book: L R X L R X), and the notes' timing
+    song = Goal('play_song', [Target('windmill', 0.0, 0.0)], notes='L R X L R X', flag='Song.Heard=1')
+    near = interact.with_near('Test_Area', state())
+    with WithWorld():
+        fast = next(c for c in interact.candidates('Test_Area', song, song.targets[0], near, {}) if c.label == 'ocarina-play')
+        check(fast.lines == ['ocarina L R X L R X'], f'no timing named: hsap\'s own ({fast.lines})')
+        timed = Goal('play_song', [Target('windmill', 0.0, 0.0)], notes='L R X L R X', flag='Song.Heard=1', hold_ms=250, gap_ms=300)
+        c2 = next(c for c in interact.candidates('Test_Area', timed, timed.targets[0], near, {}) if c.label == 'ocarina-play')
+        check(c2.lines == ['ocarina L R X L R X hold 250 gap 300'], f'a goal that names its timing plays it ({c2.lines})')
+        check('ocarina-play-slow' not in labels(interact.candidates('Test_Area', song, song.targets[0], near, {})),
+              'the slow play is not offered before the notes were played once')
+        mem = {'history': [('ocarina-play', 'played', 0.0, None), ('wait-song', 'done', 0.0, None)]}
+        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
+        slow = next((c for c in cs if c.label == 'ocarina-play-slow'), None)
+        check(slow is not None and slow.lines == ['ocarina L R X L R X hold 400 gap 450'], f'after a play the game did not answer, the notes are offered slowly ({slow.lines if slow else None})')
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'ocarina-play-slow', 'the picker plays them slowly once')
+        mem['history'] += [('ocarina-play-slow', 'played', 0.0, None)]
+        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'wait-song', 'then it waits for the song\'s effect')
+        mem['history'] += [('wait-song', 'done', 0.0, None)]
+        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'next-target', 'and then leaves the song')
+        loose = Goal('play_song', [Target('windmill', 0.0, 0.0)], notes='L R X', hold_ms=500)
+        mem2 = {'history': [('ocarina-play', 'played', 0.0, None), ('wait-song', 'done', 0.0, None)]}
+        check('ocarina-play-slow' not in labels(interact.candidates('Test_Area', loose, loose.targets[0], near, mem2)),
+              'a goal whose own notes are already long has no slower play to offer')
+        check(interact.INTERACT_LABELS.get('ocarina-play-slow') == 'ocarina', 'the slow play counts as an ocarina attempt in the metrics')
+    # the segments that carry the song: the game's songbook reads L R X L R X (the pilot's published tree has no game segments: skipped there)
+    seg_dir = HERE / 'segments'
+    if (seg_dir / 'interact-song-kakariko.toml').is_file():
+        for name in ('interact-song-kakariko', 'interact-song-slow'):
+            seg = pilot.Segment(seg_dir / f'{name}.toml')
+            notes = [g.cond.notes for g in seg.goals if g.kind == 'play_song']
+            lines = [ln.split() for ln in (seg_dir / f'{name}.txt').read_text().splitlines() if ln.startswith('ocarina ')] if (seg_dir / f'{name}.txt').is_file() else []
+            check(notes == [['L', 'R', 'X', 'L', 'R', 'X']] or any(l[1:7] == ['L', 'R', 'X', 'L', 'R', 'X'] for l in lines),
+                  f'{name} plays the notes the songbook shows: L R X L R X ({notes}, {lines})')
+        for name in sorted(p.stem for p in seg_dir.glob('interact-*.toml')):
+            try:
+                pilot.Segment(seg_dir / f'{name}.toml')
+                ok = True
+            except Exception as e:   # noqa: BLE001
+                ok = f'{type(e).__name__}: {e}'
+            check(ok is True, f'segment {name} parses ({ok})')
+
+
 def run():
     vocab_checks()
     near_checks()
@@ -938,6 +1009,7 @@ def run():
     policy_checks()
     cond_checks()
     sidelane_checks()
+    pisolo3_checks()
     outcome_checks()
     model_checks()
     grammar_checks()

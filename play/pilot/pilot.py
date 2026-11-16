@@ -1292,8 +1292,7 @@ class Pilot:
                 self.log(kind='result', n=n, lines=lines[:sent], steps=results, lost=True)
                 outcome = 'the game stopped answering' if self.alive() else 'the game ended'
                 break
-            move = [r for r in results if r and r['ev'] == 'step' and r['src'].split()[0] in MOVES + ('until', 'climb', 'approach')]
-            last = (move or [r for r in results if r])[-1] if any(results) else None
+            last = history_step(results)
             result = last['result'] if last else 'bad'
             moved = round(sum(r.get('moved', 0) for r in results if r and r['ev'] == 'step'), 2)
             left = self.left_of(last)   # how far a move stopped from its point
@@ -1327,6 +1326,21 @@ class Pilot:
         if start and mem.get('lines') and not target.follow:
             self.frags.append({'area': self.seg.area, 'segment': self.seg.name, 'goal': goal.name,
                                'target': target.name, 'start': start, 'lines': list(mem['lines']), 'run': self.run_id})
+
+
+def history_step(results):
+    """The step whose result word stands for a candidate in the history: the last move, unless the candidate ends with an interaction
+    step (a run to a far spot, then the pickup there), which is the step that tells what happened (pi-solo-3: the pickup ended `none`, the
+    run before it `reached`, and the history said reached, so the dive that follows a pickup that found nothing was never offered). None
+    when no step answered."""
+    got = [r for r in results if r]
+    if not got:
+        return None
+    move = [r for r in got if r['ev'] == 'step' and r['src'].split()[0] in MOVES + ('until', 'climb', 'approach')]
+    tail = got[-1]
+    if move and tail['ev'] == 'step' and tail['src'].split()[0] in interact.DECIDING:
+        return tail
+    return (move or got)[-1]
 
 
 def step_seconds(line):
