@@ -30,8 +30,13 @@ P=/home/mooki/Code/hookshot-wt/deps/python/bin/python3
 E=/home/mooki/.agents/skills/hookshot-pr-evidence/scripts
 gh pr view <n> --repo NotRexed/Hookshot --json body,comments,reviews,headRefOid,baseRefOid,state,isDraft
 "$H/hs-pr-ci.sh" <n>
-"$H/hs-idle.sh" "$H/hs-win-fixture-check.sh" <worktree> <base> --sysroot <llvm-mingw-sysroot>
+"$H/hs-idle.sh" "$E/hs-win-fixture-check.sh" <worktree> <base-revision> --sysroot <llvm-mingw-sysroot>
 ```
+
+`$H/hs-win-fixture-check.sh` has no `hs_win_fixture_check.py` beside it, so the installed copy fails: use the pair in `$E`.
+The sysroot is the `llvm-mingw-<date>-ucrt-x86_64` folder under `deps/llvm-mingw/` of the work area (a fresh HOME hides the
+default discovery); `<base-revision>` is a git revision, not a path. Exit 2 (`INCOMPLETE`) is normal for a Linux-only
+driver: `ls-workbench`, section 3.
 
 Read every comment/review page, including inline discussions:
 `gh api --paginate --slurp 'repos/NotRexed/Hookshot/pulls/<n>/comments?per_page=100'`.
@@ -59,9 +64,13 @@ Use the user's detailed, illustrated pull requests as the bar:
 ## The body, section by section
 
 Use a Conventional Commit title and a body that opens with why. When the selected checkout has
-`.forgejo/pull_request_template.md`, use it literally: preserve headings, labels, checklist text and its `main @ <hash>`
-and `this PR @ <hash>` forms. Keep the origin line on migrated descriptions. Put the evidence below inside those
-sections, not in a replacement template. The form below is for the older GitHub workflow:
+`.forgejo/pull_request_template.md` (the LS forge's does), use it literally: preserve its status line, headings,
+labels, checklist text and its `main @ <hash>` and `this PR @ <hash>` forms, keep the origin line on migrated
+descriptions, and put the evidence inside those sections, not in a replacement template. The checker reads the form
+literally, checklist included: `python -I scripts/check_pr_description.py --file <body> --diff <diff> [--title T]` in
+the checkout, or `--pr N` for a live pull request (exit 0 passes; a title starting `WIP:` is not checked). Run it on
+the **current live body** of every pull request you touch: one whose forge status still shows an old success can fail
+it now, and a kept "When it applies" box that is not ticked fails it. The form below is for the older GitHub workflow:
 
 ```
 **What this is for:** who gains what, in a player's or developer's words, with the issue (#N). **What is measured:**
@@ -96,8 +105,6 @@ fork's Windows run settles it; run the whole suite locally first, not just the t
 ## Risks               what could break and for whom; what a wrong guess here would look like
 ## Overlaps            other open pull requests in the same lines, from scripts/pr_overlap.py, hunks read
 ## Questions for you   only real decisions for the maintainers, numbered
-Assisted-by: GPT-6 Astra
-Co-Authored-By: GPT-6 Astra <noreply@openai.com>
 ```
 
 Plain words, short sentences, no promises without a date. Numbers carry their conditions; "no difference beyond the
@@ -119,11 +126,15 @@ Keep it under `reports/<Topic>-files/` as you go; a body written from memory fai
 | Sessions of two games (co-op) | the session script's `checks.txt` (every check with its line), the relay's log, both games' logs, the stats lines | a table with one column per session |
 | What failed | keep it: a failed check, a run that hitched, a flagged outlier | said in the body, never dropped |
 | Overlaps | `"$P" -I -B "$E/pr_overlap.py" <n>` or `--branch <name>`, then read each conflict hunk; a full inventory bound or Git error is incomplete, not clean | "Overlaps" |
-| Windows fixture portability | `"$H/hs-win-fixture-check.sh" <worktree> <base> --sysroot <llvm-mingw-sysroot> --output <new-directory>`; `--test tests/test_name.py` selects a driver | compiler commands, errors and unjudged variants; syntax is not Windows execution |
+| Windows fixture portability | `"$E/hs-win-fixture-check.sh" <worktree> <base-revision> --sysroot <llvm-mingw-sysroot> --output <new-directory>`; `--test tests/test_name.py` selects a driver | compiler commands, errors and unjudged variants; syntax is not Windows execution |
 | CI failures | `"$H/hs-pr-ci.sh" <n> --output <new-directory>`: head, failed test/case names and pinned main matches | an exit of 0 means readable evidence, not green CI; read pending, missing and failed checks |
 
 Things that were asked for in review every time they were missing: the base commit, the load, whether the run had a
 window, what the default is and who sets it, and what happens on Windows.
+
+A test for a new file has no base to fail against: break one line in a copy of the tree and show the test fails. A
+mutant that dies by a compile error is not killed (`-Wall -Wextra -Werror` rejects a dropped use): keep every variable
+used, and read the first failing line when every mutant dies in two seconds.
 
 ## Before work starts: the claim, the issue and the overlap search
 
@@ -140,6 +151,9 @@ The worklist score remains severity S0 8, S1 5, S2 3, S3 1, times reach, times c
        gh pr list --repo NotRexed/Hookshot --state all --search "<words>" --json number,title,state
        "$P" -I -B "$E/pr_overlap.py" --branch <name>
 
+   On the forge: `search WORD ... --state all` (`references/forge.md`). Also search the retained reports and parked
+   branches before calling a slice unstarted (`grep -il '<topic>' /home/mooki/Code/hookshot-wt/reports/*.md`,
+   `git branch -a`): a public sweep alone missed two topic reports.
 2. An existing issue: comment the claim there (what, why, hardware, the branch or pull request); the pull request
    says `Fixes #N` (or `Refs #N` when it is one part) and names the tracking issue.
 3. No issue, and the pull request can be opened the same day (a fix that is already proven, a reviewer's follow-up):
@@ -147,7 +161,9 @@ The worklist score remains severity S0 8, S1 5, S2 3, S3 1, times reach, times c
    have said, and it names the review or pull request it follows.
 4. No issue, and the work takes longer or needs a decision before it starts (a feature, a change of behaviour):
    open one. Blank issues are switched off, so write the body with the form's own headings
-   (`.github/ISSUE_TEMPLATE/1-game-problem.yml`, `2-build-problem.yml`, `3-idea.yml`) and end it with the claim.
+   (LS forge: `.forgejo/ISSUE_TEMPLATE/1-game-problem.yml`, `2-install-problem.yml`, `3-save-problem.yml`,
+   `4-idea.yml`, read from the default branch; GitHub: `.github/ISSUE_TEMPLATE/1-game-problem.yml`,
+   `2-build-problem.yml`, `3-idea.yml`) and end it with the claim.
    Small fixes of one kind share one issue. The maintainer may close it once the pull request exists.
 
        gh issue create --repo NotRexed/Hookshot --title "<plain sentence>" --body-file <file>
@@ -170,12 +186,19 @@ A claim is dropped out loud when the work stops.
    Third-party code keeps its notice.
 3. **One topic**, on a branch from current `main`; rebased before review is asked again.
 4. **Checks**: a game-free test that fails without the change, and the whole of `tests/run_all.py` (many tests cut
-   functions out of the source by their text: a renamed function breaks one; fix it in the same change).
-5. **In the game**, on this machine: what was done and seen, with a row in `docs/tested-configurations.md`
-   for each measured run. Main's #2712 rule: when the game could not be run, say so and keep the PR a draft
-   until someone has. Source-only/stand-in tests are not a replacement for the runtime evidence a change needs.
-6. **Commits**: author `Michael Schienbein <7663497+mooki000@users.noreply.github.com>`; new GPT-6 Astra messages end with
-   `Assisted-by: GPT-6 Astra` and `Co-Authored-By: GPT-6 Astra <noreply@openai.com>`; preserve historical authors/trailers.
+   functions out of the source by their text: a renamed function breaks one; fix it in the same change). A branch that
+   "passes in its worktree" can depend on files `.gitignore` hides (a `*.bin` corpus did): `git status --ignored`, and
+   run the focused tests in a clean `git archive` checkout.
+5. **In the game**, on this machine: what was done and seen. A measured run is one new file
+   `docs/tested/YYYY-MM-DD-topic-tester-run.md` (`docs/tested/README.md`; checked by
+   `tests/test_tested_configurations.py`): the table in `docs/tested-configurations.md` is frozen. Main's #2712 rule:
+   when the game could not be run, say so and keep the PR a draft until someone has. Source-only/stand-in tests are not
+   a replacement for the runtime evidence a change needs.
+6. **Commits**: author `Michael Schienbein <7663497+mooki000@users.noreply.github.com>`; a new message ends with the two
+   trailer lines the brief names for the model you are (since 2026-11-14 10:20 `Assisted-by: Claude Sonnet 5.5` and
+   `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), directly under each other in the last paragraph:
+   `hs-pr-check.sh` accepts them anywhere, but `git interpret-trailers --parse` must list both. A carried commit keeps
+   its own message, author and trailers. The pull request body carries no trailer lines.
 7. **Windows before the push.** A changed C/C++ fixture (including generated fixtures), workflow, or Python file
    touching paths, files, processes or locking needs the project's checks on the user's fork first. **Main only**,
    from the trusted clone containing the commit:
@@ -205,6 +228,11 @@ A claim is dropped out loud when the work stops.
 
    An agent hands over three things: the branch with its head, `reports/drafts/<Topic>-title.txt`, and
    `reports/drafts/<Topic>-body.md` with no placeholder left; then it stops editing them.
+
+### On the LS forge
+
+Posting, reading, paging and the overlap search differ from the `gh` routes above (issue comments are not paged;
+`--repo` goes before the subcommand; `pr create` demands `--tested-in-game`): read `references/forge.md` there first.
 
 ### Preserve imported authors
 
@@ -264,6 +292,12 @@ crops each source before scaling. It overwrites its output: choose a new path, n
    a repeat of an already posted result is a repeat. Read newest comments in one command; post in a later command
    whose guard fails closed if head, description, comments or review discussions changed. An unread other-person
    comment stops a post, not merely prints a warning. Never spend a run on a moved/parked PR from its commit list alone.
+   On the forge also read `issues/<n>/timeline` right before posting: the forge's own account can rebase a
+   contributor's pull request while you review it (a `pull_push` event). `git range-diff` and a per-file comparison of
+   added and removed lines show whether a head change is a pure rebase, `git merge-tree --write-tree --name-only <main>
+   <head>` the conflict list without touching a tree, and the forge's `.diff` against the range you tested whether the
+   head still is what you ran. A stopped or handed-over pull request gets a "Dropped" note saying what was done and
+   what was not.
 2. **Every sentence against its source** before posting: log, test, inspected picture, file and line. Compute a
    documentation example through the actual formula, including floors/caps (an integrated-GPU budget is not a guess).
    Quote the full table's range, not one hold's range. What is inferred is labelled; what was not run is said so.

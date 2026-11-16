@@ -62,6 +62,9 @@ the main session changes.
    versions first so an older live skill cannot overwrite a newer repository edit. It stages the proposed tree and
    checks `docs/names-kept.md` before replacing any checkout file; a names failure leaves the checkout untouched.
    `sync-from-live.sh --check` compares without writing. The legacy live folder names are mapped, not renamed.
+   A new skill also needs its row in the README's table and the counts in `tests/test_publication.py`; any literal that
+   contains an old project name (a lock path, an options file, a repository URL) needs a counted record in
+   `docs/names-kept.md` or `name_policy.py` fails. Write the old names in prose as LS or HS and keep them to code spans.
    Run `publish-check.sh`, the skill check above and the workbench-repository tests in `ls-workbench`, read the diff,
    then commit and push. Main alone synchronises live copies when no queued/running worker depends on them: as a
    reviewed patch of the changed lines (`git apply --check`, then `git apply`, with the old files kept), followed by

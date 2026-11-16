@@ -84,6 +84,9 @@ stay local. Set `REPO`, full `GOOD`/`BAD` commits, `SCENARIO` and a new output d
    `--switch 'label:NAME=VALUE'`. A comma-separated suspect group is reverted together; a switch can set several
    comma-separated `NAME=VALUE` pairs. Each suspect must lie inside `GOOD..BAD`. Reverts are made in the hunt's own
    detached worktree. A partial switch tests only that part of the commit.
+   A `--switch` puts its `NAME=VALUE` pairs into the scenario's **run environment only** (`switch_scenario` in
+   `regress.py`): a build-time switch (a compile define) cannot be tested with it; revert the commit with `--suspect`
+   or give the build a custom step.
 6. The hunt first confirms both endpoints, then tests each suspect against the bad build. Without `--suspects-only`
    it continues bisecting the **original range**, even if a suspect helped. To decide whether more hunting is useful,
    compare the good build with the bad build after the suspects are removed, in an explicitly planned hold. The tool
@@ -95,6 +98,8 @@ stay local. Set `REPO`, full `GOOD`/`BAD` commits, `SCENARIO` and a new output d
    range. `suspect_explains` says a tested revert/switch reaches the good band, not the first bad commit.
    `not_reproduced` and `inconclusive` are real outcomes. Retain the remaining range and reason; never increase the
    retry/hold budget or weaken an assertion to get an answer.
+   A run that never reached its measured window keeps `disturbed:false` and has no measured-window CPU fields: that
+   does not attest a quiet start.
 
 ### Scenario and adapter contracts
 
@@ -106,6 +111,8 @@ stay local. Set `REPO`, full `GOOD`/`BAD` commits, `SCENARIO` and a new output d
   `--max-wall-seconds` (5400). Each retry consumes another hold. Queue/build time consumes the outer wall budget.
   Fit paired runs with `2 * repetitions * (seconds + grace_seconds) + 10 <= max_hold_seconds`. A planned 480-second
   hold is a cap, not observed occupancy. Keep queue evidence and `.hold.json` clocks separately.
+  A cold-cache first start can take over 120 seconds before the first picture (one warm-up was killed in start-up):
+  give a warm-up a wall of at least 420 seconds.
 - `run_case.py` is called **inside** the worker's gate via `hs-run.sh --inner`; never call `--inner` to bypass a gate.
   The scenario's `run` object accepts `user`, `input`, `env`, `anchor` (`load` or `first`), `from`, `to`,
   `load_after`, `load_before`, `expect_log`, `forbid_log`, `prepare`, `framelog`, and `validator_command`.
@@ -156,9 +163,13 @@ A plan needs `kind`, **`entries`**, `run_command`, `scenario`, `seconds`, `grace
    This example is only for a reviewed plan with `max_hold_seconds:480`. The real gate supplies its marker; never
    set one yourself. Never nest it inside the Intel gate. A non-timing game-check uses ordinary admission, with
    `--whole` when its output/memory needs both slots; it is not a speed measurement.
+   That example is only the gate. A timing hold also goes behind the quiet-window lock (exclusive) and the measuring
+   lock (exclusive) in front of the gate with `--exclusive`: `skill://ls-hold-chain`.
 3. Keep one managed chain and its real process identity. Wait for its owned child/receipt, not a `pgrep` name match,
    zombie PID or a gap between holds. End owned games before releasing their gate. Preserve `.runs.json`,
    `.hold.json`, per-run `result.json`, `summary.txt` and raw artifacts. An invalid run ends the hold.
+   To stop a held plan, stop that hold's `regress.py _hold` and wait for its game: killing the outer `flock` only ends
+   the launcher.
 4. Use the shared classifier on explicit pairs. A cause is supported when taking it back reaches the good band in
    clean paired runs, or a valid bisect isolates it. A partial movement beyond spread is a contribution, not the
    whole cause. Explain what the correctness change fixes beside what it costs.

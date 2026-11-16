@@ -52,6 +52,11 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
 - A function starts at `void f_<address>(Ctx *__restrict A64_NOESC c) {` in exactly one file. The files are tens of
   megabytes: find the file first (`grep -l -m1 '^void f_803edf70(Ctx' $G/code_0*.c`), then read that one function.
   Searching many of these files in one call can silently miss matches; search one file at a time.
+  The link map names the file in one grep: `grep -m1 '(.text.f_803edf70)' <worktree>/work/build/sa/build/longshot.map`
+  shows the object (`code_001.o` is `code_001.c`), which beats searching the code files.
+- The guest image is on disk too: `<worktree>/work/build/sa/image/image.bin` (base `0x80000000`, so the offset is the
+  address minus the base) holds the relocated vtables, registry tables and every string. A vtable slot is
+  `vtable + 8 * slot`; read a string or a table at its address directly instead of searching the C for who loads it.
 - Which file holds an address is decided per build. Do not work it out from a `chunks.txt` or an image listing that
   belongs to another build's work folder; search the files of the build you are reading.
 - Strings are not in the C: a thread or class name is loaded from the game image by address. To get from a name in a
@@ -64,6 +69,8 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
   (their `0x49dcb0` is a place inside `f_804bd8c0`, not a function: find the function that contains it and put the
   place in its row as `at 0x...`), and a name can belong to the next class's function; read it before you trust it.
 - What you work out this way is exactly what section 4 is for: hand the rows back.
+- A function start is exactly an address with a `void f_<address>(Ctx` line; the owner of a place inside a function is
+  the nearest start before it in the link map. `fnmap.py find` prints `nothing` for a place written as `f_<address>`.
 
 ## 2. Weigh the row before you build on it
 
@@ -102,12 +109,15 @@ of a pull request ("open", "fixed in"): describe the game, not the tracker.
 
 ```markdown
 ## Function map rows
-- page: frame-time.md, table "Sites examined above 60"; new | corrects the row of f_...
+- page: frame-time.md, table "Sites examined above 60"; current row (from `find`): none | page:line; new | corrects | extends | confirms f_...
 - how I know: <the lifted lines you read, the run, the test>
 | `f_...` | `Name` | What it does | read |
 ```
 
 The main session edits the page, runs the check below, commits and pushes.
+
+One address per row, alone in the first cell as `` `f_80652cb0` ``: `fnmap.py` reads a first cell such as
+`` `f_8305e390`, `f_8305e4c0` `` or `` `0x84b6ff90` (vtable) `` as no row at all.
 
 ## 5. Check the map against the port's code
 
@@ -120,6 +130,11 @@ rows, when a row is malformed, or when a page names a patch that does not exist;
 does not say `Hooked by`. Run it after the port's main moved and before adding rows. A function the code names without
 a row is the usual way the map falls behind: write its row from the patch's own comment and mark it **tested** only if
 the patch ships.
+
+The check looks for `f_<8 hex digits>` spellings only: a game function the port reaches through a hexadecimal
+call-target constant is not seen, so inventory those by exact address yourself. `--repo` names the port's clone and
+`--rev` the revision it reads (default `HEAD`): a row that documents a patch of a branch not yet on `forge/main` fails
+against `forge/main`; check against the branch that holds the patch.
 
 ## When this skill let you down
 

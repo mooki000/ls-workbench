@@ -12,7 +12,8 @@ description: >
 existing live paths stay unchanged until a separate host cutover (see `ls-workbench`).
 The `gh` examples and MCP GitHub readers below remain **GitHub-only**. LS's public Forgejo API is
 `https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot`; page issue/PR bodies, comments, reviews and inline
-discussions separately. GitHub query syntax is not portable. Proposed forge readers may refresh credentials and
+discussions separately (the issue-comments endpoint is **not paged**: `page=2` repeats the list; see "On the LS forge"
+in `skill://ls-pr-evidence`). GitHub query syntax is not portable. Proposed forge readers may refresh credentials and
 are not approved login, claim or posting routes.
 
 **Use for:** issue/PR surveys, reproduction and reply drafts. Read workbench first. Three frequent commands:

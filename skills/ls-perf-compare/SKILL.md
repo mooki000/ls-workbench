@@ -32,6 +32,8 @@ P="$HOME/Code/hookshot-wt/deps/python/bin/python3"
 2. Pin both commits, binary hashes, source stamps, release/profile identity, settings and cache state. A switch
    comparison on one build is not an old/new build comparison. Use owned copies without mods or hidden options.
 3. Keep the same local save, input, scene, cap, output size and upscaler. Keep game data in local scenario files.
+   A scripted real-time walk can end in different places depending on timing, which changes how many shader programs
+   are first used and the frame rate: compare route-matched pairs and report every run's end position.
    `HOS_FPS_MAX` accepts 61–1000 in the selected base; 1000 is its Uncapped value, not a promise of achieved speed.
    Verify the selected build's accepted range before changing it.
 4. Plan with a **new** output directory; this reads Git and writes the plan, but starts no game or build:

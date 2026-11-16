@@ -86,6 +86,8 @@ The client defaults to `$HOS_CONTROL`; use `--sock` explicitly when selecting am
 an arbitrary discovered socket. An input reply means its frames completed, **not** that the scene changed or play
 resumed. Record sent, accepted, observed state change and inspected picture separately. Serialize requests per socket;
 keep streaming subscriptions on their own connection. Reconnect after an uncertain reply without replaying the input.
+The game refuses a `HOS_CONTROL` socket whose folder is not the user's or is writable by group or others (`/tmp` itself)
+and a socket path over the 107-byte `sun_path` limit: make a short `mkdir -m 700` folder, not one deep in a run folder.
 
 - Bridge `stick` uses x/y in [-1, 1]. `sequence --hos` uses seconds and milliseconds; without it, times are frames.
   `--exclusive` covers the input, not an unlimited physical-device lock. `release` clears this client's pending input.
@@ -103,12 +105,25 @@ keep streaming subscriptions on their own connection. Reconnect after an uncerta
   Never enable `HOS_CONTROL_MEM=rw` or use memory writes as an input substitute.
   Named settings are not action-row selection. On builds with `RX_VK_MENU_SCRIPT`, `ROW:<internal name>` selects
   a visible row in the current tab, not a translated label or another tab. Verify the actual menu before confirming.
-  Its seconds start at the menu's first tick, not process/bridge uptime.
+  The token list is in the game repository's `docs/development.md` (`INS UP DOWN LEFT RIGHT ESC ENTER TABL TABR`, the
+  pad's face buttons `PADS PADE PADW PADN`, `TYPE:<text>`, and while a field has the keyboard `HOME END BACK DEL`):
+  there is no D-pad token (`TABL`/`TABR` are the tab keys). The script is a fixed timetable of one token a frame with no
+  feedback. Its seconds start at the menu's first tick, not process/bridge uptime: about 5 to 6 seconds after launch
+  (the co-op runner assumes 6), so wait for the log line you need and do not assert a fixed uptime, and remember the
+  run's wall limit counts from the game's start: a script needs its last mark plus that lag and the kill reserve. A
+  `ROW:<name>` that is not shown selects nothing and the next `ENTER` presses whatever is selected (it is also skipped
+  while a field has the keyboard): script an accept or a leave only where the row is certain. `ESC` both opens a closed
+  menu and closes an open one. The menu keeps its tab between opens, so `TABL` reaches the Co-op tab only on a
+  process's first open and a restarted game starts on the first tab again. A field edited again keeps its text: empty it
+  with `BACK` repeated.
 - Use bridge `shot` for Vulkan captures. The drivers' legacy `shot` step writes `!shots` to live input; in the selected
   base that command targets the WebGPU renderer, not Vulkan. Do not treat its step completion as a captured PNG.
   Bridge shots omit Insert-menu and co-op labels/chat; the automatic menu-overlay stream (`RX_VK_SHOT_MENU=1`) is
   offscreen-only and does show them, so a windowless proof of a label or chat line uses that stream.
   An explicitly authorized real-window presentation/overlay test needs an OS capture of the exact game window.
+  A chat line leaves no log line; only a picture shows it (a stream of one picture every 180 presents caught the
+  typing field, the sent line and the received line). A Windows run has no such stream (`shot_menu && dev.offscreen`):
+  capture the owned window. The stream never scrolls a list: see `ls-workbench`, "Pictures and logs".
   Inspect the actual pose/chat pixels; a timed input or capture filename is not proof of a stride or delivery.
 
 For a periodic observer, record sample timestamps and check actual gaps, including input/capture phases; a sleep after
@@ -151,7 +166,8 @@ python3 -I -B "$H/playthrough/pilot/pilot.py" run "$SEGMENT" --decider rules --t
 
 Choose **one** of those launchers for a new tag. Their defaults can exceed the hold limit; pass `--wall` explicitly.
 The probe invokes `hsap.py`, so it needs the socket sampler too. An older file-tap build is not a compatible fallback.
-Use `setsid --wait nohup` for a saved managed launcher and retain its child receipt; one chain queues at a time.
+Use `setsid --wait nohup` for a saved managed launcher and retain its child receipt (not for children that test
+signals: see `ls-workbench`); one chain queues at a time.
 
 1. Inspect every `step.result`, `bad` event and goal check. `walk`/`run` can be reached, stuck, timed out or held.
    A later step after a stuck one proves nothing about its intended target. Use the local planner instead of a
@@ -159,10 +175,31 @@ Use `setsid --wait nohup` for a saved managed launcher and retain its child rece
 2. The debug `save` step requires its build's save extension. Require the reply plus a newly written `progress.sav`,
    not an old slot. A short delay is not a save-drain barrier. Keep the run's disposable `user/save/` after exit.
 3. Continue from that copied user folder in a new bounded run and inspect the scene and state. Only then mark the
-   checkpoint proven in the local library. `hs_make_save.py --lib-add` needs a new `--name`; `--lib-proven` records
-   the observed result and optional `--presses`. Do not rewrite library entries merely to make a route pass.
+   checkpoint proven in the local library. The save tool is `$H/tools/hs_make_save.py` (not under `playthrough/`):
+   `--help` lists `--case` and `--time` (a named test-save case and the time of day) besides `--lib-add` (needs a new
+   `--name`) and `--lib-proven` (records the observed result and optional `--presses`). Do not rewrite library entries
+   merely to make a route pass.
 4. Split a longer route into separate bounded holds, each continuing from the preceding run's copied user folder.
    Never hold the card while waiting for a model, another lane or manual decisions.
+
+## Co-op pairs: the runner
+
+Two games, or a pilot beside a TAS game, run through `$H/coop-play/coopplay.py`; its `--help` and the docstring of
+`cpcase.py` document the case file. `plan CASE` validates it and prints the schedule without a game or a lock; `run
+CASE --out DIR` queues one waiter behind the quiet-window lock, then the measuring lock (shared unless the case says
+`measuring = "exclusive"`), then one whole-card gate command both games are children of; `check DIR` re-runs the
+detectors; `DIR/waiter.json` holds the waiter's pid and command. `run` copies the runner's own source and the case
+into `DIR/runner-src` **when it queues**: an edit made while it waits does not run, and a half-edited module at that
+moment does. The longest hold is 1,100 seconds and a case that needs more than 480 says `run.hold_seconds`. A case's
+menu steps (`chat`, `accept`, `leave`, `rules`, `menu`) are built from the tokens in `cpcase.py`'s `menu_tokens`.
+`[run] pose_trace = true` writes the dense pose trace that the jank detector and `cppose.analyse_pair` read (Linux sides
+only). `hsap.py` takes no extra `NAME=VALUE` switches, only the inherited environment: a game's setting goes in the
+case's `[room.settings]` or `[sides.X.settings]`. The runner's own tests are plain `python3 -I -B test_*.py` files in
+`$H/coop-play`, not part of `tests/run_all.py`.
+A menu step is compiled into the game's start-up script and can only use `from = "start"` (a game's menu clock runs
+from its own start). The game refuses every `HOS_COOP*` variable that comes from `HOS_ENV_FILE`: they must be in the
+process environment, which matters to any harness that restarts the game. The runner's `--help` also describes the
+`<win>-install` and `<win>-probe` commands for a Windows side (`skill://ls-windows-laptop`).
 
 ## Game-free reader checks
 

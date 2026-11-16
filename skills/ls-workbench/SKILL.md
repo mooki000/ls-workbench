@@ -70,6 +70,9 @@ source "$H/hs-names.sh"
 - Before a gated command, unset the test/bypass variables below. Never set them to skip admission.
 - One waiter of yours per gate. A GPU hold is at most 480 seconds **including shutdown**; use 450 seconds or less
   for an ordinary game so the wrapper's 20-second kill reserve fits. The GPU gate itself does not enforce the limit.
+  A longer hold exists only when the task text grants it for that hold (co-op proof lanes were given 1,075 to 1,100
+  seconds): every case inside it then needs its own `timeout` and a check of the time left before it starts, and
+  several cases in one hold is an adapter change, not a switch.
 - Only an explicitly authorized timing hold uses `--exclusive`; only a named short run uses `--priority`.
   `--whole` reserves both GPU slots, not CPU quiet. Read `ls-perf-compare` before any speed claim.
 - Workers never push or post. Use the brief's author and trailers. Leave SDK licence acceptance to the user.
@@ -137,6 +140,15 @@ unset HSGATE_SLOT_DIR HSGATE_INTEL_SLOT_DIR HSGATE_SLOT_TEST HSGATE_SLOT_NODESKT
    A successful launcher exit is not a child receipt. Use `setsid --wait nohup` for a saved long-running launcher,
    retaining its child PID, output and completion receipt. Do not restart a queued build because the launcher ended.
 
+   `nohup` leaves SIGHUP ignored in every child (`SigIgn` bit 0 in `/proc/<pid>/status`), so a test that sends SIGHUP
+   (`tests/test_crash_record.py`) times out under it. Reset it for the children:
+   `setsid --wait nohup env --default-signal=HUP bash "$SCRIPT"` (or drop `nohup`: `setsid` already detaches the launcher
+   from the terminal).
+   Never put a job in the tool shell as `( ... "$t" ... ) &` inside a `for` loop (the variable is expanded late and
+   every job ran the last file); write the job as a script that takes its argument and start it with `xargs` or
+   `/bin/sh script arg`. Never wait with `pgrep -f` or stop with `pkill -f` on a lock command line: it matches its own
+   command line and every worker's; record the pid of your own waiter at launch and wait on that.
+
 ### Incremental host/renderer-only changes
 
 Prefer rebuilding with the same work/output/profile identity. A fast donor build is valid only when the selected
@@ -160,8 +172,10 @@ RX_CPM="$CPM" OOT_WORK="$WT/work/fast" RX_RELEASE=1 RX_PGO="$WT/work/build/$HS_P
   "$P" -I -B nx2/build.py --standalone --jobs 16 --dry-run
 ```
 
-Inspect the plan and object/profile keys. `--dry-run` does not compile, but may write planning/cache files; it is not
-permission to use another worktree. Compile the same command without `--dry-run`, through `hs-build-slot`.
+Inspect the plan and object/profile keys. `--dry-run` only lists the files the compile would read (it cannot show the
+new/cached split) and may write planning/cache files; it is not permission to use another worktree. Compile the same
+command without `--dry-run`, through `hs-build-slot`. A donor build can stop silently (a `.bench-lock` wait, a purge of
+stale objects) or rebuild far more than predicted: `references/details.md`, "Donor builds".
 Copy the donor game into the new `$COPY`, remove only that copy's inherited `runs/`, and deploy both
 `work/fast/sa/build/$HS_EXE` and `$HS_RENDERER`. Changes to shipped assets, including pipeline-state lists, need
 candidate-owned generation/deployment or a full build. Record the source of both binaries and their checksums.
@@ -184,6 +198,8 @@ Do not wrap this command in another GPU gate. It already uses that gate, headles
 `RX_VK_DEVICE=0`, an empty `HOS_ENV_FILE`, run-local data and copy-local driver caches. Never override its headless,
 device, cache or isolation settings to bypass policy. `--user "$SAVE"` copies a save into disposable run storage;
 without it the wrapper copies `user-template/` if present, otherwise starts fresh.
+`hs-run.sh` refuses a copy outside `$HOME/Games/.hookshot-h-*` or the workbench's `builds/.hookshot-h-*` (exit 2);
+`--inner` is not a way around that.
 
 Useful options: `--input '<script>'`, `--from <seconds>`, `--keep-user`, `--prepare`, `--whole`, `--intel`,
 `--mem-max <size>` and `--perf` (sampled context: read `ls-perf-monitor`). Intel cannot combine with `--whole`, `--exclusive` or `--priority`. `--mem-max` uses a systemd
@@ -209,6 +225,13 @@ user scope with `MemoryMax` and no swap; it does not prove the game stayed under
 `RX_VK_SHOT_MENU=1`. Bridge shots omit both Insert-menu and co-op overlays. The automatic menu-overlay path is
 offscreen-only and does carry them: use it for a windowless picture of a co-op name label or chat line. An explicitly
 authorized real-window presentation/overlay test needs an OS capture of the exact game window.
+
+The offscreen menu picture never scrolls: `menu_record_image` draws with the easing step at 0, so a list longer than its
+first screenful (the Co-op tab's players, any row below the first screen) cannot be pictured windowless, and
+`ROW:<name>` moves the selection, not the view. Picture such a row from the joiner's view or a real-window capture
+where one is authorized. `RX_VK_SHOT_FX=1` draws the pictures through the window's scale pass (ultrawide blur or black
+sides); bridge and ordinary pictures omit it. A Windows run has no offscreen overlay stream
+(`shot_menu && dev.offscreen`): capture the owned window.
 
 Use the existing labelled-panel helper with explicit input/output names, not `ls | xargs montage`:
 
@@ -243,6 +266,10 @@ unique (a pool's workers share one), so neither name identifies one worker. What
 Observe the queue without modifying tickets: the GPU state is `/tmp/hs-gpu-slots/` (`queue/`, `yielded/`,
 `holder.0`, `holder.1`, `last-kind`, `long-holds.log`, `closed`). File contents alone do not prove process liveness.
 The guard's `--status` reports guard/card/slot state, **not queue position**. Prefer `queue_status` when configured.
+The game gate is not the only queue: the quiet-window and measuring locks (`/tmp/longshot-quiet-window.lock`, then
+`/tmp/longshot-measuring.lock`) queue every timing hold, build and suite behind one another, often for hours. Their order
+and modes, one admission for many stages, retargeting a queued waiter and waiting for it from a session:
+`skill://ls-hold-chain`.
 
 ## 3. Run game-free checks and hand off
 
@@ -257,7 +284,12 @@ HOME="$TEST_HOME" RX_CPM="$CPM" "$H/hs-idle.sh" "$P" -I -B tests/run_all.py --jo
 The test gate has three slots, uses idle scheduling and suppresses core dumps. It can wait behind an exclusive hold;
 no output while queued is not a failed test. Keep its child receipt. A single game-free test may use
 `"$H/hs-nocore.sh" "$P" -I -B <test-file>` without the idle gate. Never run the full suite that way.
-Apply any assignment-specific outer quiet/shared measuring locks as well; record admission wait separately from child time.
+Start a crasher through `hs-nocore.sh` from the first command (its limit is exactly one byte, which bash's `ulimit -c`
+cannot set). Never run `ulimit -c 0` in a persistent tool shell: it lowers that shell's hard limit for good, after which
+`hs-nocore.sh` cannot set the limit again; start such programs from the eval Python kernel instead
+(`resource.setrlimit(RLIMIT_CORE, (1, 1))`).
+Apply any assignment-specific outer quiet/shared measuring locks as well (`skill://ls-hold-chain`); record admission wait
+separately from child time.
 When a worker is assigned only focused checks, hand those receipts to the integration owner; do not call them a full suite.
 
 Check the selected tests' literal `RUN_ALL_ARGS`, `RUN_ALL_MODULES` and `RUN_ALL_SKIP` declarations. Explicitly named
@@ -272,11 +304,23 @@ Run the whole suite before handing over a head, not only the tests a change seem
 `Microsoft.AspNetCore.App.Ref` offline, `tests/test_updater_asset_digest.py` fails with `NU1100` on plain main too:
 report it as inherited and local after confirming the same failure on the base commit; do not hunt for an SDK.
 
-Changed C/C++ fixtures also need:
+Fixtures that cut text out of source files, host-file build lists, the fuzz test and the `python3 -I` import path:
+`references/details.md`, "Fixtures". Run text-cutting fixtures on the new head **before** any queued hold.
+
+Changed C/C++ fixtures also need the Windows-target syntax check. `$H/hs-win-fixture-check.sh` has no
+`hs_win_fixture_check.py` beside it; use the working pair in the pr-evidence skill's scripts folder, with `--sysroot`
+(a fresh HOME hides the default discovery):
 
 ```sh
-HOME="$TEST_HOME" HS_PYTHON="$P" RX_CPM="$CPM" "$H/hs-idle.sh" "$H/hs-win-fixture-check.sh" "$WT" "$BASE"
+E="$HOME/.agents/skills/hookshot-pr-evidence/scripts"
+SYSROOT=$(ls -d "$W"/deps/llvm-mingw/llvm-mingw-*-ucrt-x86_64 | tail -1)
+HOME="$TEST_HOME" HS_PYTHON="$P" RX_CPM="$CPM" "$H/hs-idle.sh" "$E/hs-win-fixture-check.sh" "$WT" "$BASE" \
+  --sysroot "$SYSROOT" --output "$OUT/win-fixtures"
 ```
+
+Reading the result (`BASE` is a git revision; exit 2 `INCOMPLETE` is normal for a Linux-only driver; a driver that needs
+a failing compile is unjudged; a failure main has too is inherited): `references/details.md`, "The Windows-target
+syntax check".
 
 Keep unsupported discovery visible. Syntax success is not Windows execution. Read `ls-pr-evidence` for the
 pre-push checker, imported-author rules, CI comparison and drafts. The main session alone syncs live skills into the public
@@ -345,6 +389,10 @@ Use `job_read` receipts; CLI `--timeout` bounds transport, not work. `serve` run
 `broker stop --timeout 90` ends all its owned work, so reconcile it first. Stdio remains a server, not a one-shot CLI.
 The catalogue marks each broker requirement. Integrated groups still need configuration; current MCP name support
 is separate from the dual-name harness and must not be assumed for an LS copy or log.
+The registered saves, builds and profiles are the catalogue `LS_WB_SESSION_CATALOGUE` names (here
+`$W/longshot-workbench-state/sessions.json`, keys `builds`, `saves`, `profiles`, `clone_root`); `save_clone` takes an
+id from it. The session tools take no environment, so they cannot launch a co-op pair or two sessions at once: use the
+co-op runner described in `ls-scripted-play`.
 
 | Step | Shell route | MCP tool (group; integration) | What it saves |
 |---|---|---|---|

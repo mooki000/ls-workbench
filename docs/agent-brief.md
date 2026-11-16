@@ -17,6 +17,10 @@ the matching published skill IDs below. Use their existing tools rather than inv
 | Team updates / Discord reads or named messages | `ls-discord-updates` | project's `scripts/team_chat.py` in `main-tools`; Main alone posts |
 | Testing other people's PRs / request queue | `ls-pr-loop` | priority list; `scripts/test_requests.py` in `main-tools`; Main alone claims/renews/completes |
 | Lifted game code, an `f_<address>` function, a game structure or subsystem | `ls-function-map` | `docs/oot/fnmap.py find` in the workbench checkout, before reading lifted C; what you work out goes back as a row in your report |
+| A hold queued behind the quiet-window and measuring locks; one chain for many stages; a base that moved while waiting | `ls-hold-chain` | the chain starting points the skill names; `lslocks`; record your waiter's pid |
+| Moving our own long cherry-picked branch onto a moved main | `ls-restack` | `reports/Integrate18-files/prove_carry.py`, `git range-diff`; not `ls-pr-loop`'s carry of a test result |
+| Anything run, staged or captured on the remote Windows laptop (the second PC of a two-PC session) | `ls-windows-laptop` | `reports/tools/<win>/<win>-run.py`; only when the task text says so; `<win>` is the laptop's SSH alias (see "The public repository") |
+| A session through the shared co-op relay on the LAN relay host; installing, updating or probing it | `ls-relay-lan` | `reports/Soak4-files/chain/<relay>-room-guard.py` before any Make; `<relay>` is the host's SSH alias (see "The public repository") |
 | A skill was wrong, stale, misleading, or no skill covers a repeated procedure | `ls-skill-upkeep` | **Skill notes** in your report; the main session alone edits skills (`check_skills.py`) |
 
 Published `ls-<suffix>` skills live in `skills/ls-<suffix>/` and use logical references such as `skill://ls-workbench`.
@@ -132,6 +136,9 @@ Their rules bind you as they bind everyone. The ones that matter most:
   finished (on 2026-11-11 one stopped 13 builds and 7 runs of the checks for 17 minutes before it had even started).
   Tell the main session what needs a quiet machine and for how long; it opens a window and says when to ask. Counts
   (escapes, waits, left-out draws, memory, pictures, pass or fail) never need `--exclusive`: only frame times do.
+  A longer hold (the co-op runner's longest is 1,100 seconds; co-op proof lanes were given 1,075 to 1,100) exists only when
+  your task text grants it for that hold. The quiet-window and measuring locks queue holds behind each other for hours:
+  `skill://ls-hold-chain`.
 - **Two run slots since 2026-11-11 08:05** (while the user is away; the switch is
   `/home/mooki/Games/.hookshot-harness/gpu-slots`, `2` or `1`, the main session's to change). A second game may now
   start beside yours once yours has run for a minute, if the machine has 30 GB of memory available and the card has
@@ -180,12 +187,17 @@ Their rules bind you as they bind everyone. The ones that matter most:
   `HOOKSHOT_LIFT_JOBS=8` (the lift's workers take 4.8 GB each); the fast path (`nx2/build.py`) is not affected.
 - **Long commands:** start from a saved script with `setsid --wait nohup`, output in your report's files folder.
   `setsid` without `--wait` can return success while its child is still queued: require the child's own completion
-  receipt and exit code; never repeat a build/check because only its launcher ended.
+  receipt and exit code; never repeat a build/check because only its launcher ended. `nohup` leaves SIGHUP ignored in
+  every child, which makes a test that sends SIGHUP (`tests/test_crash_record.py`) time out: start such a script as
+  `setsid --wait nohup env --default-signal=HUP bash script`, or without `nohup`. In the tool shell a backgrounded
+  `( ... "$t" ... ) &` inside a `for` loop expands `$t` late: use a script that takes the argument.
 - Keep at most one waiter of yours in a gate. Record owned process identities at launch; a `pgrep -f` name match,
-  `kill -0` on a zombie, or a gap between holds is not proof a chain ended. End owned games before releasing the gate;
+  `kill -0` on a zombie, or a gap between holds is not proof a chain ended, and never `pkill -f` a lock command line
+  (it matches every worker's). End owned games before releasing the gate;
   `timeout` may put the game in a different process group from its shell wrapper.
 - Use `date` for timestamps. Never edit a running/queued script in place. Stage, test, then replace atomically only
-  when no active process depends on it; otherwise leave a patch. `/tmp` is a tmpfs and is lost at reboot.
+  when no active process depends on it; otherwise leave a patch. `/tmp` is a tmpfs and is lost at reboot; it and
+  `/home` are different filesystems, so an atomic rename or directory exchange between them fails.
 
 ## Git
 
@@ -204,7 +216,9 @@ Their rules bind you as they bind everyone. The ones that matter most:
 The user wants every pull request at the level of his own earlier ones for the other port: "lots of detail and images".
 `skill://ls-pr-evidence` has the form and the checklist; read it before you write a body. In short:
 
-- **When you edit an existing description, the forge's template forms stay exactly as they are**: the lines
+- **When you edit an existing description, the forge's template forms stay exactly as they are** (read the checkout's
+  `.forgejo/pull_request_template.md` and `scripts/check_pr_description.py`; the forms named here were the template's of
+  2026-11-13, check them against the file): the lines
   `main: <hash> (<date>)` and `this PR: <branch> @ <hash>`, table column heads `main @ <hash>` and `this PR @ <hash>`,
   the labels `**Tested:**`, `**Not tested:**`, `**Needs other testers:**`, the checklist boxes' own text, and the
   origin line under the last `---` (`Moved from NotRexed/Hookshot#N.` or `New on this forge; not opened on
@@ -216,7 +230,9 @@ The user wants every pull request at the level of his own earlier ones for the o
   and head commit, date, load), the test's lines on the branch and against main's source, the whole suite's totals
   with the named failures, every run's summary line, the log lines that prove the point, a table with one row per run,
   and pictures (before and after, or the feature's screen in each state). A failed check or an outlier is kept and said.
-- New or changed C/C++ fixtures, including Python-generated ones: run `hs-win-fixture-check.sh <worktree> [base]`
+- New or changed C/C++ fixtures, including Python-generated ones: run the Windows-target check from the pr-evidence
+  skill's scripts folder (`/home/mooki/.agents/skills/hookshot-pr-evidence/scripts/hs-win-fixture-check.sh <worktree>
+  <base-revision> --sysroot <llvm-mingw-sysroot>`; the copy in `$H` has no checker beside it)
   through `hs-idle.sh` with the pinned Python. Keep each compiler command, errors and explicit unjudged coverage.
   A syntax pass is not a Windows execution: **Not tested** names the remaining Windows run of the new fixtures.
   Read `hs-pr-ci.sh <pr>...`'s failed job/test names, not just a green/red count; inherited failures and the known
@@ -253,8 +269,10 @@ unchanged. The host folders and configuration have not been cut over by this sou
   method, commands, measurements, traps. Nothing about the game's content (coordinates, flag, step and object names,
   routes, what stands where, counts from the world model): that goes into
   `/home/mooki/Games/.hookshot-harness/playthrough/NOTES.md`. Nothing about where the user's game files and saves
-  came from: `/home/mooki/Games/.hookshot-harness/LOCAL-NOTES.md`. No key, no address, nothing about other people
-  beyond what is on the tracker.
+  came from, and no machine name or SSH alias of the user's other PCs: that goes into
+  `/home/mooki/Games/.hookshot-harness/LOCAL-NOTES.md`, whose section "Hosts" gives `<win>` (the Windows laptop) and
+  `<relay>` (the LAN relay host) as the skills write them; look there, not in a skill. No key, no address, nothing about
+  other people beyond what is on the tracker.
 - The world model, the planner, the pilot, the save maker, saves, segment files, reports and drafts are **not**
   published. Do not move any of them into a skill folder or beside the listed scripts.
 - When you change a skill or a listed script, say so in your final message, so the main session publishes it.
