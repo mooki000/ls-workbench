@@ -265,6 +265,9 @@ class NamesTests(unittest.TestCase):
                     game._messages = lambda: []
                     game.state_tail = type('Empty', (), {'lines': lambda self: []})()
                     game.state_out = io.StringIO()
+                    if hasattr(driver, 'DuelTracker'):   # (the fixture skips __init__: the driver that tails the duel's and the ocarina's log lines needs these)
+                        game.duel = driver.DuelTracker()
+                        game.st, game.oc_lines, game.oc = None, [], None
                     (game.R / (project + '_log.txt')).write_text('vk: 42 presents, fake\n')
                     game.poll()
                     self.assertEqual(game.presents, 42)
