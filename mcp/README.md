@@ -183,14 +183,15 @@ file, game info, a known item of the right kind, an hour inside the build's cloc
 
 **What `effect` means.**
 
-- `verified`: read back from the game. Items with a configured count (quantities) or have (possessions) flag when the count
-  became its old value plus the change, or the possession flipped; `return_to_mark` when the fresh position afterwards is
+- `verified`: read back from the game. Items with a configured count flag (quantities) when the count became its old value plus
+  the change; possessions when the flag flipped (an item's count flag when the game has one, else its have flag: the game's
+  IsGet is set when an item is got and never cleared when one is taken away); `return_to_mark` when the fresh position afterwards is
   within 1.0 position unit (the bridge's unit) of the position the earlier `mark` reported (or, if the mark was made outside
   this server, of the position the game's own return line named).
 - `requested`: the line was sent and the game acknowledged it (or said nothing), but nothing could be read back. This is
-  the best claim for time of day (the clock is not on the bridge), for `mark`, and for items without configured flags or
-  whose flag the game reports as unknown. The game's own `had`/`now` numbers are shown in `item` but never turned into
-  `verified`.
+  the best claim for time of day (the clock is not on the bridge), for `mark`, for items without configured flags or
+  whose flag the game reports as unknown, and for taking a possession away when only its have flag can be read (it stays set).
+  The game's own `had`/`now` numbers are shown in `item` but never turned into `verified`.
 - `not_applied`: the read-back shows the request did not happen: a count or position that differs (including a quantity
   the game clamped at its limit), a possession that did not flip, a return with no mark, or a log line saying the world
   clock is unavailable.

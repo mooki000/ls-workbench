@@ -21,6 +21,7 @@ GAME = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GAME)
 synthetic_info, FakeDebugGame = GAME.synthetic_info, GAME.FakeDebugGame
 ITEM_A, ITEM_B, ITEM_C = GAME.ITEM_A, GAME.ITEM_B, GAME.ITEM_C
+HAVE_FLAG, STOCK_FLAG = GAME.HAVE_FLAG, GAME.STOCK_FLAG
 
 DEBUG_PROFILE = SessionProfile(debug=True, debug_tools=True, memory="rw")
 
@@ -246,7 +247,9 @@ async def test_asynchronous_pickup_is_waited_for_but_the_games_words_stay_unveri
         await fake.close()
 
 
-async def test_item_toggle_uses_the_have_flag_and_item_kinds_are_enforced(sandbox):
+async def test_item_toggle_reads_the_pouch_count_and_item_kinds_are_enforced(sandbox):
+    # The game's have flag (IsGet) is set when an item is got and never cleared when one is taken away: a removal read from it
+    # looks not applied (the first real game showed it with a Kokiri Sword), so the pouch count is read when the game has one.
     root, deps, service, client = sandbox
     run_id, fake, session = await attach_debug(root, deps, service)
     try:
@@ -255,6 +258,8 @@ async def test_item_toggle_uses_the_have_flag_and_item_kinds_are_enforced(sandbo
         assert (record["item"]["count_before"], record["item"]["count_after"]) == (0, 1)
         terminal, record = await debug(client, deps, run_id, {"kind": "item_toggle", "name": ITEM_A})
         assert (record["item"]["count_before"], record["item"]["count_after"]) == (1, 0) and record["effect"] == "verified"
+        assert fake.flag_value(HAVE_FLAG) == 1
+        assert fake.flag_value(STOCK_FLAG) == 0
         for action in ({"kind": "item", "name": ITEM_A, "change": 1}, {"kind": "item_toggle", "name": ITEM_B},
                        {"kind": "item", "name": "Synthetic_Item_Z", "change": 1}, {"kind": "item", "name": ITEM_B.lower(), "change": 1},
                        {"kind": "item_toggle", "name": ""}):
@@ -262,6 +267,19 @@ async def test_item_toggle_uses_the_have_flag_and_item_kinds_are_enforced(sandbo
                 raise_on_error=False)
             assert reply.is_error and code_of(reply) == "invalid_argument", action
         assert fake.polls == [[5300], [5300]]
+    finally:
+        await fake.close()
+
+
+async def test_a_toggle_with_only_the_have_flag_cannot_prove_a_removal(sandbox):
+    root, deps, service, client = sandbox
+    run_id, fake, session = await attach_debug(root, deps, service)
+    try:
+        del fake.flags[STOCK_FLAG]    # the game has no count flag for this item
+        terminal, record = await debug(client, deps, run_id, {"kind": "item_toggle", "name": ITEM_A})
+        assert record["effect"] == "verified" and (record["item"]["count_before"], record["item"]["count_after"]) == (0, 1)
+        terminal, record = await debug(client, deps, run_id, {"kind": "item_toggle", "name": ITEM_A})
+        assert record["effect"] == "requested" and (record["item"]["count_before"], record["item"]["count_after"]) == (1, 1)
     finally:
         await fake.close()
 

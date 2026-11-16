@@ -17,7 +17,8 @@ ITEM_A = "Synthetic_Item_A"   # a possession (kind 0)
 ITEM_B = "Synthetic_Item_B"   # a quantity (kind 1)
 ITEM_C = "Synthetic_Item_C"   # a quantity without any flag
 COUNT_FLAG = "Synthetic.Synthetic_Item_B.Stock"
-HAVE_FLAG = "Synthetic.Synthetic_Item_A.Have"
+HAVE_FLAG = "Synthetic.Synthetic_Item_A.Have"     # (the game's IsGet: set when an item is got, never cleared when one is taken away)
+STOCK_FLAG = "Synthetic.Synthetic_Item_A.Stock"   # the pouch count of the possession: the truth about whether it is held
 
 
 def synthetic_info(*, layout=True, flags=True):
@@ -151,6 +152,7 @@ class FakeDebugGame(_BASE.FakeBridge):
         self.add_flag("int", "synthetic.rupees", self.rupees)
         self.add_flag("int", "synthetic.delta", -3)
         self.add_flag("int", COUNT_FLAG, 5)
+        self.add_flag("int", STOCK_FLAG, 0)
         self.add_flag("bool", HAVE_FLAG, 0)
         self.add_flag("bool", "synthetic.flag", 0)
         self.add_flag("uint", "synthetic.counter", 7)
@@ -309,12 +311,15 @@ class FakeDebugGame(_BASE.FakeBridge):
                 return
             templates = self.info.get("item_flags") or {}
             if rest == a["item_toggle"]:
-                flag = (templates.get("have") or "").replace("{name}", item["name"])
-                kind_address = self.flags.get(flag)
-                had = self.load(*kind_address) if kind_address else 0
-                if kind_address:
-                    self.store(kind_address[0], kind_address[1], 0 if had else 1)
-                self.say(f"cheats: inventory {item['label']} toggled (had {had}, now {1 - had if kind_address else had}, event status 0)")
+                have_name = (templates.get("have") or "").replace("{name}", item["name"])
+                stock_name = (templates.get("count") or "").replace("{name}", item["name"])
+                have, stock = self.flags.get(have_name), self.flags.get(stock_name)
+                held = self.load(*stock) if stock else self.load(*have) if have else 0
+                if stock:
+                    self.store(stock[0], stock[1], 0 if held else 1)
+                if have and not held:
+                    self.store(have[0], have[1], 1)   # (a removal leaves it set)
+                self.say(f"cheats: inventory {item['label']} toggled (had {held}, now {held}, event status 0)")
             else:
                 delta = rest - a["item_bias"]
                 flag = (templates.get("count") or "").replace("{name}", item["name"])

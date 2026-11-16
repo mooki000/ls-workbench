@@ -228,12 +228,15 @@ class SessionDebug:
         return code, item
 
     @staticmethod
-    def _item_flag(info: GameInfo, action, item: GameItem | None) -> str | None:
+    def _item_flags(info: GameInfo, action, item: GameItem | None) -> list[str]:
+        """The flags an item's quantity or possession is read from, best first. A quantity: its count flag. A possession: its count
+        flag when the game has one (the pouch's count is the truth), then the have flag. The have flag (the game's IsGet) is set when
+        an item is got and never cleared when one is taken away, so on its own it can show a got item but not a taken one."""
         if item is None or info.item_flags is None:
-            return None
-        template = info.item_flags.count if action.kind == "item" else info.item_flags.have
-        name = template.replace("{name}", item.name) if template else None
-        return name if name and FLAG_NAME.fullmatch(name) else None
+            return []
+        templates = [info.item_flags.count] if action.kind == "item" else [info.item_flags.count, info.item_flags.have]
+        names = [template.replace("{name}", item.name) for template in templates if template]
+        return [name for name in names if FLAG_NAME.fullmatch(name)]
 
     async def debug_impl(self, run_id: str, action, timeout_seconds: float, idempotency_key: str) -> Job:
         request = dict(run_id=run_id, action=action.model_dump(), timeout_seconds=timeout_seconds)
@@ -272,8 +275,13 @@ class SessionDebug:
         if before.controllable is not True:
             # Never queue a line behind a load, a cutscene or a stale sample: the game would hold and fire it later.
             raise deps.error("unavailable", "session_debug", retryable=True)
-        flag = self._item_flag(info, action, item)
-        count_before = await self._count(session, flag) if flag else None
+        flag, count_before, have_only = None, None, False
+        for position, candidate in enumerate(self._item_flags(info, action, item)):
+            flag = flag or candidate
+            value = await self._count(session, candidate)
+            if value is not None:
+                flag, count_before, have_only = candidate, value, action.kind == "item_toggle" and position > 0
+                break
         log = log_path(session)
         offset = log_offset(log)
         deps.paths.read(session.live_path)
@@ -286,8 +294,8 @@ class SessionDebug:
             while not (said := cheat_lines(log, offset)) and time.monotonic() < deadline:
                 await bridge.request("wait", timeout=1, event="present", frames=1)
             expected = None
-            if count_before is not None:
-                expected = count_before + action.change if action.kind == "item" else 1 - count_before if count_before in (0, 1) else None
+            if count_before is not None and not (have_only and count_before):   # (a removal the have flag cannot show is not waited for)
+                expected = count_before + action.change if action.kind == "item" else 0 if count_before else 1
             count_after, settle = None, time.monotonic() + COUNT_WAIT
             while flag:
                 count_after = await self._count(session, flag)
@@ -307,11 +315,11 @@ class SessionDebug:
         detail = None if item is None else DebugItem(name=item.name, index=item.index, count_before=count_before,
             count_after=count_after, had=had, now=now)
         return DebugResult(kind=action.kind, action_number=code, game_said=said,
-            effect=self._effect(session, action, said, after, count_before, count_after),
+            effect=self._effect(session, action, said, after, count_before, count_after, have_only),
             before=before.game, after=after.game, item=detail, observed_at=utc_now())
 
     @staticmethod
-    def _effect(session: Session, action, said: list[str], after, count_before, count_after) -> str:
+    def _effect(session: Session, action, said: list[str], after, count_before, count_after, have_only=False) -> str:
         """Only a read-back from the game earns ``verified``; the game's own log lines never do."""
         if action.kind == "time":
             # The clock is not on the bridge, so a request the game acknowledged is the best claim there is.
@@ -329,7 +337,10 @@ class SessionDebug:
             return "requested"
         if action.kind == "item":
             return "verified" if count_after == count_before + action.change else "not_applied"
-        return "verified" if count_before in (0, 1) and count_after == 1 - count_before else "not_applied"
+        if bool(count_after) != bool(count_before):
+            return "verified"
+        # Read from the have flag alone, a removal cannot be seen: it stays set. The game's log line is all there is.
+        return "requested" if have_only and count_before else "not_applied"
 
     # ---- typed flag writes (memory opt-in)
 
