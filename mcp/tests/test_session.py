@@ -119,7 +119,10 @@ async def test_session_catalogue(config, monkeypatch, profile, extras):
             "session_wait": ["run_id", "predicate", "idempotency_key"],
             "session_options_set": ["run_id", "values"], "session_teleport": ["run_id", "destination_id", "idempotency_key"],
             "session_age": ["run_id", "age", "idempotency_key"], "save_clone": ["save_id", "idempotency_key"],
-            "session_stop": ["run_id", "reason", "idempotency_key"]}
+            "session_stop": ["run_id", "reason", "idempotency_key"],
+            "session_debug": ["run_id", "action", "idempotency_key"], "session_flags": ["run_id", "names"],
+            "session_flag_set": ["run_id", "name", "value", "idempotency_key"],
+            "session_snapshot": ["run_id", "idempotency_key"]}
         for spec in tools.SPECS:
             selected = profile == "operate" or spec.safety.value == "READ" or spec.name in extras
             assert (spec.name in actual) is selected
@@ -152,7 +155,7 @@ async def test_bridge_dispatch_bounds_and_uncertain_quit(tmp_path):
             await bridge.request("status")
         assert len(bridge.events) == 256 and bridge.events_lost == 5  # includes the silent quit's event
         with pytest.raises(WorkbenchError):
-            await bridge.request("mem_write")
+            await bridge.request("mem_poke")  # only the typed commands are dispatchable
     finally:
         await bridge.close()
         await fake.close()

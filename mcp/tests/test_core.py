@@ -35,13 +35,16 @@ REQUIRED = {
     "session_teleport": ["run_id", "destination_id", "idempotency_key"],
     "session_age": ["run_id", "age", "idempotency_key"], "session_saves_list": ["run_id"],
     "save_clone": ["save_id", "idempotency_key"], "session_stop": ["run_id", "reason", "idempotency_key"],
+    "session_destinations": ["run_id"], "session_debug": ["run_id", "action", "idempotency_key"],
+    "session_flags": ["run_id", "names"], "session_flag_set": ["run_id", "name", "value", "idempotency_key"],
+    "session_snapshot": ["run_id", "idempotency_key"],
 }
 READ_TOOLS = {
     "workbench_status", "queue_status", "jobs_list", "job_read", "job_wait", "ci_read",
     "system_telemetry",
     "run_logs", "run_faults", "evidence_compare", "github_thread_read", "prloop_next",
     "test_requests_read", "team_read", "nightly_status", "knowledge_search",
-    "session_state", "session_wait", "session_options_get", "session_saves_list",
+    "session_state", "session_wait", "session_options_get", "session_saves_list", "session_destinations", "session_flags",
 }
 
 

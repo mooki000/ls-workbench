@@ -79,15 +79,25 @@ class FakeBridge:
     def option(self, key):
         return {"key": key, "value": self.options[key], "min": 0, "max": 10, "step": 1, "restart": False, "fixed": False, "text": "Synthetic"}
 
+    def game_fields(self, game):
+        """Subclass hook: extra fields of status.game."""
+
+    async def custom(self, writer, cmd, command, response):
+        """Subclass hook: handle a command (update ``response``) and return True, or return False."""
+        return False
+
     async def reply(self, writer, command):
         cmd, rid = command["cmd"], command["id"]
         self.frame += 1
         response = {"id": rid, "ok": True, "frame": self.frame}
         await self.emit(writer, {"event": "present", "frame": self.frame, "state": self.state})
-        if cmd == "status":
+        if await self.custom(writer, cmd, command, response):
+            pass
+        elif cmd == "status":
             game = {"map": self.map, "age": self.age, "loading": self.loading, "event": self.event}
             if self.sampled:
                 game.update(frame=self.frame, t=time.monotonic()-(10 if self.stale else 0))
+            self.game_fields(game)
             response.update(protocol=1, state=self.state, map=self.map, game=game)
         elif cmd == "wait":
             await asyncio.sleep(0.01)
