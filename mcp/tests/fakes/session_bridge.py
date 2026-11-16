@@ -35,6 +35,8 @@ class FakeBridge:
         self.age_supported = True
         self.options = {"text_speed": 1, "fps_counter": 0, "music_volume": 5}
         self.on_quit = None
+        self.age_map = None          # the map the other age's reload ends in (None: the same map)
+        self.reload_delay = 0        # seconds the age reload is an event for (0: instant)
 
     async def start(self):
         self.server = await asyncio.start_unix_server(self.client, self.path)
@@ -56,6 +58,10 @@ class FakeBridge:
     async def emit(self, writer, value):
         writer.write(json.dumps(value).encode()+b"\n")
         await writer.drain()
+
+    def finish_reload(self, target):
+        self.map = target
+        self.event = False
 
     async def client(self, reader, writer):
         self.writers.add(writer)
@@ -143,7 +149,14 @@ class FakeBridge:
                 response.update(ok=False, error="unknown_cmd")
             else:
                 self.age = command["to"]
-                response.update(sent=True, accepted=True, map=self.map)
+                target = self.age_map or self.map
+                if self.reload_delay:
+                    # as the real game: the age flips at once, the scene is an event until the other age's map has loaded
+                    self.event = True
+                    asyncio.get_running_loop().call_later(self.reload_delay, self.finish_reload, target)
+                else:
+                    self.map = target
+                response.update(sent=True, accepted=True, map=target)
         elif cmd == "saves":
             response.update(path="/private/game/saves", slots=[{"slot": str(n).zfill(2), "newest": n == 2,
                 "mtime": 100+n, "files": [{"name": "progress.sav", "size": 4, "mtime": 100+n}],

@@ -153,6 +153,22 @@ async def test_travel_results_record_before_destination_and_map(sandbox):
         await fake.close()
 
 
+async def test_age_arrives_when_the_other_ages_map_has_loaded_and_link_is_in_control(sandbox):
+    # The real game flips Link's age at once and reloads the scene as an event: a result taken at the flip said arrived with
+    # the old map, an event playing and no control (the first real session showed it).
+    root, deps, service, client = sandbox
+    run_id, fake, session = await attach_debug(root, deps, service)
+    try:
+        fake.age_map, fake.reload_delay = "SyntheticAdultZone", 0.6
+        terminal, record = await submit(client, deps, "session_age", run_id=run_id, age="adult")
+        assert terminal.state == State.COMPLETED and record["arrived"] is True and record["map"] == "SyntheticAdultZone"
+        assert record["controllable"] is True and record["state"]["controllable"] is True
+        assert record["state"]["game"]["map"] == "SyntheticAdultZone" and record["state"]["game"]["age"] == "adult"
+        assert record["state"]["game"]["event"] is False
+    finally:
+        await fake.close()
+
+
 # ---- launch switches
 
 async def test_launch_env_lines_follow_the_profile(sandbox):

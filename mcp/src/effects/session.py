@@ -490,8 +490,16 @@ class SessionService:
             arrived = None
             target = text(reply.get("map"), 80)
             if sent is True and accepted is not False:
-                predicate = Predicate(kind="controllable", map=target) if command == "teleport" else Predicate(kind="field", field="age", value=destination)
-                waited = await self._wait(session, predicate, timeout_seconds, 500, 1, job_id)
+                started = time.monotonic()
+                if command == "teleport":
+                    waited = await self._wait(session, Predicate(kind="controllable", map=target), timeout_seconds, 500, 1, job_id)
+                else:
+                    # The game flips the age at once and reloads the scene as an event: the age alone is not an arrival. Wait for it, then
+                    # for control in the map the game named (a map that has the same name in both ages is already the age checked first).
+                    waited = await self._wait(session, Predicate(kind="field", field="age", value=destination), timeout_seconds, 500, 1, job_id)
+                    if waited.matched is True and target is not None:
+                        waited = await self._wait(session, Predicate(kind="controllable", map=target),
+                                                  max(0.5, timeout_seconds - (time.monotonic() - started)), 500, 1, job_id)
                 state = waited.sample
                 arrived = waited.matched
             return TravelResult(sent=sent, accepted=accepted, arrived=arrived, controllable=state.controllable, state=state,
