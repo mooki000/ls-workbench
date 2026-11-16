@@ -42,6 +42,19 @@ def _page(limit: int, cursor: int) -> None:
     if not 1 <= limit <= MAX_PAGE or not 0 <= cursor <= 9223372036854775807:
         raise fail("invalid_argument", "registry_read")
 
+# How long a registry call waits for a busy or overloaded database. A stalled machine (a disk stall, load around 14) held the lock for
+# more than the old 5 seconds, and a registry error in the launch job's own bookkeeping ended a healthy session.
+BUSY_SECONDS = 30.0
+# SQLite's primary result codes that mean "try again": BUSY, LOCKED, and PROTOCOL (the WAL index lock could not be taken under
+# contention). The extended codes (BUSY_RECOVERY 261, BUSY_SNAPSHOT 517, BUSY_TIMEOUT 773) carry the primary code in their low byte.
+TRANSIENT_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, 15})
+
+
+def _transient(exc: sqlite3.OperationalError) -> bool:
+    code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(code, int) and (code & 0xFF) in TRANSIENT_CODES
+
+
 
 class Registry:
     def __init__(self, state_root: Path):
@@ -57,18 +70,31 @@ class Registry:
         if write and self._readonly:
             raise fail("refused_by_policy", "registry")
         target = self.path.as_uri() + "?mode=ro" if self._readonly else self.path
-        db = sqlite3.connect(target, uri=self._readonly, timeout=5, isolation_level=None)
-        db.row_factory = sqlite3.Row
+        deadline, delay = time.monotonic() + BUSY_SECONDS, 0.05
+        while True:
+            db = sqlite3.connect(target, uri=self._readonly, timeout=BUSY_SECONDS, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            try:
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("PRAGMA synchronous=FULL")
+                db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                break
+            except sqlite3.OperationalError as exc:
+                db.close()
+                if _transient(exc) and time.monotonic() < deadline:
+                    time.sleep(delay)    # (nothing has been written yet: the start of a transaction can simply be tried again)
+                    delay = min(delay * 2, 1.0)
+                    continue
+                raise fail("busy" if _transient(exc) else "backend_failed", "registry", retryable=_transient(exc)) from None
+            except BaseException:
+                db.close()
+                raise
         try:
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             yield db
             db.commit()
         except sqlite3.OperationalError as exc:
             db.rollback()
-            busy = getattr(exc, "sqlite_errorcode", None) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
-            raise fail("busy" if busy else "backend_failed", "registry", retryable=busy) from None
+            raise fail("busy" if _transient(exc) else "backend_failed", "registry", retryable=_transient(exc)) from None
         except BaseException:
             db.rollback()
             raise
