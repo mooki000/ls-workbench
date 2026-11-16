@@ -60,8 +60,21 @@ def resolve_save(entry, kept_root):
     return None, None   # a library entry or a path in the cut segment itself
 
 
-def plan(entries, arms, segments_dir, pilot_dir, kept_root=None, tas=False):
-    """[{entry, arm, kind, missing}] for the course: `missing` names what is not there (segment, save, route)."""
+def parse_only(text, entry_ids):
+    """`entry:arm,entry:arm,...` as [(entry, arm)] in the order given (`arm` may be `tas`, the scripted baseline). ValueError names what is wrong:
+    a pair without a colon, an unknown entry or arm, a pair twice, nothing at all."""
+    pairs = []
+    for part in text.split(','):
+        entry_id, sep, arm = part.strip().partition(':')
+        if not sep or entry_id not in entry_ids or (arm not in course.ARMS and arm != 'tas') or (entry_id, arm) in pairs:
+            raise ValueError(f'--only wants entry:arm pairs of known entries {sorted(entry_ids)} and arms {list(course.ARMS) + ["tas"]}, each once; got {part!r}')
+        pairs.append((entry_id, arm))
+    return pairs
+
+
+def plan(entries, arms, segments_dir, pilot_dir, kept_root=None, tas=False, only=None):
+    """[{entry, arm, kind, missing}] for the course: `missing` names what is not there (segment, save, route). `only`: [(entry, arm)] keeps just those
+    cells, in that order (a cell the entries/arms/tas of this call do not make is an error)."""
     cells = []
     segments_dir, pilot_dir = Path(segments_dir), Path(pilot_dir)
     for e in course.COURSE:
@@ -82,6 +95,12 @@ def plan(entries, arms, segments_dir, pilot_dir, kept_root=None, tas=False):
             if not (pilot_dir / 'routes' / e.tas).is_file():
                 w.append(f'no route {e.tas}')
             cells.append({'entry': e.id, 'arm': 'tas', 'kind': 'tas', 'missing': w})
+    if only is not None:
+        by = {(c['entry'], c['arm']): c for c in cells}
+        absent = [p for p in only if p not in by]
+        if absent:
+            raise ValueError(f'--only names cells this plan does not make: {absent} (an arm outside --arms, a scripted baseline without --tas or without a route entry)')
+        cells = [by[p] for p in only]
     return cells
 
 
@@ -422,9 +441,17 @@ def main():
         p.add_argument('--shots', type=int, default=900)
         p.add_argument('--tas', action='store_true')
         p.add_argument('--cells')
+        p.add_argument('--only', help='entry:arm,entry:arm,... : just these cells, in this order (a scripted baseline as entry:tas); --entries, --arms and --tas follow from it')
     a = ap.parse_args()
     entries = set(a.entries.split(',')) if a.entries else None
     arms = [x for x in a.arms.split(',') if x]
+    only = None
+    if a.only:
+        try:
+            only = parse_only(a.only, {e.id for e in course.COURSE})
+        except ValueError as e:
+            ap.error(str(e))
+        entries, arms, a.tas = {p[0] for p in only}, sorted({p[1] for p in only} - {'tas'}, key=list(course.ARMS).index), any(p[1] == 'tas' for p in only)
     bad = [x for x in arms if x not in course.ARMS]
     if bad:
         ap.error(f'unknown arm {bad}; arms: {list(course.ARMS)}')
@@ -432,7 +459,7 @@ def main():
         return report(a)
     if a.cmd == 'sheet':
         return sheet(a)
-    cells = plan(entries, arms, a.segments_dir, a.pilot_dir, a.kept_root, a.tas)
+    cells = plan(entries, arms, a.segments_dir, a.pilot_dir, a.kept_root, a.tas, only)
     if a.cmd == 'plan':
         by_id = {e.id: e for e in course.COURSE}
         for c in cells:

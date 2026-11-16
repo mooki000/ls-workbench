@@ -194,6 +194,17 @@ def plan_checks(tmp):
         check(all(not c['missing'] for c in cells) and {c['entry'] for c in cells} == {'b', 'c'} and len(cells) == 3, 'plan: all there: nothing missing; --entries narrows it')
         check(run.resolve_save(ents[1], kept) == (str(kept / 'runs' / 'run1' / 'user'), None), 'resolve_save: kept:<tag> under --kept-root')
         check(run.resolve_save(ents[0], None) == (None, None), 'resolve_save: no save, none asked')
+        only = run.parse_only('c:rules,b:tas,a:decisions', {'a', 'b', 'c'})
+        check(only == [('c', 'rules'), ('b', 'tas'), ('a', 'decisions')], 'parse_only: entry:arm pairs, in the order given')
+        cells = run.plan(None, ['rules', 'decisions'], segs, pdir, kept, tas=True, only=only)
+        check([(c['entry'], c['arm']) for c in cells] == only and all(not c['missing'] for c in cells),
+              'plan: --only picks single cells (the scripted baseline as `entry:tas`), in the order given')
+        for bad in ('a', 'a:nosucharm', 'zz:rules', 'a:rules,a:rules', ''):
+            try:
+                run.parse_only(bad, {'a', 'b', 'c'})
+                check(False, f'parse_only refuses {bad!r}')
+            except ValueError:
+                check(True, f'parse_only refuses {bad!r}')
     finally:
         course.COURSE = saved
 
