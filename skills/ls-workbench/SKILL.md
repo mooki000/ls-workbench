@@ -28,6 +28,7 @@ owns those separately authorized operations. See the repository README's **Publi
 **On this Linux workstation, all game runs are windowless.** A leftover `window-ok` is not permission.
 A separately authorized remote Windows test does not lift this local restriction. Do not send anything to the compositor.
 Reports name the skills read, tools used, pinned sources, checks exercised and work not tested.
+Before deep analysis of a crash, and when choosing places for a bug hunt or tour: `skill://ls-field-data` (leads, not proof).
 
 ## Set up the paths and rules
 

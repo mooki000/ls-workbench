@@ -30,8 +30,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("LS_FIELD_MCP", "https://grafana-mcp.magicbean.gmatte.xyz")
-MCP = BASE + "/mcp"
+BASE = os.environ.get("LS_FIELD_MCP", "https://data-services.magicbean.dev")  # moved 16 Nov 2026 (was grafana-mcp.magicbean.gmatte.xyz)
+MCP = BASE + os.environ.get("LS_FIELD_MCP_PATH", "/mcp/grafana")
 STATE = os.environ.get("LS_FIELD_STATE") or os.path.join(
     os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "ls-workbench", "field-token.json")
 PORT = int(os.environ.get("LS_FIELD_PORT", "38471"))

@@ -2,7 +2,9 @@
 
 What the game sends in when a player agrees to it, where it lands, and how an agent or a script reads it. The
 procedure for using it in other work is the skill `skills/ls-field-data/SKILL.md`; this page is setup and reference.
-Written from a first look on 2026-11-13, when the data was a handful of test sessions and test crashes.
+Written from a first look on 2026-11-13, when the data was a handful of test sessions and test crashes; the address
+was updated and the data re-read on 2026-11-16 (still developers' builds only: the senders for players were merged
+that day and no published build had them yet).
 
 ## What it is
 
@@ -16,21 +18,23 @@ The LS team runs a Grafana with one Prometheus data source. Two services feed it
   summary, and the relay adds it to counters and histograms.
 
 In front of that Grafana sits an MCP server (Grafana's own `mcp-grafana`, version 2.3.0 when read), reachable at
-`https://grafana-mcp.magicbean.gmatte.xyz/mcp`. It offers 63 tools, every one marked read-only, and its raw API tool
-allows GET only. It acts as one shared service account, so what you can see does not depend on who signed in.
+`https://data-services.magicbean.dev/mcp/grafana` (also `https://api.magicbean.gmatte.xyz/mcp/grafana`). It offers 63
+tools, every one marked read-only, and its raw API tool allows GET only. It acts as one shared service account, so what
+you can see does not depend on who signed in. The first address, `https://grafana-mcp.magicbean.gmatte.xyz/mcp`, was
+given up when the server moved on 16 Nov 2026 and now answers 404: change any client or note that still has it.
 
 ## Adding it
 
 Claude Code, for every project of the user:
 
 ```sh
-claude mcp add --transport http --scope user magicbean-grafana https://grafana-mcp.magicbean.gmatte.xyz/mcp
+claude mcp add --transport http --scope user magicbean-grafana https://data-services.magicbean.dev/mcp/grafana
 ```
 
 Then `/mcp` in a session and authenticate. For a tool that reads a project `.mcp.json`:
 
 ```json
-{ "mcpServers": { "magicbean-grafana": { "type": "http", "url": "https://grafana-mcp.magicbean.gmatte.xyz/mcp" } } }
+{ "mcpServers": { "magicbean-grafana": { "type": "http", "url": "https://data-services.magicbean.dev/mcp/grafana" } } }
 ```
 
 **Sign-in.** The server answers `401 login required` until the client has signed in with OAuth (authorization code

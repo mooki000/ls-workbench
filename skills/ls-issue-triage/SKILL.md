@@ -69,6 +69,8 @@ saves; the builder cannot build), S1 5 (cannot progress or start), S2 3 (wrong b
 20 %), S3 1 (polish, features). Reach is the affected share; refresh `scripts/hardware_report.py` and the current
 installed-base source rather than reusing an old percentage. Confidence: 1.0 reproduced by us or a maintainer with
 a log, 0.7 two or more reporters with logs, 0.4 one report or no log. State the three factors and their dated source.
+A field count (`skill://ls-field-data`) may back reach or confidence when its report or session count stands beside
+it. It never replaces the installed-base source, and while the player senders are thin it is mostly developers' builds.
 A new problem becomes a row in `docs/worklist.md` through a pull request.
 
 ## One report, start to finish
@@ -77,6 +79,10 @@ A new problem becomes a row in `docs/worklist.md` through a pull request.
    logs); read the tracking issue it belongs to; search open and merged pull requests for it.
    A reporter's `source <hex>` is a content fingerprint (`nx2/version.py`), not a Git revision; pin the release tag
    or reported head separately. Read a moved PR's description before a test: “parked/hold off” stops that work.
+   Then the field (`skill://ls-field-data`), before reproducing, when the report names a crash, a map or a card:
+   `crashes --all-builds` for the signature (exception, module, version, card; its first report is a comment on crash
+   issue 81) and `perf --by map` or `events --by gpu` for the map or card. Write down the reports, release or not, and
+   the session count in the verdict and the score; no match is nothing learned, not "rare".
 2. Verdict for this machine before any run: reproducible here (Linux, NVIDIA or the Intel device, the story point
    reachable from a save in `/home/mooki/Games/.hookshot-harness/saves/`), or not (Windows only, AMD, HDR, a real pad).
    “Cannot reproduce this hardware symptom” is separate from “can test its portable API/recording contract with

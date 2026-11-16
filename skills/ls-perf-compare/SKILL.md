@@ -19,6 +19,9 @@ remain untested without a new explicit grant. Reports name skills, tools, source
 For sampled CPU/GPU/memory or stutter context, read `ls-perf-monitor`; retain same-run perf/frame CSVs,
 explicit clocks/windows, missing counters and suspicion evidence. Gauge comparisons are not causation, statistical
 significance or a speed verdict; the authorized paired worker remains the timing authority.
+To choose where to measure, the field (`skill://ls-field-data`: `perf --by map`, `perf --by gpu`, `perf --by version`)
+shows where players lose frames. It is a lead for the scene and the cards, never a measurement or a verdict; quote its
+sessions and hours (below about ten sessions it is an anecdote).
 
 ```sh
 H="$HOME/Games/.hookshot-harness"

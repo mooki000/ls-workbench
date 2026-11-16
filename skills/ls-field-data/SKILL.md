@@ -23,14 +23,28 @@ Two streams exist, both sent only with the player's consent:
 | Crash reports | the player presses *Send Help* in the crash window | one comment per crash signature by `crash-bot` on the forge's crash issue (number 81), with the first report and its log; a counter per signature in Prometheus |
 | Performance summaries | the player ticked *Send performance statistics* in the launcher | per-session totals in Prometheus: play time, frame-time histogram, hitches by cause, frame parts, memory, render events |
 
-Both are shown on two Grafana dashboards, uids `longshot-crashes` and `longshot-performance`. In November 2026 the
-data is a handful of test sessions and test crashes: every procedure below works, no conclusion about players does.
+Both are shown on two Grafana dashboards, uids `longshot-crashes` and `longshot-performance`.
+
+**What the data holds today (read 16 Nov 2026): little, and not players'.** A player's game sends only from a build that
+has the senders (pull request 983, merged 16 Nov 2026; no release or nightly published before then has them), and only
+with the player's consent. So what is there comes from developers' own test, local and dirty builds (a signature first
+reported before the merge date cannot come from a published build). Release builds only: one test crash, no
+performance session. `--all-builds`: about ten crash signatures, most with one report, and about 25 short performance
+sessions; the one gameplay map in them has 2. Every procedure below works; no conclusion
+about players does. Until players' builds report: read the session and report counts first and quote them; say
+"developers' builds" when that is what you counted; use `--all-builds` to see anything at all; "no report" is nothing
+learned, not "no problem". Before relying on this paragraph, re-read the counts and check the forge's releases against
+the merge date (`releases` and `pulls/983` under the script's `FORGE_API`, public).
 
 ## 1. Get in
 
-- **In an agent tool that has the MCP server** `magicbean-grafana`: use its tools directly (`query_prometheus`,
-  `get_dashboard_panel_queries`, `list_prometheus_label_values`, ...). All 63 tools are read-only.
-- **Anywhere else** (this harness, a worker, a nightly job): the script beside this skill, standard library only:
+- **In an agent tool that has the MCP server** `magicbean-grafana`, at `https://data-services.magicbean.dev/mcp/grafana`
+  (also `https://api.magicbean.gmatte.xyz/mcp/grafana`): use its tools directly (`query_prometheus`,
+  `get_dashboard_panel_queries`, `list_prometheus_label_values`, ...). All 63 tools are read-only. The old host
+  `grafana-mcp.magicbean.gmatte.xyz` (path `/mcp`) is gone (it answers 404): a client still set to it fails; re-add
+  the server with the new address (`docs/field-data.md`) and sign in again.
+- **Anywhere else** (this harness, a worker, a nightly job): the script beside this skill, standard library only. It
+  reads `LS_FIELD_MCP` (host; the first address above) and `LS_FIELD_MCP_PATH` (`/mcp/grafana`): leave both unset.
 
 ```sh
 F=/home/mooki/.agents/skills/ls-field-data/scripts/ls_field.py
@@ -51,6 +65,11 @@ The script renews that token file by itself when it has run out; it changes noth
 **No shell and no MCP tool** (a read-only worker)? Do not try the server yourself: it answers 401. The crash half is
 public: read the crash issue's comments on the forge. For the performance half ask the main session to run the
 command above with `--json` and hand you the output; say exactly which command.
+
+**A crash's backtrace and log** are in its comment on issue 81. The link `crashes` prints ends in `#issuecomment-N`, and
+that page address alone shows only the issue title: read the text from the forge's API, `issues/comments/N` under the
+script's `FORGE_API` (public, no sign-in). To find issues or pull requests that mention a signature, search the forge
+for its hash; searching the `where` text matches far too much.
 
 ## 2. Read it correctly
 
@@ -86,9 +105,12 @@ command above with `--json` and hand you the output; say exactly which command.
 | Doing | Pull | Then |
 |---|---|---|
 | Triage of an issue or a crash report (`ls-issue-triage`) | `crashes --all-builds`; the signature's comment for the backtrace and log | Match exception, module and offset, version, card and driver. Link the comment in the answer. Same signature on a release raises it; only on someone's local build does not. |
+| Debugging a crash (a signature from a report, or a crash on this desk) | `crashes --all-builds` (`--json` adds maps and CPUs); the first report's link on issue 81 | Before deep analysis: how many reports, which cards, drivers, versions and OSes, release or not. After a fix: read again; new reports stopping is a lead, never proof. |
 | Choosing what to reproduce first | `crashes` sorted by reports; `events --by gpu` | Take signatures on hardware this desk has (see the brief for the machines), on the map named. A crash without a map gets the report's log read first. |
 | A fix for a crash | reports per version for that signature before the fix | After a release with the fix: the signature should stop appearing on newer versions. Absence in a small sample is not proof; say how many sessions the newer version has. |
 | Choosing routes for a comparison (`ls-perf-compare`) | `perf --by map`, `hitches --by map` | Measure where players lose frames, on the cause that dominates there. The field picks the place; the paired runs make the claim. |
+| Choosing where to measure in a regression hunt or a hitch investigation (`ls-regression-hunt`, `ls-perf-monitor`) | `perf --by version`, `perf --by gpu`, `hitches --by map` | A version where hitches per hour jump, or a cause that dominates one map, says where to measure first. Never a measurement, a bound of the range or a verdict; quote sessions and hours. |
+| Choosing places for a scripted tour or a bug hunt (`ls-workbench`) | `perf --by map` (sessions column), `crashes --json` (its `maps`) | Weight places toward maps with about ten sessions or more, and toward maps that crash; below that use the usual places. Say the count behind each pick. |
 | A performance pull request's evidence (`ls-pr-evidence`) | the cause's hitches per hour by card or driver | Cite it as motivation with sessions and hours, under "Not tested" context, never in the results table. |
 | Asking for testers | cards, drivers and OSes that crash or hitch and that nobody here owns | Name them under "Needs other testers" and in the test request. |
 | The nightly report (`ls-nightly-playtest`) | `crashes --days 1 --json`, `events --days 1 --json` | A short "from the field" block: new signatures, device losses. It never changes the night's verdict. |

@@ -54,6 +54,9 @@ stay local. Set `REPO`, full `GOOD`/`BAD` commits, `SCENARIO` and a new output d
 5. Select the actual path under test. A present/swapchain change cannot be judged by a windowless run. An input
    acknowledgement or load gap does not prove the intended scene; require fresh state and inspected pictures.
    If the binary lacks a required diagnostic, apply the same reviewed instrument to both arms and disclose it.
+   The field (`skill://ls-field-data`: `perf --by version`, `hitches --by map`, `events --by gpu`) may show a version
+   where hitches per hour jump, or the map and card where players lose frames. That is a lead for the scene and the
+   suspects, never a measurement, a bound of the range or a verdict; quote its sessions and hours beside it.
 6. For timing, obtain authorization for the named exclusive holds. Use reference/candidate/reference/candidate in
    one quiet hold. Other-work mean must be below `quiet_cores` (default 3), its five-second peak at most
    `quiet_peak_cores` (6), and same-arm repeat spread at most `repeat_tolerance` (0.05). Load averages are context.

@@ -13,6 +13,9 @@ description: >
 an incomplete capture; comparing sampled gauges. Read `ls-workbench` and the current brief.
 This is an optional instrument: a name-compatible build may still lack its emitter.
 Read `ls-perf-compare` and `ls-regression-hunt` before any timing claim. **Ordinary run, no speed claim.**
+Where players' games hitch, by cause and map (`hitches --by map` in `skill://ls-field-data`), is context for choosing
+the run and the suspicion rows: the game's own attribution, with sessions and hours beside it. It is not a sampled
+gauge and never goes in a gauge table.
 
 The installed harness supports `--perf`, regression `run.perf: true` and nightly `perf: true`. These collect context,
 not speed evidence. The current MCP catalogue has no `system_telemetry` analyzer; use the file reader below.
