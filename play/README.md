@@ -1,0 +1,123 @@
+# play/: the step drivers, the pilot and its benchmark
+
+Everything here plays a game that is already running on your machine. Nothing in it is game data, and nothing in it
+needs a network except the one optional model backend (below). The game, its saves and every file made from them stay
+yours and stay local.
+
+| Path | What |
+|---|---|
+| `hsap.py` | The game side. Starts one game through `hs-run.sh` (the GPU gate, headless) and plays steps on it through the control bridge: walking, timed presses, waits, the interaction steps (`interact`, `chest`, `talk`, `advance`, `pickup`, `enter`, `faceat`, `ztarget`, `camera`, `ocarina`, `item`, `rendezvous`), watched flags, the sampled state (`oot` subscription). Every step ends with a result word and what changed. `python3 -I -B play/hsap.py -h` lists the steps. |
+| `hsap_file.py`, `tapcheck.py` | The earlier file-tap driver, and the helper that puts a run's samples beside its pictures. |
+| `pilot/pilot.py` | The pilot. Plays one *segment* (a TOML file of goals with targets) by deciding, whenever the game side has no step left, which candidate step comes next. Writes a transcript, a summary and a route file per run. |
+| `pilot/deciders.py` | `rules` (a fixed policy, no model, no network), `replay` (a recorded transcript) and `openai-decisions` (a model chooses among the candidates; an optional planner call asks for route help). |
+| `pilot/interact.py` | The interaction goal kinds (`open_chest`, `both_open_same_chest`, `collect`, `talk_to`, `enter`, `play_song`, `fight`, `explore_interact`): their candidates, their rules policy, their conditions. |
+| `pilot/recover.py`, `pilot/humanize.py` | The stuck ladder, the per-map bad-point memory and the guard in front of the decider; seeded human-like movement (`--humanize 0..3`). |
+| `pilot/vision.py` | The pilot's eyes: at chosen moments a fixed set of questions about the game's own picture goes to a vision model (`--vision on`). |
+| `pilot/metrics.py` | The numbers of a run, from its own files: stuck steps per km, time to each goal, decisions per minute, cost per minute and per goal, interactions, looks. |
+| `pilot/openai_api.py`, `pilot/standin.py` | The one place that talks to the API (key, caps, ledger), and a loopback stand-in server for tests. |
+| `pilot/follow_feed.py` | Keeps one pilot's follow file from the other pilot's state journal (two pilots in one co-op room). |
+| `bench/` | The benchmark course and its runner: `course.py` (entries and arms), `mkcourse.py` (cuts the entries' segments from your own), `ghost.py` (a leader that walks a route for the follow entry), `run.py` (`plan`, `play`, `report`, `sheet`). |
+| `test_*.py`, `pilot/test_*.py`, `bench/test_bench.py` | The game-free tests. |
+
+## What you supply, and what stays private
+
+The repository has no segment, no save, no route, no world model, no song or prompt list and no key. You make or
+supply these locally; the code finds them next to itself or through the environment, and the folder's `.gitignore`
+lines keep them out of a commit.
+
+| Private input | Where the code looks | Without it |
+|---|---|---|
+| A built game copy (a folder named the way `harness/hs_names.py` names copies) and its save library (user folders) | `--copy` / `PILOT_COPY`; the segment's `save` (a library entry, a user folder, or `kept:<tag>`) | nothing to play |
+| Segments (`pilot/segments/*.toml`) | the path you give `pilot.py run` | nothing to play |
+| An offline world model (`world/`: objects per area, a planner) | `PILOT_WORLD`, else `world/` beside `play/` | no `near` objects, no planned routes: straight lines and the prompt only |
+| Prompt words the game really uses | `pilot/prompts.json` or `PILOT_PROMPTS` | the generic verbs only |
+| What the benchmark's six placeholder entries stand for (your segment, its goals, a save, a scripted route, a leader's route) | `bench/course-local.json`, or the file `PILOT_BENCH_LOCAL` names: `{"<entry id>": {"source": ..., "goals": {...}, "save": ..., "ghost_source": ..., "ghost_goal": ..., "tas": ...}}` | the cells are `MISSING` in `bench/run.py plan` |
+| Songs (name to note buttons) | `pilot/songs.json` or `PILOT_SONGS` | a goal names its notes itself |
+| The caps file `pilot/caps.json` | the pilot's own folder | `--decider openai-decisions` says so and the run plays on the rules |
+| The key | `OPENAI_API_KEY`, or a mode-600 one-line file named by `PILOT_OPENAI_KEY_FILE` (default `$XDG_CONFIG_HOME/ls-pilot/openai.key`) | `rules` and `replay` do not need one; `--decider openai-decisions` says `no key` and the run plays on the rules |
+| Run output (`pilot/runs/`, `pilot/ledger.jsonl`, `pilot/cache/`, `bench/runs/`) | made by the tools | |
+
+Transcripts, pictures, ledgers, bad-point files and cut benchmark segments are game-derived or machine-private: keep
+them out of commits and posts.
+
+## Running the pilot
+
+A game-free check that everything imports and the tests pass (no game, no network, no key):
+
+```sh
+cd play
+for t in test_hsap.py test_hsap_file.py pilot/test_pilot.py pilot/test_interact.py pilot/test_recover.py \
+         pilot/test_eyes.py pilot/test_metrics.py bench/test_bench.py; do python3 -I -B "$t" || break; done
+```
+
+`pilot/test_pilot.py` runs most of the others; a duel-segment check there is skipped when `pilot/segments/duel*.toml`
+(private) are absent, and says so.
+
+One segment, with the fixed policy (no model):
+
+```sh
+python3 -I -B play/pilot/pilot.py run <segment.toml> --decider rules --tag <new tag> --copy <game copy> --save <user folder> --wall 400
+```
+
+A tag is never reused (`pilot.py` refuses an existing `pilot/runs/<tag>`). The launch asks the GPU gate itself: do not
+wrap it in another one, and keep a hold within the workbench's limits. `--wall` counts from the game's start; a segment's
+`budget_seconds` counts from Link being in control (`gameplay_after_s` in `summary.json` says what the start-up cost).
+
+With a model:
+
+```sh
+export PILOT_OPENAI_KEY_FILE=<a mode-600 file with the key>     # or: export OPENAI_API_KEY=...
+python3 -I -B play/pilot/pilot.py run <segment.toml> --decider openai-decisions --planner --tag <new tag> --copy <game copy> --save <user folder>
+```
+
+What leaves the machine, and only with `--decider openai-decisions`: the request bodies written to the run's
+`transcript.jsonl` (the state line as JSON, the goal and target names, what was tried, the candidate steps). With
+`--planner` the planner's questions too; with `--vision on` the game's own frame, downscaled, with one fixed instruction
+text and fixed questions: no path, log line, flag or coordinate. The key is read at the moment of each request, sent
+only to the API host, scrubbed from error texts and never printed, logged, written to a transcript or put on a command
+line. A stand-in server (`--api-base http://127.0.0.1:<port>/v1`, `pilot/standin.py`) never gets the real key.
+
+### Caps and the ledger
+
+`pilot/caps.json` (yours to write; the pilot reads it before every request and stops asking when a limit is reached):
+
+```json
+{"per_run_usd": 2.0, "per_night_usd": 50.0, "total_usd": 400.0, "planner_share_of_night": 0.4,
+ "model": null, "planner_model": null, "vision_model": null, "vision_backend": null}
+```
+
+Every request is one line of `pilot/ledger.jsonl` with the token counts the API reported and the cost computed from them
+at the prices in `openai_api.py` (named `Price`s; update them when the published prices change). `pilot.py ledger [--run <id>]`
+prints what a run spent. `PILOT_PLANNER_MODEL`, `PILOT_VISION_MODEL` and `PILOT_VISION_BACKEND` override the file for one run.
+
+### Interaction goals, recovery, human-like movement, eyes
+
+* Goal kinds, the prompt the game shows (`Open`, `Talk`, `Check`, ...) as the sure answer to "would A do something", and
+  the near probe from the world model: the docstring of `pilot/interact.py`. A goal is met by the game's own evidence (a
+  flag, a rupee or item count, a map change, the battle music, a message read to its end), never by a button having been
+  pressed; a `play_song` goal that names a `flag` is met by that flag only.
+* `recover.py`: a move that ended stuck is answered without a question by a ladder (sidestep, back up and come from an
+  angle, roll, hop, next route point, local re-plan); where it happened is remembered per map and later routes bend round
+  it. A guard in front of the decider takes the one valid candidate without asking, does not ask again about a state that
+  did not change, and turns a long run of identical answers into recovery. `--no-recover` gives the older pilot.
+* `humanize.py`: `--humanize 0..3` (default 2 for an exploration run; a segment can set its own; 0 sends every line as made),
+  seeded by `--humanize-seed` or the run id.
+* `vision.py`: `--vision on [--vision-every <s>] [--vision-backend decisions|responses] [--vision-model <m>]`, default off.
+  The pictures sent are kept in the run's `vision/` folder with one row per look.
+
+## The benchmark
+
+`bench/course.py` names six entries (walk, hard route, door-talk, follow, chest, fight) as cuts of segments *you* have (placeholders until `course-local.json` says which),
+and four arms: `rules`, `decisions`, `decisions+vision`, `decisions+vision-big`. `bench/mkcourse.py` makes the cut segments
+into `bench/segments/` from your local `pilot/segments/`; `bench/run.py` plays the cells (one game copy per cell at a
+time, two copies for two at once), writes `results.json` and `table.md` (quality and cost per minute, per goal met and per
+km for each entry and arm) and contact sheets, and never starts a cell that cannot finish inside `--hold-s`. It does not
+take the quiet-window or measuring locks: the hold that runs it does. Wall-clock cells are functional runs, not frame-time
+measurements.
+
+```sh
+python3 -I -B play/bench/mkcourse.py --segments <your pilot/segments> --out play/bench/segments --bench-id b1
+python3 -I -B play/bench/run.py play --out <new folder> --bench-id b1 --copies <copy-a>,<copy-b> \
+    --pilot-dir play/pilot --segments-dir play/bench/segments --arms rules,decisions --hold-s 1500 [--tas]
+python3 -I -B play/bench/run.py report --out <that folder> --segments-dir play/bench/segments
+```

@@ -43,7 +43,12 @@ HARNESS_MAP = {name: Path(name).name for name in (
 )}
 HARNESS_MAP.update({'longshot-port.py': 'ls-port.py', 'test_longshot_port.py': 'test_ls_port.py'})
 GROUPS = {
-    'playthrough': ('play', ('hsap.py', 'hsap_file.py', 'tapcheck.py', 'test_hsap.py', 'test_hsap_file.py')),
+    'playthrough': ('play', ('hsap.py', 'hsap_file.py', 'tapcheck.py', 'test_hsap.py', 'test_hsap_file.py',
+                             'pilot/pilot.py', 'pilot/deciders.py', 'pilot/interact.py', 'pilot/recover.py', 'pilot/humanize.py',
+                             'pilot/vision.py', 'pilot/metrics.py', 'pilot/openai_api.py', 'pilot/follow_feed.py', 'pilot/standin.py',
+                             'pilot/test_pilot.py', 'pilot/test_interact.py', 'pilot/test_recover.py', 'pilot/test_eyes.py',
+                             'pilot/test_metrics.py',
+                             'bench/course.py', 'bench/mkcourse.py', 'bench/ghost.py', 'bench/run.py', 'bench/test_bench.py')),
     'regress': ('regress', ('regress.py', 'build_case.py', 'run_case.py', 'test_regress.py', 'test_longshot_names.py')),
     'perf': ('perf', ('hs_perf.py', 'test_hs_perf.py')),
     'nightly': ('nightly', ('hs-nightly.py', 'build.py', 'common.py', 'scenario.py', 'monitor.py',

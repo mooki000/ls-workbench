@@ -97,8 +97,11 @@ class PublicationTests(unittest.TestCase):
             with patch.dict(os.environ, {'LS_WB_SOURCE_ROOT': str(root)}):
                 pairs = publish.files()
             destinations = {str(destination) for _, destination in pairs}
-            self.assertEqual(len(pairs), 66)
+            self.assertEqual(len(pairs), 86)
             self.assertIn('harness/ls-port.py', destinations)
+            self.assertTrue({'play/pilot/pilot.py', 'play/pilot/interact.py', 'play/pilot/test_pilot.py', 'play/bench/run.py',
+                             'play/bench/test_bench.py'} <= destinations)
+            self.assertFalse({d for d in destinations if d.startswith('play/') and d.endswith(('.json', '.toml', '.txt'))})
             self.assertIn('regress/test_runtime_names.py', destinations)
             self.assertIn('nightly/test_runtime_names.py', destinations)
             self.assertIn((root / 'harness/nightly/test_compare_signature_paths.py',

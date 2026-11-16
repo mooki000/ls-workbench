@@ -37,7 +37,7 @@ the scripts were written by them under those rules, then run and checked here. T
 | `skills/ls-relay-lan` | The shared co-op relay on the LAN relay host: room limits, probes, the log, install and update | `SKILL.md` |
 | `harness/` | Run/check helpers, shared runtime-name selection and local commit porting | `hs-run.sh`, `hs_names.py`, `ls-port.py` |
 | `gates/` | Queues that let many test runs share one GPU and one CPU without hurting each other or the desktop | `hs-gpu-slot` |
-| `play/` | Step drivers that play on a running game: one for the control bridge's state samples, one for older builds with the state file; the driver is chosen explicitly | `hsap.py`, `hsap_file.py` |
+| `play/` | Step drivers that play on a running game (one for the control bridge's state samples, one for older builds with the state file; the driver is chosen explicitly), the pilot that plays a segment of goals with them (a fixed policy or a model; interactions, stuck recovery, human-like movement, eyes, metrics) and a benchmark of its arms, with their game-free tests | `README.md`, `hsap.py`, `pilot/pilot.py`, `bench/run.py` |
 | `regress/` | The regression hunt's engine and its two adapters (build a candidate, run a scenario), with their game-free tests | `regress.py` |
 | `nightly/` | Catalogue/rolling drivers, retained reports and game-free checks; each report names its actual runtime coverage | `hs-nightly.py`, `rolling.py`, `README.md` |
 | `perf/` | Optional telemetry CSV reader and game-free contract tests | `hs_perf.py` |
@@ -105,6 +105,14 @@ the driver says so in one sentence when it does not.
 Older builds with the state file (`HOS_OOT_STATE_FILE`) need `play/hsap_file.py`, the earlier driver kept as it was.
 There is no silent fallback from one to the other. `play/tapcheck.py` puts a run's samples beside its pictures;
 `play/test_hsap.py` and `play/test_hsap_file.py` test the two drivers without a game.
+
+On top of `hsap.py` sits the pilot, `play/pilot/pilot.py`: it plays one segment (goals with targets, written by you from your own
+game) by choosing, whenever the driver has no step left, among candidate steps: with a fixed policy (`rules`, no model, no
+network) or with a model that picks among them (`openai-decisions`, key and spending caps yours). It opens chests, picks up
+items, talks, goes through doors, plays the ocarina and fights, proves each only by the game's own evidence (a flag, a count, a map
+change), recovers from being stuck, moves with seeded human-like variation, and can look at the game's own picture; `play/bench/`
+plays a fixed course of short cells with each arm and tabulates cost and quality. `play/README.md` says how to run it, what it
+sends where, and what you must supply and keep private (segments, saves, routes, the world model, run output, the key).
 
 ### Finding a regression
 
