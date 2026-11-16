@@ -40,6 +40,7 @@ The file names are not in the code: they come from the game data's `SaveDirector
 | `f_830506a0` | `Save_ChooseSlot` | Chooses the slot for a save: the saves sorted by time, the first free one of **0…5** | read |
 | `f_83310630` | `SeqQueryGameDataGetManualSaveIndex` | The manual save's index: **6** places, -1 if none | read |
 | `f_832e1db0` | `SeqExecuteLoadSaveData` | Loads slot "Index" (Master Quest adds 6). No limit of 6: slot 7 opens `slot_07` | read |
+| `f_80bc72d0` | `Save_Request(?, reason, mode)` | A request to save, taken from the caller's frame: `w1` a reason number, `w2` a mode (0 for an autosave). Called at `0x80bc7764` from a function whose own return address tells the case: a map transition asks with reason 6 (from `0x80bc7710`), the arrival requests of a crossing with reason 2 (`0x80bc7864`) or 1 (`0x832a9764`). Hooked by LS #614's transition autosave switch (`hos_oot_trace_save`, which can skip those autosaves and logs them under `HOS_OOT_TRACE_SAVES`); described from that hook, the function itself not read | guess |
 
 ## Data
 
