@@ -41,6 +41,17 @@ QUIET=/tmp/longshot-quiet-window.lock       # always exclusive, taken first: eve
 MEASURING=/tmp/longshot-measuring.lock      # exclusive when any game runs; -s (shared) for a CPU-only job or an ordinary run
 ```
 
+**The side lane (the user's decision, 17 Nov 2026):** a second lane for one single-game *feature* run at a time beside the
+main lane: `setsid env --default-signal=HUP flock --verbose -w 43200 /tmp/longshot-side-lane.lock CHAIN-OR-GATE-COMMAND`
+(no quiet or measuring lock; your name in the cwd or command). A feature run shows a feature works (pictures, logs, bridge
+readings, a save round trip); it claims no frame time, stutter, VRAM or memory figure. Its game still asks the GPU gate
+(`hs-run.sh`, one slot, never `--whole` or `--exclusive`): the gate starts it beside the main lane's game only when that game
+has run a minute, the card has room, 30 GB of RAM is free and memory pressure is calm, and never beside a timing or two-game
+run. Set `RX_VK_VRAM_MB=9000` for the side game so the card is never filled. **Main lane only:** timing holds, two-game or
+co-op runs, soaks, memory or VRAM measurements (leak walks, cost arms), a run that must be alone (a switch with a recorded
+hang), and a run driven by a timed `RX_VK_MENU_SCRIPT` (a stall beside another game breaks its timing). Say "beside another
+game (side lane)" in the report; any kernel driver line in a side-lane window means the run is redone alone in the main lane.
+
 Also in use: `/tmp/hookshot-full-build.lock` (`flock` in front of `hs-build-slot`, no `-w`, for a full build) and
 `/tmp/longshot-whole-suite.lock` (the whole suite; `reports/tools/verify_heads.py`). A build on its own takes only the
 full-build lock and the build gate (`flock` on the full-build lock, then `hs-build-slot ...`: how the 1383 build ran, no
