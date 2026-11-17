@@ -595,6 +595,7 @@ protection paths and coordination locks still name objects on this PC. No live m
 ["skills/ls-hold-chain/SKILL.md", "/home/mooki/Code/hookshot-wt/reports/tools/gpu_priority.log", 1, "Existing workstation clone, worktree, harness, copy or protected player/configuration path; retained until an explicitly scoped host migration."]
 ["skills/ls-hold-chain/SKILL.md", "/tmp/hookshot-full-build.lock", 1, "Existing shared coordination lock or test-slot path; changing it would split admission from live workers."]
 ["skills/ls-hold-chain/SKILL.md", "/tmp/longshot-whole-suite.lock", 1, "Existing shared coordination lock or test-slot path; changing it would split admission from live workers."]
+["skills/ls-hold-chain/SKILL.md", "/tmp/longshot-side-lane.lock", 1, "Existing shared coordination lock or test-slot path; changing it would split admission from live workers."]
 ["skills/ls-hold-chain/SKILL.md", "MEASURING=/tmp/longshot-measuring.lock", 1, "Existing shared coordination lock or test-slot path; changing it would split admission from live workers."]
 ["skills/ls-hold-chain/SKILL.md", "QUIET=/tmp/longshot-quiet-window.lock", 1, "Existing shared coordination lock or test-slot path; changing it would split admission from live workers."]
 ["skills/ls-pr-evidence/SKILL.md", "/home/mooki/Code/hookshot-wt/reports/*.md", 1, "Existing workstation clone, worktree, harness, copy or protected player/configuration path; retained until an explicitly scoped host migration."]
