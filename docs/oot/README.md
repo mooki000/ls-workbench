@@ -24,6 +24,7 @@ f_833ec800` (or words) prints the page and the row.
 | [menus.md](menus.md) | The menu screens' focus and update, the pause menu's pages, Key Items |
 | [save-data.md](save-data.md) | The caption manager, save files and slots |
 | [game-data.md](game-data.md) | Game data (the game's flags and values by hash), the save files' format, `account.sav` |
+| [flag-names.md](flag-names.md) | How a flag's name is recovered from its hash, the families of flags and what stays unnamed, and how co-op's progress sync sorts them; the tools are in `flagdata/` |
 | [master-quest.md](master-quest.md) | The Master Quest add-on check, Master Quest mode and how its dungeons load, and its saves |
 | [maps.md](maps.md) | How a map loads: the map index (`GameBancParam`), the layouts, collision and terrain, preloading, the per-map tables |
 | [player.md](player.md) | Link's movement speed, health, movement update and the pouch (items) |

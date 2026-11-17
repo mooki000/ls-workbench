@@ -4,7 +4,7 @@ How the game keeps its flags and values ("game data"), how code reads them, and 
 looking for a way to try Master Quest (November 2026), and for the debug tools' flag reads and writes.
 
 **LS code:** `host/hos_main.c` (`oot_gamedata_bool`, `oot_gamedata_set_bool`)
-**See also:** [save-data.md](save-data.md), [master-quest.md](master-quest.md)
+**See also:** [save-data.md](save-data.md), [master-quest.md](master-quest.md), [flag-names.md](flag-names.md)
 
 ## How the game declares its values
 
@@ -42,7 +42,8 @@ dictionary in `Pack/ZsDic.pack.zs`. **tested**
   `account.sav`), plus `SaveDataSize` (703884, 44660, 42356, 320 bytes) and the files' offsets.
 - **Flag names are not in the game.** A flag is known only by the murmur3 (x86, 32-bit, seed 0) hash of its name; the hash
   function was checked against a known name, `SelectedCaptionIndex` → `0x1a49c4f6`. Hashing every identifier in the
-  executable (163,375 strings) matched neither account flag below, so the names live in data, if anywhere. **tested**
+  executable (163,375 strings) matched neither account flag below, so the names live in data, if anywhere: in the game's other files, as
+  identifiers a flow, a graph or a table spells out. How most of them are recovered, and what stays unnamed: [flag-names.md](flag-names.md). **tested**
 - **The code reads values by hash**, through the game-data manager, with the hash built in registers. Look for MOVZ/MOVK
   pairs such as `0x5097` / `0xa299` (that is, 0xa2995097). A flag can also be read as a member of a struct, by the plain
   hash of the member's name rather than the flat hash of `Struct.member`; the played flags are read both ways, so a scan

@@ -4,7 +4,8 @@ description: >
   Use before reading lifted game code and whenever a task meets an `f_<address>` function, a game structure or field
   offset, a `patch_*` hook in nx2/oot_*.py, a frame-rate site, or a game subsystem you do not know (jobs, physics,
   drawing, shaders, textures, input, audio, saves): look the address or the subject up in the function map first, weigh
-  the row by how sure it is, and hand back a row for what you worked out. Also for checking the map against the port's code.
+  the row by how sure it is, and hand back a row for what you worked out. Also for checking the map against the port's code, and
+  for a flag's hash or name in a co-op log (game data: section 6).
 ---
 
 # The function map: look it up first, add what you learn
@@ -142,6 +143,23 @@ The check looks for `f_<8 hex digits>` spellings only: a game function the port 
 call-target constant is not seen, so inventory those by exact address yourself. `--repo` names the port's clone and
 `--rev` the revision it reads (default `HEAD`): a row that documents a patch of a branch not yet on `forge/main` fails
 against `forge/main`; check against the branch that holds the patch.
+
+## 6. Game data: a flag in a co-op log, and what co-op shares
+
+The game names its flags by hash only. A co-op log line such as `applied progress <8 hex digits> = 1` says which flag by its hash; the
+page `docs/oot/flag-names.md` explains how names are recovered from the player's own files, what stays unnamed and why, and how the
+co-op layer sorts flags into categories (and which a default room shares). A tool, in `flagdata/`, runs on the player's own game:
+
+```sh
+W=$M/../../flagdata    # (M: the map's folder, section 1)
+python3 -I -B $W/flagdata.py lookup 1a2b3c4d      # one hash
+python3 -I -B $W/flagdata.py build --romfs <RomFS> --repo <LS clone> --rev <commit> --out <folder outside any repository>
+```
+
+`flagdata.py lookup` reads the private table `build` made under the user's state folder (`$XDG_STATE_HOME/ls-workbench/flagdata`); without it, it
+says how to make one. **The names are game data**: they stay in that table, in `--out` and in your report's files folder, never in a skill,
+a pull request, an issue or a comment. Say "a played event of the room's data" or give the hash, not the name; the exceptions are names LS's
+own source already quotes. A hash with no name is normal (about a quarter of the flags have none): say so, and say the family.
 
 ## When this skill let you down
 
