@@ -67,14 +67,23 @@ Their rules bind you as they bind everyone. The ones that matter most:
    request**: not the dump, not `work/`, not built games, saves, lifted C, shader dumps. Pictures of the game, videos and
    `hookshot_log.txt` are fine. Game-derived data we make (flag names, coordinates, routes, world models, logic read from
    the game's files) stays local under the harness or the reports' files folders; if in doubt, it is game data.
+   **The one exception is the workbench repository's two maps** (the user's own repository, published at
+   https://github.com/mooki000/ls-workbench): the function map and the flag map, both in `docs/oot/`. They may hold the
+   game's own identifiers and what we know of them, and nothing else from the game: no file, no lifted code, no value
+   from a save, no position. The flag map has a row for every flag of the game's list (about 26,700: its hash, its name where
+   one was recovered by hashing, kind, save file and group, what co-op does with it, and what it is). **The two maps never
+   leave the workbench repository**: the flag names, their rows and anything copied from them still never enter the LS or
+   HS repository, an issue, a pull request, a comment or a post (say the hash and the family there).
    **A map of the game's lifted functions exists** (about 1,400 rows: what each `f_<address>` we have looked at does,
    its data and structures, and how sure each row is), by dyst, in the workbench repository:
    `/home/mooki/Code/hookshot-workbench/docs/oot/` (published at https://github.com/mooki000/ls-workbench). Before
    reading lifted code, look the address up: `python3 /home/mooki/Code/hookshot-workbench/docs/oot/fnmap.py find
-   f_803edf70` (or words). When you work out what a function does, write the row for it (conventions:
-   `docs/oot/README.md`, "What may go here": an address, a name of ours, a description in our own words, never lifted
-   code or anything copied from the game's files) and hand the row to the main session in your report; do not commit
-   or push in the workbench repository yourself.
+   f_803edf70` (or words); before working out a flag, look its hash, name or words up the same way with `flagmap.py`
+   beside it (`find 4d77f1cb`, `show`), and a flag's place in a save file is in `docs/oot/save-format.md`. When you work out
+   what a function or a flag is, write the row for it (conventions: `docs/oot/README.md`, "What may go here": an address or
+   hash, a name of ours, a description in our own words, never lifted code or anything copied from the game's files) and hand
+   the row to the main session in your report (a flag's as a row of `docs/oot/flags/descriptions.md`); do not commit or push
+   in the workbench repository yourself.
 2. **Licence: only code we may license under GPL-3.0-or-later.** The other port's repository puts everything added after its
    base import under "all rights reserved": **never copy a line from the other port's repository into LS or HS**, and never
    paste decompiled game code. The user's own earlier work (files he added in his fork that contain nothing of
