@@ -260,12 +260,15 @@ def nav(area, st, gx, gz, gy, radius, plan, mem):
         except Exception as e:   # noqa: BLE001  the planner's failure must not end the run
             r = {'ok': False, 'why': f'planner error {type(e).__name__}'}
         steps = list(r.get('steps') or [])
+        ob = []
+        if OBSTACLE_HOOK is not None and not r.get('ok'):   # a jump, a ledge, an ivy, a door, a crawl hole on the way: actions.py's candidates
+            ob = mem['obstacles'] = OBSTACLE_HOOK(area, st, r, steps)
         if r.get('ok') and steps:
             return steps, f"along {len(steps)} planned waypoints ({r.get('length', 0):.0f} m)"
         if r.get('near'):
             nx, nz = r['near']
             return steps or [f'run {nx:.2f} {nz:.2f} radius 1 timeout {int(max(6, math.hypot(nx - lx, nz - lz) / 3 + 5))}'], \
-                f"to the reachable point nearest it (planner: {r.get('why')})"
+                f"to the reachable point nearest it (planner: {r.get('why')}" + (f"; the way ends at an obstacle that only the step {ob[0].label} crosses: walking at it again just ends stuck)" if ob else ')')
     return [f'run {gx:.2f} {gz:.2f} radius {radius:g} timeout {t}'], f'straight ({d:.1f} m)'
 
 
@@ -345,7 +348,11 @@ def candidates(area, goal, target, st, mem, plan=None):
         else:
             out.append(Candidate('wait', ['wait 3'], 'a scene plays or the game loads: wait 3 s without input'))
         return out
+    mem.pop('obstacles', None)
     out = BUILDERS[goal.kind](area, goal, target, f, mem, plan)
+    extra = [c for c in (mem.pop('obstacles', None) or []) if c.label not in {o.label for o in out}]
+    if extra:   # the plan ends at a jump, a ledge, an ivy, a door, a crawl hole: its candidate comes right after the first (the walk there)
+        out = out[:1] + extra[:1] + out[1:]
     return out[:12]
 
 
@@ -578,6 +585,9 @@ def pick(ctx):
         return 'advance-text'
     if have <= {'wait', 'next-target'}:
         return 'wait' if 'wait' in have else 'next-target'
+    for label in OBSTACLE_LABELS:   # the plan ends at a gap, a ledge, an ivy, a door, a crawl hole and has a candidate for it: a few tries of that before walking at it again
+        if label in have and count_label(mem, label) < 3 and goal.kind != 'cross':
+            return label
     return PICKERS[goal.kind](ctx, have, mem)
 
 
@@ -701,6 +711,26 @@ def pick_explore(ctx, have, mem):
     return 'next-target'
 
 
+OBSTACLE_LABELS = ('open-door-on-way', 'jump-on-way', 'ledge-on-way', 'climb-on-way', 'climb-down-on-way', 'drop-on-way', 'crawl-on-way')   # (cross has its own picker)
+OBSTACLE_HOOK = None   # actions.py sets it: (area, state, planner result, steps to `near`) -> [Candidate] for the obstacle the plan ends at
+COND_CLASSES = {}      # goal kind -> condition class (default InteractCond): the kinds actions.py registers
+STEP_SECONDS_HOOKS = []   # functions line -> seconds | None, asked after the steps of this module
+
+
+def register_kind(kind, builder, picker, notes, cond_class=None, labels=None, success=(), deciding=()):
+    """Add a goal kind (actions.py): candidate builder, rules picker, the model's paragraph, its condition class, the labels its
+    candidates stand for ({label: interaction kind}), the result words that count as success and the steps whose result decides."""
+    global GOAL_KINDS, SUCCESS, DECIDING
+    if kind not in GOAL_KINDS:
+        GOAL_KINDS = GOAL_KINDS + (kind,)
+    BUILDERS[kind], PICKERS[kind], KIND_NOTES[kind] = builder, picker, notes
+    if cond_class is not None:
+        COND_CLASSES[kind] = cond_class
+    INTERACT_LABELS.update(labels or {})
+    SUCCESS = SUCCESS + tuple(w for w in success if w not in SUCCESS)
+    DECIDING = DECIDING + tuple(w for w in deciding if w not in DECIDING)
+
+
 PICKERS = {'open_chest': pick_chest, 'both_open_same_chest': pick_chest, 'collect': pick_collect, 'talk_to': pick_talk,
            'enter': pick_enter, 'play_song': pick_song, 'fight': pick_fight, 'explore_interact': pick_explore}
 
@@ -764,6 +794,10 @@ def step_seconds(line):
         return 14.0
     if k == 'rendezvous':
         return (t or 120.0) + 4
+    for hook in STEP_SECONDS_HOOKS:
+        s = hook(line)
+        if s is not None:
+            return s
     return None
 
 
@@ -908,7 +942,7 @@ def make_cond(g, targets, flag_cond_class=None):
     if kind not in GOAL_KINDS:
         raise ValueError(f'goal {g.get("name")}: kind {kind!r} is no interaction goal')
     flag = flag_cond_class(g['flag']) if g.get('flag') and flag_cond_class is not None else None
-    return InteractCond(kind, g, targets, flag)
+    return COND_CLASSES.get(kind, InteractCond)(kind, g, targets, flag)
 
 
 KIND_NOTES = {   # one paragraph per goal kind in the model's request: the way through, in the candidates' own words
@@ -950,7 +984,9 @@ INTERACT_DEVELOPER = (
     'to another side of it and face it; a person talks only when the Talk prompt is up; a text box must be advanced to its end '
     'before anything else; a rupee is taken by walking onto it; a door opens at the Open prompt, then walk through; walking '
     'into a load zone or through a door changes the map; with an enemy near, lock on (ZL) and slash (Y), and step back when '
-    'life is low; do not repeat an interaction that already ended done on the same thing. "recent" lists the last steps with '
+    'life is low; do not repeat an interaction that already ended done on the same thing. When the way to a place ends at an obstacle (a gap, a ledge, an ivy, a drop, a door, '
+    'a crawl hole) the candidate named like jump-on-way, ledge-on-way, climb-on-way, drop-on-way, open-door-on-way or crawl-on-way is the step that crosses it (it walks to the '
+    'edge itself): choose it rather than go-near again, which only ends stuck at the obstacle; after a jump that fell short try again with a run-up. "recent" lists the last steps with '
     'their result words and changes; "tried" counts what was tried on which object. Commit to the goal: choose the step that '
     'moves it forward, advance text first, and choose next-target only when the target is done or has failed several times.')
 
@@ -965,7 +1001,8 @@ def model_data(ctx):
     link = st.get('pos')
     cond = goal.cond
     params = {k: v for k, v in getattr(cond, 'g', {}).items() if k in ('count', 'to', 'notes', 'song', 'min_kinds', 'quiet_s', 'sides',
-                                                                         'rounds', 'rendezvous', 'radius')}
+                                                                         'rounds', 'rendezvous', 'radius', 'how', 'price', 'count_flag', 'direction', 'meters',
+                                                                         'button', 'hold', 'fast', 'drop', 'rupees', 'dy')}
     return {
         'state': st,
         'goal': {'name': goal.name, 'what': goal.what, 'kind': goal.kind, 'how': KIND_NOTES.get(goal.kind), 'met_when': cond.text, 'parameters': params,
@@ -979,3 +1016,6 @@ def model_data(ctx):
         'tried': mem.get('tried') or {},
         'recent_steps': ctx.tried[-8:],
     }
+
+
+import actions  # noqa: E402,F401  (registers the movement, shop, item, song and time goal kinds: actions.py)

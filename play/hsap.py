@@ -59,6 +59,32 @@ Steps (one a line; # starts a note):
   item [button] [ms]          press the item button (default ZR, 150 ms) and report what changed: used / none
   rendezvous <name> [timeout <s>]   two players meet: each writes $HSAP_RENDEZVOUS/<name>.$HSAP_SIDE, waits for another file,
                               and both go 1.5 s after the later one's time (one wall clock): met / timeout / alone (no folder)
+Movement, combat and shop steps (hsap_actions.py; each one's result is proven by the state and its measurement is in `changes`; held while
+an event or a load holds Link, cut if the game ends):
+  jump <x> <z> [radius <r>] [y <y>] [lead <m>] [hold <ms>] [timeout <s>]   face the point (15 degrees), `lead` m straight back and
+                              run up, then one raw sequence: the stick toward the point `hold` ms (default 800, 400..3000) with X
+                              150 ms in; wait for y to settle: landed (within radius 1.2 m or past the point along the line from the
+                              start, under max(radius, 2) m off it, `passed` in the detail; and y within 1.2 m of `y`, else not over
+                              1.5 m down) / short (closer, not within) / fell (over 2.5 m down) / none; changes pos, dy, moved
+  climb up|down [timeout <s>] up: the old climb (done / stuck / timeout); down: the stick down, done once over 1 m was dropped; dy
+  swim <x> <z> [radius <r>] [timeout <s>]   a walk in water: swam (y at start and end in the detail) / stuck / timeout / held / cut
+  dive [ms] [timeout <s>]     hold A (default 1500, 200..8000) with the stick still: dived (y fell 0.4 m below its start) / none;
+                              changes dy, min_y (the game's own depth flag is a constant: no proof)
+  block push|pull [m] [timeout <s>]   hold A while the stick pushes along (pull: against) his facing until m metres (default 2,
+                              0.3..10) or the timeout (10 s): pushed / pulled (0.5 m along the line, facing within 25 degrees) /
+                              none; changes along, facing [before, after], facing_drift
+  strafe left|right [ms]      hold ZL (default 1200, 300..5000) with the stick sideways: strafed (0.5 m sideways, facing within 25
+                              degrees) / circled (facing turned 25 degrees toward the centre) / none; changes perp_m, facing_change
+  guard [ms]                  hold ZL (default 700, 50..5000): guarded (life did not drop to 0.6 s after) / hurt; changes life
+  roll to <x> <z>             the stick toward the point, A 50 ms later: rolled (1 m in 0.8 s toward it) / none
+  use [button] [at <x> <z>] [lock] [hold <ms>]   the item button (default ZR; hold 150 ms, 50..3000): `at` faces the point first,
+                              `lock` holds ZL from 0.4 s before to 0.6 s after: used (a watched flag, rupees, life, prompt or a
+                              change-scan hash changed, or camera/facing turned 4 degrees: changes aimed) / none
+  buy [timeout <s>]           A at the prompt, the text advanced (a question left open 3 s is answered with A): bought (rupees fell,
+                              changes rupees) / none / no-prompt / timeout (default 45 s)
+  choose up|down [n]          the stick up or down n times (1..6, 120 ms, 0.3 s apart) then A: done
+  ride <x> <z> [radius <r>] [fast <mps>] [timeout <s>]   a walk on horseback: ridden (reached, ground speed over some 1 s window at
+                              least fast, default 6.5) / walked / the walk's words; changes speed_max, speed_mean
 walk and run also take `mag <0..1>` (a cap on the stick's push), `noise <degrees>` and `seed <n>` (a hand on the stick: the angle
 wanders by that many degrees, the push by 5 percent; the same seed the same hand; none: as before).
   end                         stop the game (an external game is left alone: only hsap ends), write done
@@ -97,7 +123,10 @@ from pathlib import Path
 
 _root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_root if (_root / 'hs_names.py').is_file() else _root / 'harness'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # (python3 -I implies -P: the script's own folder is not on the path, and hsap_actions lives beside it)
 from hs_names import GAME_EXECUTABLES, log_path
+import hsap_actions
+from hsap_actions import ACTION_VERBS, ActionSteps, plays
 
 HS_RUN = '/home/mooki/Games/.hookshot-harness/hs-run.sh'
 SLOT_VARS = ('HSGATE_SLOT_DIR', 'HSGATE_INTEL_SLOT_DIR', 'HSGATE_SLOT_TEST', 'HSGATE_SLOT_NODESKTOP', 'HSGATE_IN_GATE')
@@ -112,7 +141,7 @@ EMPTY_PROMPTS = (None, '', 'Empty')   # what the sample's `prompt` says when the
 BUTTON_NAMES = ('A', 'B', 'X', 'Y', 'L', 'R', 'ZL', 'ZR', 'PLUS', 'MINUS', 'LS', 'RS', 'LEFT', 'UP', 'RIGHT', 'DOWN')
 NOTE_BUTTONS = ('L', 'R', 'A', 'Y', 'X')   # the ocarina's five note buttons (while it waits for a note); D-pad Left takes it out
 INTERACT_VERBS = ('interact', 'chest', 'talk', 'advance', 'pickup', 'enter', 'ztarget', 'camera', 'faceat', 'ocarina', 'item',
-                  'rendezvous')
+                  'rendezvous') + ACTION_VERBS   # (`climb` and `roll`: only the forms plays() names; the old forms are handled before)
 CAMERA_KEYS = {'left': 'RLEFT', 'right': 'RRIGHT', 'up': 'RUP', 'down': 'RDOWN'}
 
 
@@ -751,7 +780,10 @@ class Game:
         return out
 
 
-class Executor:
+hsap_actions.bind(globals())   # (the helpers above: the steps of ActionSteps share them; hsap_actions cannot import this module back)
+
+
+class Executor(ActionSteps):
     def __init__(self, game, live_dir, boot, opponent_path=None):
         self.g, self.live = game, Path(live_dir)
         self.steps_tail = Tail(self.live / 'steps.txt')
@@ -962,7 +994,7 @@ class Executor:
         if k == 'wait':
             self.wait(float(w[1]) if len(w) > 1 else 1.0)
             return 'done', ''
-        if k == 'climb':
+        if k == 'climb' and not plays(w):
             return self.climb(float(w[w.index('timeout') + 1]) if 'timeout' in w else 12.0)
         if k == 'save':
             return self.save(float(w[2]) if len(w) > 2 and w[1] == 'timeout' else 60.0)
@@ -977,7 +1009,7 @@ class Executor:
         if k == 'end':
             self.ended = True
             return 'done', ''
-        if k in ('duel', 'swing', 'shield', 'roll', 'sidestep', 'face', 'approach'):
+        if k in ('duel', 'swing', 'shield', 'roll', 'sidestep', 'face', 'approach') and not plays(w):
             try:
                 return self.duel_steps(k, w)
             except ValueError as e:
@@ -1209,6 +1241,8 @@ class Executor:
         closed once Link has been free for 0.6 s, False at the deadline."""
         presses, calm, next_press, scene_since = 0, None, time.time() + 0.8, None
         while self.g.alive():
+            if self.g.oc == 'on':   # a note wait is no text: A there is a note
+                return False, presses
             st, now = self.g.st or {}, time.time()
             if now >= deadline:
                 return False, presses
@@ -1292,6 +1326,8 @@ class Executor:
         if pos:
             raise ValueError('advance [timeout <s>]')
         st = self.fresh()
+        if self.g.oc == 'on':   # the note wait holds Link like a text box, but A is a note there: nothing is sent (`ocarina away` puts it back)
+            return 'none', 'the ocarina waits for a note: A would play one, nothing was sent (ocarina away puts it back)'
         before, mark = self.snap(), self.g.n_states
         opened = text_open(st) or st.get('event') == 1
         closed, presses = self.advance_text(time.time() + seconds_of(kv, 20.0))

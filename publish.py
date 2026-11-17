@@ -44,6 +44,8 @@ HARNESS_MAP = {name: Path(name).name for name in (
 HARNESS_MAP.update({'longshot-port.py': 'ls-port.py', 'test_longshot_port.py': 'test_ls_port.py'})
 GROUPS = {
     'playthrough': ('play', ('hsap.py', 'hsap_file.py', 'tapcheck.py', 'test_hsap.py', 'test_hsap_file.py',
+                             'hsap_actions.py', 'test_hsap_actions.py', 'test_entry.py',
+                             'pilot/actions.py', 'pilot/sections.py', 'pilot/test_actions.py', 'pilot/test_sections.py',
                              'pilot/pilot.py', 'pilot/deciders.py', 'pilot/interact.py', 'pilot/recover.py', 'pilot/humanize.py',
                              'pilot/vision.py', 'pilot/metrics.py', 'pilot/openai_api.py', 'pilot/follow_feed.py', 'pilot/standin.py',
                              'pilot/test_pilot.py', 'pilot/test_interact.py', 'pilot/test_recover.py', 'pilot/test_eyes.py',

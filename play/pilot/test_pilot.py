@@ -25,9 +25,11 @@ import follow_feed  # noqa: E402
 import openai_api  # noqa: E402
 import pilot  # noqa: E402
 import standin  # noqa: E402
+import test_actions  # noqa: E402
 import test_eyes  # noqa: E402
 import test_interact  # noqa: E402
 import test_recover  # noqa: E402
+import test_sections  # noqa: E402
 
 hsap = pilot.hsap   # the game side's parser and geometry, as the pilot uses them
 
@@ -1584,6 +1586,52 @@ def main():
             check(False, 'the run cap stops a request')
         except openai_api.CapReached as e:
             check('run cap' in str(e), f'the run cap stops a request ({e})')
+        # the shipped limits (the user's decision of 2026-11-16: 3 USD a run, 50 USD a night, 4,000 USD in all): a run stops at its cap, a night at its own
+        real = HERE / 'caps.json'
+        if real.is_file():   # (the caps file is private: a published tree has none and its model deciders play on the rules)
+            shipped = json.loads(real.read_text())
+            check((shipped['per_run_usd'], shipped['per_night_usd'], shipped['total_usd']) == (3.0, 50.0, 4000.0),
+                  f'pilot/caps.json holds 3 USD a run, 50 a night, 4000 in all ({shipped})')
+        keep_ledger = openai_api.LEDGER
+        openai_api.LEDGER = tmp / 'cap-ledger.jsonl'   # (its own ledger: the checks after this block count their own rows)
+        openai_api.CAPS.write_text(json.dumps({'per_run_usd': 3.0, 'per_night_usd': 50.0, 'total_usd': 4000.0,
+                                               'planner_share_of_night': 0.4, 'model': None}))
+
+        def spend(run, usd):
+            openai_api._append({'ts': time.time(), 'run': run, 'kind': 'decision', 'cost_usd': usd, 'status': 200,
+                                'latency_ms': 200, 'usage': {'input_tokens': 9000}}, openai_api.LEDGER)
+
+        spend('cap-run', 2.99)
+        try:
+            openai_api.Client('cap-run', 's').check_caps('decision', 0.005)
+            check(True, '2.995 USD of 3.00 in a run still passes')
+        except openai_api.CapReached as e:
+            check(False, f'2.995 USD of 3.00 in a run still passes ({e})')
+        try:
+            openai_api.Client('cap-run', 's').check_caps('decision', 0.02)
+            check(False, 'a run stops at 3.00 USD')
+        except openai_api.CapReached as e:
+            check('run cap 3.00' in str(e), f'a run stops at its 3.00 USD cap ({e})')
+        for i in range(17):   # (other runs, each under its own cap, fill the night to 49.99 USD)
+            spend(f'cap-night-{i}', 2.9)
+        spend('cap-night-last', 0.69)
+        night = openai_api.spent('cap-night-new')['night']
+        check(abs(night - 49.99 - 2.99) < 1e-6, f'the night holds 52.98 USD with the first run ({night:.3f})')
+        try:
+            openai_api.Client('cap-night-new', 's').check_caps('decision', 0.02)
+            check(False, 'a night stops at 50 USD')
+        except openai_api.CapReached as e:
+            check('night cap 50.00' in str(e), f'a new run (0 USD of its own 3.00) stops at the night\'s 50.00 USD cap ({e})')
+        openai_api.LEDGER = tmp / 'cap-ledger-2.jsonl'
+        for i in range(17):
+            spend(f'cap-night-{i}', 2.9)
+        spend('cap-night-last', 0.69)
+        try:
+            openai_api.Client('cap-night-new', 's').check_caps('decision', 0.005)
+            check(True, '49.995 USD of 50.00 in a night still passes')
+        except openai_api.CapReached as e:
+            check(False, f'49.995 USD of 50.00 in a night still passes ({e})')
+        openai_api.LEDGER = keep_ledger
         openai_api.CAPS.write_text(json.dumps({'per_run_usd': 2, 'per_night_usd': 50, 'total_usd': 400,
                                                'planner_share_of_night': 0.00001, 'model': None}))
         try:
@@ -1628,6 +1676,10 @@ def main():
     if test_interact.FAILS:
         raise SystemExit(f'FAILED: test_interact: {len(test_interact.FAILS)} checks failed')
     test_eyes.run()
+    if not test_actions.run():
+        raise SystemExit('FAILED: test_actions')
+    if not test_sections.run():
+        raise SystemExit('FAILED: test_sections')
     print('test_pilot: all passed')
 
 

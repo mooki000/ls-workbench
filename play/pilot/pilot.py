@@ -26,7 +26,9 @@ transcripts and routes stay in this folder. A fight target (PlayExplore17) holds
 swing-x3, guard, wait-a-moment, go-near, back-off, side-left/right, next-target); the goal needs some flag the segment can
 name, since none tells that a fight is won; its `rules` policy goes to the place and strikes and waits for eight rounds.
 The interaction goal kinds (interact.py: open_chest, collect, talk_to, enter, play_song, fight without a flag, ...) have
-their own conditions and candidates.
+their own conditions and candidates; actions.py adds cross (a gap, a ledge, an ivy), dive, push_block, buy, use_item, strafe, warp_song, ride, read_sign.
+A chapter (sections.py: a TOML file with an `aim`, progress markers and budgets instead of goals) is played with the same command:
+`pilot.py run chapters/x.toml`: a planner model makes objectives from the aim, the world model and the pictures, each objective is a segment goal.
 
 Never stuck, never a wasted question (recover.py): after every move the pilot watches the position and the distance to the
 target. A move that ended stuck is a block; so are a few moves in a row that gain no ground. A block is answered without a
@@ -104,7 +106,8 @@ FRAGMENTS = HERE / 'fragments.jsonl'
 PLANNER_LOG = HERE / 'planner.jsonl'
 SLOT_VARS = ('HSGATE_SLOT_DIR', 'HSGATE_INTEL_SLOT_DIR', 'HSGATE_SLOT_TEST', 'HSGATE_SLOT_NODESKTOP', 'HSGATE_IN_GATE')
 MOVES = ('walk', 'run')
-REACHED = ('reached', 'done', 'met', 'opened', 'talked', 'picked', 'entered', 'closed', 'played', 'used', 'turned', 'targeted')   # a result that is an arrival or an act done
+REACHED = ('reached', 'done', 'met', 'opened', 'talked', 'picked', 'entered', 'closed', 'played', 'used', 'turned', 'targeted',
+           'landed', 'climbed', 'swam', 'dived', 'pushed', 'pulled', 'strafed', 'circled', 'guarded', 'rolled', 'bought', 'ridden')   # a result that is an arrival or an act done
 
 
 def murmur(s):
@@ -222,8 +225,8 @@ def actors(area):
 
 
 class Segment:
-    def __init__(self, path):
-        d = tomllib.loads(Path(path).read_text())
+    def __init__(self, path, spec=None):
+        d = spec if spec is not None else tomllib.loads(Path(path).read_text())   # (spec: the same tables as a dict: sections.py's objectives)
         self.path = Path(path)
         self.name, self.what, self.area = d['name'], d.get('what', ''), d['area']
         self.save, self.prefix = d.get('save'), d.get('prefix')
@@ -621,6 +624,9 @@ def make_candidates(area, goal, target, st, mem, plan=None, bad=None):
             elif r.get('why') == 'needs-climb' and edge_kind(r) == 'climb-up':
                 special = Candidate('climb-on-way', to_near + ['climb up timeout 12'],
                                     f'go to the foot of the ladder on the way to {target.name} and climb')
+            elif r.get('why') in ('needs-jump', 'needs-drop') or (r.get('why') == 'needs-climb' and edge_kind(r) in ('ledge-up', 'climb-down')):
+                found = interact.OBSTACLE_HOOK(area, st, r, to_near) if interact.OBSTACLE_HOOK else []   # actions.py: a jump, a ledge, a climb down, a drop
+                special = Candidate(found[0].label, found[0].lines, found[0].text) if found else None
             elif r.get('why') == 'needs-crawl' and r.get('after'):
                 ax, az = r['after']
                 nx, nz = r['near']
@@ -1458,7 +1464,12 @@ def humanize_level(args, seg):
 
 
 def cmd_run(args):
-    seg = Segment(args.segment)
+    chapter = None   # a TOML file with an `aim` is a chapter (sections.py): the pilot plays objectives a planner model makes from it
+    if str(args.segment).endswith('.toml'):
+        sys.modules.setdefault('pilot', sys.modules[__name__])
+        import sections
+        chapter = sections.load_if_chapter(args.segment)
+    seg = sections.segment_for(chapter) if chapter else Segment(args.segment)
     if getattr(args, 'matches', None):
         seg.set_matches(args.matches)   # (a duel series: every duel goal asks for that many matches; budgets scale with it)
     copy = Path(args.copy or COPY)
@@ -1521,8 +1532,9 @@ def cmd_run(args):
             pilot = None
         else:
             print(f'  gameplay after {summary["gameplay_after_s"]} s of wall time', flush=True)
-            pilot = Pilot(seg, decider, ch, run_dir, run_id, alive, planner, args.max_decisions, follows=follows,
-                          recovery=True if recovery else None, human=human, bad=bad, eyes=eyes)
+            kw = dict(follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes)
+            pilot = sections.make_pilot(seg, decider, ch, run_dir, run_id, alive, None, args.max_decisions, copy=copy, client=client, args=args, **kw) \
+                if chapter else Pilot(seg, decider, ch, run_dir, run_id, alive, planner, args.max_decisions, **kw)
             t1 = time.time()
             outcome = pilot.run(st)
             summary['play_wall_s'] = round(time.time() - t1, 1)
@@ -1571,6 +1583,9 @@ def cmd_run(args):
         if summary['play_wall_s'] and pilot.decisions:
             summary['decisions_per_minute'] = round(len(pilot.decisions) / summary['play_wall_s'] * 60, 2)
         summary['recover'] = pilot.recover_summary()
+        if chapter:
+            summary['chapter'] = {k: v for k, v in pilot.write().items() if k in ('chapter', 'outcome', 'markers', 'coverage', 'objectives', 'objectives_met',
+                                                                                  'plan_cost_usd', 'cost_usd')}
         rates = {}
         if summary.get('play_wall_s'):   # what the questions and the money come to per minute of play
             minutes = summary['play_wall_s'] / 60
@@ -1707,6 +1722,8 @@ def main():
     r.add_argument('--vision-model', default=None)
     r.add_argument('--vision-backend', choices=('decisions', 'responses'), default=None)
     r.add_argument('--vision-sock', default=None, metavar='PATH', help='the control socket to take pictures from (with --attach)')
+    r.add_argument('--chapter-model', default=None, help='a chapter (sections.py): the model that plans its objectives (default: the chapter\'s planner_model, else the planner model)')
+    r.add_argument('--no-chapter-planner', action='store_true', help='a chapter: no planner model, the chapter\'s own [[objective]] outline is played')
     r.add_argument('--api-base', help='a stand-in server (standin.py); the real key is never sent there')
     r.add_argument('--allowance-usd', type=float, help="a limit below the caps for this lane's runs since --allowance-since")
     r.add_argument('--allowance-since', default=datetime.date.today().isoformat())

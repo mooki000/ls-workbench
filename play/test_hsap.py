@@ -1474,7 +1474,8 @@ class WorldBridge(DuelBridge):
     `scene` frames of a cutscene (event 1, a Dm_ music), rupees, a flag (a hash text, reported by the change scan), a map
     change. The D-pad's Left takes the ocarina out (the log says the note wait is on; B puts it away), the note buttons
     are kept in `notes`; the right stick turns the camera 2 degrees a frame; ZL turns Link `lock_turn` degrees; ZR counts."""
-    def __init__(self, *args, things=(), ocarina=True, lock_turn=0.0, zr_effect=True, **kwargs):
+    def __init__(self, *args, things=(), ocarina=True, lock_turn=0.0, zr_effect=True, oc_event=False, **kwargs):
+        self.oc_event = oc_event   # the real game holds Link (event 1) while the ocarina waits for a note
         self.things = [dict(t) for t in things]
         self.map_name, self.rupees, self.life, self.music = 'Test_Map', 0, 12, 'BGM_Test'
         self.text_left, self.scene_left, self.set_flags = 0, 0, {}
@@ -1492,7 +1493,7 @@ class WorldBridge(DuelBridge):
     def game_state(self, frame=None):
         s = super().game_state(frame)
         thing = self.near_thing()
-        busy = self.text_left > 0 or self.scene_left > 0
+        busy = self.text_left > 0 or self.scene_left > 0 or (self.oc_event and self.oc_on)
         s.update(map=self.map_name, rupees=self.rupees, life=self.life,
                  prompt=thing['prompt'] if thing and not busy else 'Empty',
                  music='Dm_Test_Scene' if self.scene_left > 0 else self.music)
@@ -1789,6 +1790,15 @@ def interact_gear_checks():
         seen = [e.get('ocarina') for e in states if e['why'] == 'report']
         check('ocarina' not in states[0] and seen[0] == 'on' and seen[-1] == 'off' and states[-1].get('ocarina') == 'off',
               'the state line shows the ocarina once the game has said anything about it')
+
+    # while the ocarina waits for a note the game holds Link (event 1) like a text box would: A there is a note, not a way out. advance must send nothing
+    # (first real warp run: 36 A presses in 50 s, two timeouts, a whole objective)
+    with WorldSimulation(boot_events=0, follow=False, oc_event=True) as sim:
+        sim.executor(['ocarina out', 'wait 0.5', 'advance timeout 4', 'ocarina away', 'wait 0.6', 'end']).run()
+        out, adv, away = [s for s in sim.steps() if s['src'].split()[0] in ('ocarina', 'advance')]
+        check(out['result'] == 'out' and adv['result'] == 'none' and adv['secs'] < 2.0 and 'ocarina' in adv['detail'] and sim.bridge.notes == [],
+              f"advance while the ocarina waits for a note sends nothing and says so ({adv['result']}: {adv['detail']}, {adv['secs']} s, notes {sim.bridge.notes})")
+        check(away['result'] == 'away' and not sim.bridge.oc_on, 'and ocarina away still puts it back')
 
     watch = ['Item.Count']
     with WorldSimulation(boot_events=0, follow=False, flags={'Item.Count': 10}, watch=watch) as sim:
