@@ -38,7 +38,7 @@ the scripts were written by them under those rules, then run and checked here. T
 | `skills/ls-nat-lab` | Two games or the game-free player behind simulated NATs on this PC with no sudo: the lab's levels, the case table, counters, the before/after of a path-layer change | `SKILL.md`, `references/evidence.md` |
 | `harness/` | Run/check helpers, shared runtime-name selection and local commit porting | `hs-run.sh`, `hs_names.py`, `ls-port.py` |
 | `gates/` | Queues that let many test runs share one GPU and one CPU without hurting each other or the desktop | `hs-gpu-slot` |
-| `play/` | Step drivers that play on a running game (one for the control bridge's state samples, one for older builds with the state file; the driver is chosen explicitly), the pilot that plays a segment of goals with them (a fixed policy or a model; interactions, stuck recovery, human-like movement, eyes, metrics) a benchmark of its arms, a route library and a tactics library the pilot learns from, the nightly self-play and a capability scoreboard (`playbench/`), with their game-free tests | `README.md`, `hsap.py`, `pilot/pilot.py`, `bench/run.py`, `playbench/README.md` |
+| `play/` | Step drivers that play on a running game (one for the control bridge's state samples, one for older builds with the state file; the driver is chosen explicitly), the pilot that plays a segment of goals with them (a fixed policy or a model; interactions, stuck recovery, human-like movement, eyes, metrics) a benchmark of its arms, a route library and a tactics library the pilot learns from, the nightly self-play and a capability scoreboard (`playbench/`), the game's debug tools from a command line (`hsdebug.py`), a panel and a video of what the pilot decides, interchangeable decision makers (a model, an outside agent over MCP, a recorded replay), bug hunting (scenarios, detectors, repro packets, the hunt), the builders of the offline world model from your own game files (`worldmodel/`) and start points for a test (`bosspoints/`), with their game-free tests | `README.md`, `hsap.py`, `pilot/pilot.py`, `bench/run.py`, `playbench/README.md`, `worldmodel/build.py`, `bosspoints/bosspoints_table.py` |
 | `regress/` | The regression hunt's engine and its two adapters (build a candidate, run a scenario), with their game-free tests | `regress.py` |
 | `nightly/` | Catalogue/rolling drivers, retained reports and game-free checks; each report names its actual runtime coverage | `hs-nightly.py`, `rolling.py`, `README.md` |
 | `perf/` | Optional telemetry CSV reader and game-free contract tests | `hs_perf.py` |
@@ -112,7 +112,9 @@ plays a fixed course of short cells with each arm and tabulates cost and quality
 him out of a stuck place) is kept in private libraries (`routelib.py`, `tactics.py`) and reaches the next run as a better route, a better order of
 the ladder and a few lessons in a planner's request; `selfplay.py` and the scoreboard in `play/playbench/` run that against a fixed set of cells.
 `play/README.md` says how to run it, what it
-sends where, and what you must supply and keep private (segments, saves, routes, the world model, run output, the key).
+sends where, and what you must supply and keep private (segments, saves, routes, the tables the world-model builders read, the world model they make, run output, the key).
+The offline world model is built from your own game files by `play/worldmodel/` (code only: the names it needs come from a tables file you write); build it first, then the pilot
+plans with it.
 
 ### Finding a regression
 
@@ -146,8 +148,10 @@ the whole cycle. Read the retained cycle report for what actually ran; offline c
 ## What is not here, and why
 
 - **Anything made from the game**: saves, the world model my planner builds from my own dump (areas, links, event
-  flows), and scripts that carry lists read out of the game's files. The planner, the pilot and the save maker follow
-  once I have separated their code from that data.
+  flows), the tables of the game's names and coordinates that the builders and the start-point tools read, and scripts that carry
+  lists read out of the game's files. The builders, the planner and the pilot are here as code (`play/worldmodel/`, `play/pilot/`);
+  what they make, and the tables that tell them what the game calls things, are yours to make from your own copy. The save maker
+  follows once I have separated its code from the item and story lists it carries.
 - **My working notes**: the reports, drafts and logs the skills mention under `reports/`. The skills name those paths
   because that is where an agent on my machine writes; you would use your own.
 

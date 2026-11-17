@@ -20,3 +20,5 @@ play/pilot/prompts.json
 play/pilot/songs.json
 play/bench/segments/
 play/bench/course-local.json
+# local tables the test player's tools read (game names and coordinates: you write them for your own game, never commit them)
+*.local.json

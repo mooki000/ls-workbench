@@ -97,7 +97,7 @@ class PublicationTests(unittest.TestCase):
             with patch.dict(os.environ, {'LS_WB_SOURCE_ROOT': str(root)}):
                 pairs = publish.files()
             destinations = {str(destination) for _, destination in pairs}
-            self.assertEqual(len(pairs), 129)
+            self.assertEqual(len(pairs), 195)
             self.assertIn('harness/ls-port.py', destinations)
             self.assertTrue({'play/pilot/pilot.py', 'play/pilot/interact.py', 'play/pilot/test_pilot.py', 'play/bench/run.py',
                              'play/bench/test_bench.py'} <= destinations)
@@ -107,6 +107,14 @@ class PublicationTests(unittest.TestCase):
                              'play/playbench/playbench.py', 'play/playbench/arms.py', 'play/playbench/test_playbench.py',
                              'play/playbench/rehearsal/rehearse.py'} <= destinations)
             self.assertFalse({d for d in destinations if d.startswith('play/') and d.endswith(('.json', '.toml', '.txt'))})
+            self.assertTrue({'play/hsap_items.py', 'play/hsdebug.py', 'play/pilot/hunt.py', 'play/pilot/bughunt.py', 'play/pilot/scenario.py',
+                             'play/pilot/placement.py', 'play/pilot/hud_text.py', 'play/pilot/live_panel.py', 'play/pilot/overlay.py',
+                             'play/pilot/drivers/__init__.py', 'play/pilot/drivers/chat.py', 'play/pilot/mcp_server.py',
+                             'play/worldmodel/build.py', 'play/worldmodel/tables.py', 'play/worldmodel/formats.py', 'play/worldmodel/plan.py',
+                             'play/worldmodel/rebuild.sh', 'play/worldmodel/test_worldmodel.py',
+                             'play/bosspoints/bosspoints_table.py', 'play/bosspoints/make_saves.py', 'play/bosspoints/test_bosspoints.py'} <= destinations)
+            # the data of the world model is a folder named world/ (private, ignored): the code is worldmodel/, and no local table is ever published
+            self.assertFalse({d for d in destinations if d.startswith('play/world/') or '.local.' in d or d == 'play/pilot/story.py'})   # (pilot/story.py names the game's quest flags)
             self.assertIn('regress/test_runtime_names.py', destinations)
             self.assertIn('nightly/test_runtime_names.py', destinations)
             self.assertIn((root / 'harness/nightly/test_compare_signature_paths.py',
