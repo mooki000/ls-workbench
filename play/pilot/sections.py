@@ -20,7 +20,8 @@ state line; the chapter ends when every required marker is met, or a budget runs
 What a run leaves in its run folder: transcript.jsonl (the decisions of every objective, as for a segment), chapter.json (the aim, markers and when each
 was met, the timeline of objectives, every plan with its cost, costs by kind, anomalies), timeline.md (the same for a person), plans.jsonl (each planner
 request's data and answer, no key), looks/ (the pictures the planner was shown), anomalies.jsonl.
-What leaves the machine, with a key: the planner's request (aim, markers, state, digest, step results, one picture); the step decider's requests as for any run.
+What leaves the machine, with a key: the planner's request (aim, markers, state, digest, step results, one picture, and with lessons on (lessons.py) a few short sentences
+about places where the pilot was stopped before); the step decider's requests as for any run.
 Everything of the game (the chapter files, the digest, the pictures, the plans) is private; nothing of it is in this module.
 """
 import base64
@@ -39,6 +40,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 import interact  # noqa: E402
+import lessons as lessons_lib  # noqa: E402
 import openai_api  # noqa: E402
 import pilot as P  # noqa: E402  (pilot.py puts itself in sys.modules as `pilot` before it imports this module)
 import recover  # noqa: E402
@@ -559,8 +561,9 @@ class ChapterPlanner:
         content = [{'type': 'input_text', 'text': json.dumps(data, separators=(',', ':'))}]
         if image:
             content.append({'type': 'input_image', 'image_url': image, 'detail': 'auto'})
+        developer = PLANNER_DEVELOPER if not data.get('lessons') else f'{PLANNER_DEVELOPER} {lessons_lib.NOTE}'   # (lessons.py: one sentence that says what the key is)
         return {'model': self.model,
-                'input': [{'role': 'developer', 'content': PLANNER_DEVELOPER}, {'role': 'user', 'content': content}],
+                'input': [{'role': 'developer', 'content': developer}, {'role': 'user', 'content': content}],
                 'text': {'format': {'type': 'json_schema', 'name': 'chapter_plan', 'schema': plan_schema(), 'strict': True}},
                 'max_output_tokens': 9000}
 
@@ -750,10 +753,15 @@ class ChapterPilot:
         if self.planner is None:
             return []
         data, digest = self.plan_data(st, why)
+        less = self.pilot_kw.get('lessons')   # (lessons.Lessons, or None: off)
+        got = less.for_chapter(data['link'], self.timeline) if less is not None else None
+        if got and got['items']:
+            data['lessons'] = got['items']   # (last: with none to give the request is what it was)
         self.n_plan += 1
         n = self.n_plan
         image = self.picture(f'plan-{n}')
-        row = {'n': n, 'why': why, 't': st.get('t'), 'model': self.planner.model, 'image': self.looks[-1].get('file') if self.looks and 'file' in self.looks[-1] else None, 'data': data}
+        row = {'n': n, 'why': why, 't': st.get('t'), 'model': self.planner.model, 'image': self.looks[-1].get('file') if self.looks and 'file' in self.looks[-1] else None,
+               'lessons': lessons_lib.record(less is not None, got), 'data': data}
         try:
             text, info = self.planner.ask(data, image)
             objs, rejected, reason = parse_plan(text, self.chapter, digest, self.watched, n)
@@ -989,11 +997,22 @@ class ChapterPilot:
 
     def recover_summary(self):
         rows = [p.recover_summary() for p in self.pilots]
-        return {'on': bool(rows and rows[0].get('on')), 'blocks': sum(r.get('blocks', 0) for r in rows), 'recovered': sum(r.get('recovered', 0) for r in rows),
-                'marked_bad': sum(r.get('marked_bad', 0) for r in rows), 'left': sum(r.get('left', 0) for r in rows), 'open': sum(r.get('open', 0) for r in rows),
-                'longest_s': max((r.get('longest_s', 0.0) for r in rows), default=0.0), 'over_10s': sum(r.get('over_10s', 0) for r in rows),
-                'stuck_steps': sum(r.get('stuck_steps', 0) for r in rows), 'rungs': {}, 'planner_replans': 0, 'no_question': dict(self.skipped),
-                'episodes': [e for r in rows for e in r.get('episodes', [])]}
+        out = {'on': bool(rows and rows[0].get('on')), 'blocks': sum(r.get('blocks', 0) for r in rows), 'recovered': sum(r.get('recovered', 0) for r in rows),
+               'marked_bad': sum(r.get('marked_bad', 0) for r in rows), 'left': sum(r.get('left', 0) for r in rows), 'open': sum(r.get('open', 0) for r in rows),
+               'longest_s': max((r.get('longest_s', 0.0) for r in rows), default=0.0), 'over_10s': sum(r.get('over_10s', 0) for r in rows),
+               'stuck_steps': sum(r.get('stuck_steps', 0) for r in rows), 'rungs': {}, 'planner_replans': 0, 'no_question': dict(self.skipped),
+               'episodes': [e for r in rows for e in r.get('episodes', [])]}
+        if any('tactics' in r for r in rows):   # the tactics library (tactics.py): the causes of the blocks and what each tactic did, over every objective's pilot
+            out['mode'] = next(r['mode'] for r in rows if 'mode' in r)
+            out['causes'], out['tactics'] = {}, {}
+            for r in rows:
+                for c, n in (r.get('causes') or {}).items():
+                    out['causes'][c] = out['causes'].get(c, 0) + n
+                for t, v in (r.get('tactics') or {}).items():
+                    a = out['tactics'].setdefault(t, {'tried': 0, 'worked': 0})
+                    a['tried'] += v['tried']
+                    a['worked'] += v['worked']
+        return out
 
     # -- what the chapter leaves
 

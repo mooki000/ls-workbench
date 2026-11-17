@@ -16,6 +16,10 @@ yours and stay local.
 | `pilot/metrics.py` | The numbers of a run, from its own files: stuck steps per km, time to each goal, decisions per minute, cost per minute and per goal, interactions, looks. |
 | `pilot/openai_api.py`, `pilot/standin.py` | The one place that talks to the API (key, caps, ledger), and a loopback stand-in server for tests. |
 | `pilot/follow_feed.py` | Keeps one pilot's follow file from the other pilot's state journal (two pilots in one co-op room). |
+| `pilot/tactics.py`, `pilot/tactics_seed.py`, `pilot/lessons.py` | The tactics library (ways out of a stuck place, keyed by the cause of the block, ranked by how often each worked, every attempt written back with its context), the seeding of that library from earlier runs, and the few short lessons put into a planner's request. |
+| `pilot/routelib.py`, `pilot/routes.py`, `pilot/frontier.py` | The route library: what every run learned about where Link can walk, kept per map; its command line; and the frontier push that starts from the farthest walked point and tries the alternatives a stuck cause suggests. |
+| `pilot/selfplay.py` | The nightly self-play hold: it puts the pilot a few metres before the open stuck places of the route library where the tactics library knows least and lets its ladder try what has been tried little there. No model, no human. |
+| `playbench/` | The capability scoreboard: a fixed set of small cells, the arms that play them, a referee that judges on the game's own state, a results store, a trend table and chart, and the nightly job. Its own `README.md` has the details. |
 | `bench/` | The benchmark course and its runner: `course.py` (entries and arms), `mkcourse.py` (cuts the entries' segments from your own), `ghost.py` (a leader that walks a route for the follow entry), `run.py` (`plan`, `play`, `report`, `sheet`). |
 | `test_*.py`, `pilot/test_*.py`, `bench/test_bench.py` | The game-free tests. |
 
@@ -34,6 +38,9 @@ lines keep them out of a commit.
 | What the benchmark's six placeholder entries stand for (your segment, its goals, a save, a scripted route, a leader's route) | `bench/course-local.json`, or the file `PILOT_BENCH_LOCAL` names: `{"<entry id>": {"source": ..., "goals": {...}, "save": ..., "ghost_source": ..., "ghost_goal": ..., "tas": ...}}` | the cells are `MISSING` in `bench/run.py plan` |
 | Songs (name to note buttons) | `pilot/songs.json` or `PILOT_SONGS` | a goal names its notes itself |
 | The caps file `pilot/caps.json` | the pilot's own folder | `--decider openai-decisions` says so and the run plays on the rules |
+| The main lane's lock files (for `selfplay.py` and `frontier.py` when they queue a hold) | `PILOT_QUIET_LOCK` and `PILOT_MEASURING_LOCK`; no default | the waiter is refused, naming what is missing |
+| The route and tactics libraries (`routelib/`, `tactics/`, the self-play folder) | `ROUTELIB_DIR`, `PILOT_TACTICS_DIR`, `PILOT_SELFPLAY_DIR`, else beside the harness | the pilot plans with the world model alone and learns nothing |
+| The scoreboard's private settings (game copies, locks, folders, key file, tracker address, cells with their saves and proofs) | `playbench-local/` (`playbench/README.md`) | the scoreboard refuses, naming what is missing |
 | The key | `OPENAI_API_KEY`, or a mode-600 one-line file named by `PILOT_OPENAI_KEY_FILE` (default `$XDG_CONFIG_HOME/ls-pilot/openai.key`) | `rules` and `replay` do not need one; `--decider openai-decisions` says `no key` and the run plays on the rules |
 | Run output (`pilot/runs/`, `pilot/ledger.jsonl`, `pilot/cache/`, `bench/runs/`) | made by the tools | |
 
@@ -47,7 +54,9 @@ A game-free check that everything imports and the tests pass (no game, no networ
 ```sh
 cd play
 for t in test_hsap.py test_hsap_file.py pilot/test_pilot.py pilot/test_interact.py pilot/test_recover.py \
-         pilot/test_eyes.py pilot/test_metrics.py bench/test_bench.py; do python3 -I -B "$t" || break; done
+         pilot/test_eyes.py pilot/test_metrics.py pilot/test_tactics.py pilot/test_tactics_seed.py pilot/test_lessons.py \
+         pilot/test_routelib.py pilot/test_frontier.py pilot/test_selfplay.py playbench/test_playbench.py \
+         bench/test_bench.py; do python3 -I -B "$t" || break; done
 ```
 
 `pilot/test_pilot.py` runs most of the others; a duel-segment check there is skipped when `pilot/segments/duel*.toml`
@@ -109,6 +118,27 @@ prints what a run spent. `PILOT_PLANNER_MODEL`, `PILOT_VISION_MODEL` and `PILOT_
   seeded by `--humanize-seed` or the run id.
 * `vision.py`: `--vision on [--vision-every <s>] [--vision-backend decisions|responses] [--vision-model <m>]`, default off.
   The pictures sent are kept in the run's `vision/` folder with one row per look.
+
+### Learning from earlier runs: tactics, lessons, the route library, self-play
+
+* **Tactics** (`tactics.py`): the recovery ladder's rungs are entries of a catalogue, each applicable to some causes of a block (a ledge, a
+  person's text, a crowd, a door's wrong side, a wall, ...). `recover.py` asks the library for the order to try them in; every attempt is
+  written back with the map, the age, the cause and the geometry round the place. The score is `(wins + prior * K) / (attempts + K)`, each
+  attempt weighted by how alike its context is, the prior being the static order's scaled by the cause's pooled success rate: an empty library ranks as the
+  fixed ladder always did. `tactics_seed.py` fills the library from earlier runs (`seed`) and measures it offline (`evaluate`, leave one run out).
+  `--tactics ranked|fixed|explore|off`, `--tactics-readonly`, `$PILOT_TACTICS_DIR`.
+* **Lessons** (`lessons.py`): before a planner call, the few most similar past blocks and what finally worked there, as short sentences in a small token
+  budget (`--lessons on|off`, `$PILOT_LESSONS`; `$PILOT_LEARN=off` switches both off, so a scoreboard arm can name its own switches). Off, or with a library that
+  has seen nothing like the call, the request is exactly what it was before.
+* **The route library** (`routelib.py`, `routes.py`): tracks, verified edges, stuck points with a cause, map links and the targets' frontier, kept per map
+  in a private folder (`$ROUTELIB_DIR`); with it set, `pilot.py` plans with the library's known way first and imports its own run when it ends.
+  `routes.py` imports finished runs, shows what is known and prints a route; `frontier.py` plans, checks and runs a push for a target
+  (and queues its one waiter); both go through the game copy and the gate like any other run.
+* **Self-play** (`selfplay.py`): `plan`, `check`, `saves`, `run`, `queue`, `stop`, `report` and `nightly`. A hold is at most 1,100 s, one session after another,
+  each a `pilot.py run` with the rules decider; every attempt goes into the tactics library as source `selfplay`. It refuses a copy that is not warm or not
+  stamped, a spend over the caps and a second waiter beside a live one.
+
+Game-derived data (maps, places, saves, the libraries) stays in the private folders; the code names none.
 
 ## The benchmark
 

@@ -8,6 +8,7 @@ hs-run.sh with live input and the state tap, in place of the earlier test autopi
   pilot.py run <segment.toml> [--decider rules|replay|openai-decisions] [--replay <transcript>] [--planner]
                [--max-decisions <n>] [--api-base <url>] [--follow NAME=<file>] [--end-hold <s>] [--shots <presents>]
                [--matches <n>] [--humanize 0..3] [--humanize-seed <n>] [--no-recover] [--bad-points <dir>] [--no-bad-points]
+               [--tactics ranked|fixed|explore|off] [--tactics-dir <dir>] [--tactics-source <name>] [--tactics-readonly] [--lessons on|off]
                [--vision off|on] [--vision-every <s>] [--vision-model <m>] [--vision-backend decisions|responses]
                [--vision-sock <path>]
   pilot.py check-route <route.txt> --segment <segment.toml> [--runs 3] [--copy <game copy>] [--tag <prefix>]
@@ -42,6 +43,17 @@ was. The state a decider sees carries nothing of this; each decision row of the 
 stalled_obs, stalled_s, rung, streak), a `recover` row is written for a block, a recovery and a bad point, and summary.json has
 `recover` (blocks, how long each lasted in game seconds, the rungs used) and `rates` (model calls and cost per minute).
 
+Learning (tactics.py, tactics_seed.py, lessons.py; a self-play hold feeds them by night, selfplay.py): the ladder's rungs are a library of tactics keyed by
+the cause of the block (a wall, a ledge from below, a drop that is not taken, a door's wrong side, a crowd, a person in the way, a text that holds Link, the
+water's edge, another floor), and --tactics ranked (the default; or $PILOT_TACTICS) tries them best first: the order is the success rate of each tactic for
+that cause across every map and run recorded (a prior from the static order, the same place and map and age weighing more), at most five and then the
+re-plan. Every attempt, with its map, age, cause, place and the geometry round it, and every block as one episode row, goes back into the library (`tactics/`
+beside the route library, or --tactics-dir, $PILOT_TACTICS_DIR; --tactics-readonly: read, never written, for a scoreboard's cells); the decision row of a rung has `recover_cause` and `recover_order`, summary.json's `recover` has `causes` and
+`tactics` (tried, worked). `fixed` is the old order with the recording still on (an A/B's control arm learns too), `explore` the order the nightly self-play
+uses (an optimism bonus for what has been tried little), `off` the old ladder with nothing read or written ($PILOT_LEARN=off turns tactics and lessons off).
+--lessons on (the default; or $PILOT_LESSONS) adds the few most similar past failures and what finally worked, in a small token budget, to every planner call;
+`off` leaves the planner's request as it was.
+
 Moves like a person (humanize.py, --humanize 0..3, default 2 for an exploration run, 0 for a duel; seeded, so a run can be
 played again): a reaction delay before a move, a little noise on the stick, small curves in long legs, looks with the camera
 stick, pauses, a leg walked instead of run, at level 3 a roll along the way. Level 0 sends every line exactly as made.
@@ -64,8 +76,9 @@ and is asked at most once in 1.5 s of game time (the pilot waits out the rest of
 What leaves the machine: only with --decider openai-decisions (and --planner): the request bodies in each run's
 transcript.jsonl (the state line as JSON, the goal and target names, what was tried, the candidate steps), sent to
 api.openai.com. With --vision on (vision.py; default off) the game's own frame, downscaled, goes too, with one fixed instruction
-text and fixed questions and no path, log line, flag or coordinate; the pictures sent are kept in the run's vision/ folder. The
-key is never printed or stored (openai_api.py).
+text and fixed questions and no path, log line, flag or coordinate; the pictures sent are kept in the run's vision/ folder. With lessons on (--lessons,
+lessons.py) a planner request also carries up to three short sentences about past blocks (a map name, rounded x and z, a target name, what stopped Link and
+what finally got him past), under 350 tokens. The key is never printed or stored (openai_api.py).
 """
 import argparse
 import copy
@@ -90,6 +103,7 @@ import humanize  # noqa: E402
 import interact  # noqa: E402
 import openai_api  # noqa: E402
 import recover  # noqa: E402
+import tactics as tactics_lib  # noqa: E402  (a Pilot's own `tactics` argument is the library's settings; the module is tactics_lib here)
 
 H = HERE.parent.parent
 sys.path.insert(0, str(H if (H / 'hs_names.py').is_file() else H / 'harness'))
@@ -386,13 +400,20 @@ def edge_kind(r):
 
 
 def world_plan():
-    """RouteData's planner (playthrough/world/plan.py): plan(area, from_xz, to_xz, from_y=, to_y=, radius=, doors=)."""
+    """RouteData's planner (playthrough/world/plan.py): plan(area, from_xz, to_xz, from_y=, to_y=, radius=, doors=). With $ROUTELIB_DIR set it is wrapped by the
+    route library (routelib.planner): the known way first, the world model's plan beyond the farthest known point."""
     try:
         sys.path.insert(0, str(PLAYTHROUGH))
         from world.plan import plan
-        return plan
     except Exception:   # noqa: BLE001  without it the pilot goes in straight lines
         return None
+    if os.environ.get('ROUTELIB_DIR'):
+        try:
+            import routelib
+            return routelib.planner(routelib.RouteLib(os.environ['ROUTELIB_DIR']), plan)
+        except Exception:   # noqa: BLE001  (no readable library: the world model alone, as before)
+            pass
+    return plan
 
 
 def fragments_for(area, target, pos):
@@ -754,10 +775,11 @@ def make_candidates(area, goal, target, st, mem, plan=None, bad=None):
 
 class Pilot:
     def __init__(self, seg, decider, ch, run_dir, run_id, alive, planner=None, max_decisions=None, follows=None,
-                 follow_wait=900.0, recovery=None, human=None, bad=None, eyes=None, cross_map_wait=120.0):
+                 follow_wait=900.0, recovery=None, human=None, bad=None, eyes=None, cross_map_wait=120.0, tactics=None, lessons=None):
         """recovery: a recover.Config (or True) turns the stuck recovery and the decision guard on, None leaves the pilot as it
         was; human: a humanize.Human (None: level 0, every line goes out as made); bad: the recover.BadPoints memory (None: none
-        is read or written); eyes: vision.make()'s object (None: no pictures)."""
+        is read or written); eyes: vision.make()'s object (None: no pictures); tactics: {book, sensor, mode, source} (make_tactics: the recovery ladder takes the
+        library's order for the cause of a block and writes every attempt back; None: the old ladder); lessons: lessons.Lessons (None: the planner is asked as before)."""
         self.seg, self.decider, self.ch, self.dir, self.run_id = seg, decider, ch, run_dir, run_id
         self.alive, self.planner = alive, planner
         self.goals = list(seg.goals)
@@ -776,7 +798,8 @@ class Pilot:
         self.last_decision_t, self.duel_seen = None, None   # (game time of the last decision; the last duel block seen)
         self.last_t = None
         self.bad = bad
-        self.rec = recover.Recovery(bad, recovery if isinstance(recovery, recover.Config) else None) if recovery else None
+        self.rec = recover.Recovery(bad, recovery if isinstance(recovery, recover.Config) else None, **(tactics or {})) if recovery else None
+        self.lessons = lessons
         self.rstates = {}     # (goal, target) -> recover.RecState
         self.human, self.eyes = human or humanize.Human(0), eyes
         self.skipped = {}     # why a decision needed no question -> how many
@@ -981,10 +1004,34 @@ class Pilot:
 
     def recovery_ctx(self, st, target, cands, dist):
         pos = st['pos']
-        return {'pos': (pos[0], pos[2]), 'camera': st.get('camera'), 'sign': self.handedness(),
-                'target': {'x': target.x, 'z': target.z, 'radius': target.radius},
-                'go_lines': next((c.lines for c in cands if c.label == 'go'), None),
-                'hop_ok': target.kind not in ('door', 'talk', 'chest', 'duel') and st.get('event') != 1 and (dist or 0.0) > 3.0}
+        ctx = {'pos': (pos[0], pos[2]), 'camera': st.get('camera'), 'sign': self.handedness(),
+               'target': {'x': target.x, 'z': target.z, 'radius': target.radius},
+               'go_lines': next((c.lines for c in cands if c.label == 'go'), None),
+               'hop_ok': target.kind not in ('door', 'talk', 'chest', 'duel') and st.get('event') != 1 and (dist or 0.0) > 3.0}
+        if self.rec.book is not None:
+            ctx.update(self.tactic_extras(st, target, cands))
+        return ctx
+
+    def tactic_extras(self, st, target, cands):
+        """What the tactics need beyond the old ladder: the doors the world model knows near Link, the planner's alternative edge (the candidate that deals with a
+        door, a ladder or a ledge on the way) and the planner's way from any point."""
+        pos, area, plan = st['pos'], self.seg.area, self.plan
+        world = getattr(self.rec.sensor, 'world', None)
+        doors = []
+        if world is not None:
+            try:
+                doors = [(d[1], d[2], d[3] if len(d) > 3 else 'door') for d in world.doors(area, pos[0], pos[2], 12.0)]
+            except Exception:   # noqa: BLE001  the world model is an aid
+                doors = []
+
+        def plan_from(x, z):
+            if plan is None:
+                return None
+            r = plan(area, (x, z), (target.x, target.z), from_y=pos[1], to_y=target.y, radius=target.radius, doors='stop')
+            return list(r.get('steps') or []) if r.get('ok') else None
+
+        return {'doors': doors, 'event': st.get('event'), 'plan_from': plan_from,
+                'alt_lines': next((list(c.lines) for c in cands if str(c.label).endswith('-on-way') and c.lines), None)}
 
     @staticmethod
     def left_of(r):
@@ -1078,14 +1125,24 @@ class Pilot:
             if e.get('how') is None and self.last_t is not None and e.get('t0') is not None:
                 e['s'] = round(self.last_t - e['t0'], 2)
         lengths = [e['s'] for e in episodes if e.get('s') is not None]
-        return {'on': self.rec is not None, 'blocks': len(episodes),
-                'recovered': sum(e.get('how') == 'recovered' for e in episodes),
-                'marked_bad': sum(e.get('how') == 'marked-bad' for e in episodes),
-                'left': sum(e.get('how') == 'left' for e in episodes), 'open': sum(e.get('how') is None for e in episodes),
-                'longest_s': max(lengths, default=0.0), 'over_10s': sum(s > 10.0 for s in lengths),
-                'stuck_steps': sum(t['result'] == 'stuck' for t in self.tried),
-                'rungs': {k: self.decisions.count(k) for k in sorted({d for d in self.decisions if d.startswith('recover:')})},
-                'planner_replans': self.stuck_plans, 'no_question': dict(self.skipped), 'episodes': episodes}
+        out = {'on': self.rec is not None, 'blocks': len(episodes),
+               'recovered': sum(e.get('how') == 'recovered' for e in episodes),
+               'marked_bad': sum(e.get('how') == 'marked-bad' for e in episodes),
+               'left': sum(e.get('how') == 'left' for e in episodes), 'open': sum(e.get('how') is None for e in episodes),
+               'longest_s': max(lengths, default=0.0), 'over_10s': sum(s > 10.0 for s in lengths),
+               'stuck_steps': sum(t['result'] == 'stuck' for t in self.tried),
+               'rungs': {k: self.decisions.count(k) for k in sorted({d for d in self.decisions if d.startswith('recover:')})},
+               'planner_replans': self.stuck_plans, 'no_question': dict(self.skipped), 'episodes': episodes}
+        if self.rec is not None and self.rec.book is not None:   # the tactics library: what the blocks were and what each tactic did (the A/B's numbers)
+            out['mode'] = self.rec.mode
+            out['causes'] = {c: sum(e.get('cause') == c for e in episodes) for c in sorted({e.get('cause') for e in episodes if e.get('cause')})}
+            tac = {}
+            for a in self.rec.history:
+                t = tac.setdefault(a['tactic'], {'tried': 0, 'worked': 0})
+                t['tried'] += 1
+                t['worked'] += a['outcome'] == 'worked'
+            out['tactics'] = tac
+        return out
 
     def counterfactual(self, n, st, goal, target, cands, mem, choice):
         """What the picture changed: after a decision that was made with a fresh look and a real question, the decider is asked
@@ -1119,7 +1176,7 @@ class Pilot:
         else:
             if rs.blocked is None:   # the guard saw a stuck state the monitor had not (an unchanged state, identical answers)
                 ev = self.rec.start_block(rs, self.seg.area, (pos[0], pos[2]), st.get('t'), rs.last_label or '',
-                                          (rs.last_go or {}).get('lines') or [], [], target.name, forced[1])
+                                          (rs.last_go or {}).get('lines') or [], [], target.name, forced[1], st=st, target=target)
                 self.log(kind='recover', n=len(self.decisions) + 1, target=target.name, **ev)
             seen = next((c for c in cands if c.label in recover.VISION_RUNGS), None)
             if seen is not None and not rs.vision_used:   # what the eyes make of the place goes before the blind rungs, once a block
@@ -1131,6 +1188,8 @@ class Pilot:
             act = self.rec.action(rs, ctx)
         self.skipped['recover'] = self.skipped.get('recover', 0) + 1
         info = {'no_request': 'recover', 'recover_rung': act.rung, 'recover_why': forced[1]}
+        if getattr(act, 'info', None):   # the tactics library: the cause of the block and the order this rung was taken from
+            info.update(recover_cause=act.info['cause'], recover_order=act.info['order'])
         return deciders.Choice(act.label, info=info), act, 'recover'
 
     def run(self, first_state):
@@ -1262,7 +1321,7 @@ class Pilot:
                 h.append((cand.label, 'done', 0.0, None))
                 print(f'  {n:3d} {goal.name}/{target.name}: {cand.label} ({target.status})', flush=True)
                 if rs is not None and rs.blocked is not None:   # left while blocked: the block ends here
-                    self.rec.close_episode(rs, st.get('t'), 'left')
+                    self.rec.close_episode(rs, st.get('t'), 'left', area=self.seg.area, run=self.run_id)
                     rs.blocked = None
                 if target.status == 'failed' or goal.status == 'failed':   # the planner at every third failure
                     self.fails[goal.name] = self.fails.get(goal.name, 0) + 1
@@ -1422,6 +1481,37 @@ def make_decider(args, client):
         return deciders.Rules(), 'no caps'
 
 
+def private_world():
+    """The world model's objects and nav meshes as the tactics' sensor asks them (routelib.PrivateWorld), or None where there is none (a publishable tree)."""
+    try:
+        import routelib
+        return routelib.PrivateWorld(PLAYTHROUGH / 'world')
+    except Exception:   # noqa: BLE001  no world model: the sensor knows only what the steps say
+        return None
+
+
+def make_tactics(args, world='auto'):
+    """The tactics library of a run (tactics.py) as pilot.Pilot's `tactics` settings, or None for the pilot's old ladder. --tactics (else $PILOT_TACTICS, else
+    ranked): `ranked` the library's order for the cause of a block, every attempt written back; `fixed` the old order, attempts still written back (the A/B's
+    control arm learns too); `explore` the order with the optimism bonus (the nightly self-play); `off` the old ladder, nothing read or written.
+    $PILOT_LEARN=off turns it (and the lessons) off unless the flag says otherwise. --tactics-readonly (or $PILOT_TACTICS_READONLY=1) reads the library and never writes it
+    (a scoreboard's cells must not learn from their own test); the summary's numbers are still kept."""
+    mode = getattr(args, 'tactics', None) or ('off' if os.environ.get('PILOT_LEARN') == 'off' else os.environ.get('PILOT_TACTICS') or 'ranked')
+    if mode not in ('ranked', 'fixed', 'explore'):
+        return None
+    readonly = bool(getattr(args, 'tactics_readonly', False)) or os.environ.get('PILOT_TACTICS_READONLY', '').lower() in ('1', 'on', 'yes', 'true')
+    return {'book': tactics_lib.Book(getattr(args, 'tactics_dir', None), readonly=readonly), 'sensor': tactics_lib.Sensor(private_world() if world == 'auto' else world), 'mode': mode,
+            'source': getattr(args, 'tactics_source', None) or 'live'}
+
+
+def make_lessons(args, learn=None):
+    """The lessons for the planner's prompt (lessons.py): the few most similar past failures and what finally worked, or None when switched off
+    (--lessons, else $PILOT_LESSONS, else on; $PILOT_LEARN=off turns it off unless the flag says otherwise)."""
+    import lessons
+    book = learn['book'] if learn else tactics_lib.Book(getattr(args, 'tactics_dir', None), readonly=True)
+    return lessons.make(getattr(args, 'lessons', None), book)
+
+
 def make_planner(client, args):
     """The planner (a model asked for route help) when it was asked for and can be had: a key (or a stand-in) and a caps file."""
     if not args.planner or not (args.api_base or openai_api.key_state() in ('file', 'env')):
@@ -1489,6 +1579,10 @@ def cmd_run(args):
     human = humanize.Human(level, seed)
     recovery = bool(getattr(args, 'recover', True)) and args.decider != 'replay'   # (a replay must meet exactly the questions it recorded)
     bad = recover.BadPoints(getattr(args, 'bad_points', None)) if recovery and not getattr(args, 'no_bad_points', False) else None
+    learn = make_tactics(args) if recovery else None
+    less = make_lessons(args, learn)
+    if planner is not None:
+        planner.lessons = less   # (the goal-level planner reads them at each call; the chapter pilot gets them through `lessons=` below)
     import vision   # noqa: E402  (the pictures: pilot/vision.py; make() says why when it is off)
     eyes = vision.make(args, client=client, run_dir=run_dir, run_id=run_id, copy=Path(args.copy or COPY), segment=seg)
     live = Path(args.attach) if args.attach else run_dir / 'live'
@@ -1502,7 +1596,9 @@ def cmd_run(args):
     summary = {'run': run_id, 'segment': seg.name, 'decider': decider.name, 'decider_note': note,
                'planner': bool(planner), 'copy': str(copy), 'live': str(live), 'started': stamp,
                'load_start': open('/proc/loadavg').read().split()[:3], 'humanize': {'level': level, 'seed': seed},
-               'recovery': recovery, 'vision': bool(eyes)}
+               'recovery': recovery, 'vision': bool(eyes), 'tactics': {'mode': learn['mode'] if learn else 'off', 'dir': str(learn['book'].dir) if learn else None,
+                                                                        'readonly': learn['book'].readonly if learn else None},
+               'lessons': bool(less)}
     print(f'{run_id}: segment {seg.name}, decider {decider.name}{" (" + note + ")" if note else ""}, '
           f'planner {"on" if planner else "off"}, live {live}', flush=True)
     try:
@@ -1532,7 +1628,7 @@ def cmd_run(args):
             pilot = None
         else:
             print(f'  gameplay after {summary["gameplay_after_s"]} s of wall time', flush=True)
-            kw = dict(follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes)
+            kw = dict(follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=learn, lessons=less)
             pilot = sections.make_pilot(seg, decider, ch, run_dir, run_id, alive, None, args.max_decisions, copy=copy, client=client, args=args, **kw) \
                 if chapter else Pilot(seg, decider, ch, run_dir, run_id, alive, planner, args.max_decisions, **kw)
             t1 = time.time()
@@ -1579,7 +1675,7 @@ def cmd_run(args):
             summary['matches'] = {'wanted': wanted, 'ended': d.get('matches_ended') or 0, 'won': d.get('matches_won') or 0,
                                   'lost': d.get('matches_lost') or 0, 'results': d.get('match_results') or []}
         summary['planner_calls'] = [{'n': p['n'], 'why': p['why'], 'changed': p['changed'],
-                                     'cost_usd': p.get('cost_usd'), 'latency_ms': p.get('latency_ms')} for p in pilot.plans]
+                                     'cost_usd': p.get('cost_usd'), 'latency_ms': p.get('latency_ms'), 'lessons': p.get('lessons')} for p in pilot.plans]
         if summary['play_wall_s'] and pilot.decisions:
             summary['decisions_per_minute'] = round(len(pilot.decisions) / summary['play_wall_s'] * 60, 2)
         summary['recover'] = pilot.recover_summary()
@@ -1599,7 +1695,7 @@ def cmd_run(args):
             with open(PLANNER_LOG, 'a') as f:
                 f.write(json.dumps({'run': run_id, 'segment': seg.name, 'n': p['n'], 'why': p['why'],
                                     'changed': p['changed'], 'after': p['after'], 'segment_solved': outcome == 'solved',
-                                    'cost_usd': p.get('cost_usd')}) + '\n')
+                                    'cost_usd': p.get('cost_usd'), 'lessons': p.get('lessons')}) + '\n')
         if outcome == 'solved' and not any(g.kind == 'duel' for g in seg.goals):   # (a fight is no route to replay)
             route, kept = export_route(seg, run_dir, run_id, decider.name, ch.events)
             summary['route'], summary['route_steps'] = str(route), kept
@@ -1610,6 +1706,13 @@ def cmd_run(args):
     if eyes:
         eyes.close()   # (writes its oddity summary)
     (run_dir / 'summary.json').write_text(json.dumps(summary, indent=1))
+    if os.environ.get('ROUTELIB_DIR'):   # the run leaves its tracks, stuck points and links in the route library
+        try:
+            import routelib
+            summary['routes'] = routelib.RouteLib(os.environ['ROUTELIB_DIR']).import_run(run_dir, label=run_id)
+            (run_dir / 'summary.json').write_text(json.dumps(summary, indent=1))
+        except Exception as e:   # noqa: BLE001  the library is a record, never a reason for the run to fail
+            print(f'routelib: {type(e).__name__}: {e}', flush=True)
     try:
         import metrics   # noqa: E402  (pilot/metrics.py: the run's numbers from its own files)
         metrics.write_run(run_dir)
@@ -1717,6 +1820,14 @@ def main():
                    help='no stuck recovery and no guard in front of the decider (the pilot as it was)')
     r.add_argument('--bad-points', metavar='DIR', help='where the per-map bad-point memory lives (default: pilot/cache or $PILOT_CACHE)')
     r.add_argument('--no-bad-points', action='store_true', help='neither read nor write the bad-point memory')
+    r.add_argument('--tactics', choices=('ranked', 'fixed', 'explore', 'off'), default=None,
+                   help='the recovery ladder\'s tactics library (tactics.py): ranked (default, or $PILOT_TACTICS) the library\'s order for the cause of a block, every attempt written back; '
+                        'fixed the old order, attempts still written back; explore the nightly self-play\'s order; off the old ladder, nothing read or written')
+    r.add_argument('--tactics-dir', metavar='DIR', help='where the library lives (default: tactics/ beside the route library in the harness, or $PILOT_TACTICS_DIR)')
+    r.add_argument('--tactics-readonly', action='store_true', help='read the library, never write it (a scoreboard\'s cells must not learn from their own test; or $PILOT_TACTICS_READONLY=1)')
+    r.add_argument('--tactics-source', default=None, metavar='NAME', help='what the attempts are filed under (default live; the nightly self-play: selfplay)')
+    r.add_argument('--lessons', choices=('on', 'off'), default=None,
+                   help='the planner\'s lessons (lessons.py): the few most similar past failures and what finally worked go into each planner call (default on, or $PILOT_LESSONS); off: the planner is asked as before')
     r.add_argument('--vision', choices=('off', 'on'), default=None, help='look at the screen (vision.py; default off, or $PILOT_VISION)')
     r.add_argument('--vision-every', type=float, default=None, metavar='SECONDS', help='a look at least this often (wall seconds)')
     r.add_argument('--vision-model', default=None)

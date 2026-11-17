@@ -56,6 +56,10 @@ def main():
     chapters = sorted((HERE / 'pilot' / 'chapters').glob('*.toml'))
     if not chapters:
         print('note: no private chapter files here (a publishable tree): the chapter checks are skipped')
+    if (HERE / 'playbench' / 'playbench.py').is_file():   # the scoreboard (the nightly timer and the waiter start it under -I; its folder is not on sys.path then)
+        out = case('playbench/playbench.py --help', HERE / 'playbench' / 'playbench.py', '--help')
+        check('queue' in out and 'hold' in out, 'playbench.py --help lists its commands')
+        case('playbench/playbench.py hold --help', HERE / 'playbench' / 'playbench.py', 'hold', '--help')
     for ch in chapters:
         out = case(f'sections.py check {ch.name}', HERE / 'pilot' / 'sections.py', 'check', str(ch))
         check('marker' in out, f'{ch.name}: check lists its markers')

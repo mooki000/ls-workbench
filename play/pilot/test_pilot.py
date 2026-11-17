@@ -22,12 +22,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import deciders  # noqa: E402
 import follow_feed  # noqa: E402
+import lessons  # noqa: E402
 import openai_api  # noqa: E402
 import pilot  # noqa: E402
 import standin  # noqa: E402
+import tactics  # noqa: E402
 import test_actions  # noqa: E402
 import test_eyes  # noqa: E402
 import test_interact  # noqa: E402
+import test_lessons  # noqa: E402
 import test_recover  # noqa: E402
 import test_sections  # noqa: E402
 
@@ -1475,6 +1478,35 @@ def fight_checks():
           'rules: after the step round, go-near again')
 
 
+def lessons_checks(tmp):
+    """Lessons (lessons.py) in the goal-level planner, through the pilot's own planner call (maybe_plan) on the fake game: off, the planner's row in the transcript says lessons off and
+    its request holds no `lessons` and the developer text it always had; on, the request holds the library's lesson for the door the pilot goes to, one more sentence, and the row says
+    {on, n, tokens_est, ids}; on with nothing to say, the request is the one off sends."""
+    book = tactics.Book(tmp / 'lessons-book')
+    book.add_block(map='Fake_Area', at=[0.6, 0.0, 0.2], cause='door-side', tried=['sidestep', 'door-enter'], worked='door-enter', how='recovered', target='door', run='r1', source='live')
+
+    def first_plan(less):
+        planner = deciders.Planner(test_lessons.Stub(), 'gpt-6-astra')
+        planner.lessons = less
+        _, p, _, _, run_dir = play(deciders.Rules(), tmp, max_decisions=4, planner=planner)
+        row = next(e for e in transcript(run_dir) if e['kind'] == 'planner')
+        check('error' not in row and all(row[k] == p.plans[0][k] for k in ('n', 'why', 'lessons')), 'the planner row of the transcript is the pilot\'s own plan entry')
+        return row, json.loads(row['request']['input'][1]['content'])
+
+    off, off_data = first_plan(None)
+    check(off['lessons'] == {'on': False, 'n': 0, 'tokens_est': 0, 'ids': []} and 'lessons' not in off_data and off['request']['input'][0]['content'] == deciders.PLANNER_DEVELOPER,
+          f"lessons off: the planner's row says so and its request is the old one ({off['lessons']})")
+    on, on_data = first_plan(lessons.Lessons(book))
+    check(on['lessons']['on'] and on['lessons']['n'] == 1 and on['lessons']['tokens_est'] > 0 and len(on['lessons']['ids']) == 1, f"lessons on: the planner's row says {{on, n, tokens_est, ids}} ({on['lessons']})")
+    check(len(on_data['lessons']) == 1 and on_data['lessons'][0].startswith('Fake_Area') and 'on the way to door' in on_data['lessons'][0] and 'door-enter worked' in on_data['lessons'][0],
+          f"lessons on: the request has the lesson for the door ({on_data.get('lessons')})")
+    check(on['request']['input'][0]['content'] == deciders.PLANNER_DEVELOPER + ' ' + lessons.NOTE and {k: v for k, v in on_data.items() if k != 'lessons'} == off_data,
+          'lessons on: the same request, with the sentence and the key')
+    cold, cold_data = first_plan(lessons.Lessons(tactics.Book(tmp / 'lessons-cold')))
+    check(cold['request'] == off['request'] and cold['lessons'] == {'on': True, 'n': 0, 'tokens_est': 0, 'ids': []},
+          'lessons on with a cold library: the request off sends, and the row says on with none')
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='pilot-test-') as t:
         tmp = Path(t)
@@ -1485,6 +1517,7 @@ def main():
                                                'planner_share_of_night': 0.4, 'model': None}))
         pilot.FRAGMENTS = tmp / 'fragments.jsonl'
         pilot.HERE = tmp   # exported routes into the temporary folder
+        os.environ['PILOT_TACTICS_DIR'] = str(tmp / 'tactics')   # (a run's tactics library: never the real one)
         pilot.world_plan = lambda: None   # straight lines in the made-up area
 
         # `pilot.py story` needs story.py and the private world model, which a published tree does not have: it says so and returns 2
@@ -1671,6 +1704,8 @@ def main():
         check(again.info.get('fallback', '').startswith('stopped'), 'no request after the stop')
         follow_checks(tmp)
         duel_checks(tmp)
+        lessons_checks(tmp)
+        os.environ.pop('PILOT_TACTICS_DIR', None)
     test_recover.run()
     test_interact.run()
     if test_interact.FAILS:
@@ -1680,6 +1715,8 @@ def main():
         raise SystemExit('FAILED: test_actions')
     if not test_sections.run():
         raise SystemExit('FAILED: test_sections')
+    if not test_lessons.run():
+        raise SystemExit('FAILED: test_lessons')
     print('test_pilot: all passed')
 
 

@@ -9,7 +9,7 @@ tried, the candidate steps), each picks one candidate's label. All behind one in
                       three predicates in one request
 
 The planner (Planner) is no decider: called seldom, it may reorder the goals and their targets (Responses API with a
-JSON schema).
+JSON schema); with lessons on (lessons.py) its request carries the few most similar past failures and what finally worked.
 
 A duel goal (kind "duel", pilot.py's duel_candidates) is decided by the same deciders: the rules have a fixed policy
 (Rules.pick_duel: practice swing, Ready, close in to about 1.3 m, face him, swing about once a second, guard once when a new
@@ -21,6 +21,7 @@ import json
 from dataclasses import dataclass, field
 
 import interact
+import lessons as lessons_lib
 import openai_api
 
 RECOVERY = ('back-off', 'side-left', 'side-right')
@@ -464,13 +465,16 @@ PLANNER_DEVELOPER = (
 
 
 class Planner:
-    """A stronger model through the Responses API with a JSON schema; its answer reorders goals and targets."""
+    """A stronger model through the Responses API with a JSON schema; its answer reorders goals and targets. `lessons` (a lessons.Lessons, set by pilot.cmd_run; None: off)
+    puts the few most similar past failures and what finally worked into the request, with one more sentence in the developer text; off, and with no lesson to give, the
+    request is the one it always was."""
+    lessons = None
 
     def __init__(self, client, model=None):
         self.client = client
         self.model = model or openai_api.caps()['planner_model']
 
-    def body(self, seg, goals, tried):
+    def body(self, seg, goals, tried, lessons=None):
         gnames = [g.name for g in goals]
         tnames = sorted({t.name for g in goals for t in g.targets})
         schema = {
@@ -491,16 +495,21 @@ class Planner:
                       for g in goals],
             'tried': tried[-60:],
         }
+        developer = PLANNER_DEVELOPER
+        if lessons:
+            data['lessons'] = lessons
+            developer = f'{PLANNER_DEVELOPER} {lessons_lib.NOTE}'
         return {
             'model': self.model,
-            'input': [{'role': 'developer', 'content': PLANNER_DEVELOPER},
+            'input': [{'role': 'developer', 'content': developer},
                       {'role': 'user', 'content': json.dumps(data)}],
             'text': {'format': {'type': 'json_schema', 'name': 'plan', 'schema': schema, 'strict': True}},
             'max_output_tokens': 6000,
         }
 
     def plan(self, seg, goals, tried):
-        body = self.body(seg, goals, tried)
+        got = self.lessons.for_goals(seg, goals, tried) if self.lessons is not None else None
+        body = self.body(seg, goals, tried, got['items'] if got else None)
         est = len(json.dumps(body)) / 3.0 * 1.0 / 1e6 + 6000 * 5.0 / 1e6
         ans, ms, row = self.client.post('/responses', body, api='responses', model=self.model, kind='planner',
                                         estimate=est, timeout=120)
@@ -511,4 +520,5 @@ class Planner:
                     if part.get('type') == 'output_text':
                         text += part.get('text', '')
         return json.loads(text), {'request': body, 'answer_text': text, 'latency_ms': round(ms, 1),
-                                  'usage': row['usage'], 'cost_usd': row['cost_usd']}
+                                  'usage': row['usage'], 'cost_usd': row['cost_usd'],
+                                  'lessons': lessons_lib.record(self.lessons is not None, got)}

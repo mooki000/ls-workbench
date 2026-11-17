@@ -7,6 +7,7 @@ outline, the budgets, the timeline and the picture-based wait for the day. Nothi
     python3 -I -B test_sections.py        (test_pilot.py calls run() too)
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -23,9 +24,11 @@ sys.path.insert(0, str(HERE.parent))
 import deciders  # noqa: E402
 import hsap  # noqa: E402
 import interact  # noqa: E402
+import lessons  # noqa: E402
 import openai_api  # noqa: E402
 import pilot  # noqa: E402
 import sections  # noqa: E402
+import tactics  # noqa: E402
 import vision  # noqa: E402
 
 FAILS, CHECKS = [], [0]
@@ -705,6 +708,102 @@ def cmd_run_checks(tmp):
     return run_dir
 
 
+# What the chapter planner was given and sent before lessons existed, for lessons_probe's made-up state: the sha256 of plan_data's data (compact JSON) and of the request body
+# (json.dumps). A change to either is a change of these numbers, on purpose.
+PLAN_DATA_PIN = 'c12c7ae79e44c2ef56f699f73cc605fcc27c2364d4582a33e5387d799eb2b835'
+REQUEST_PIN = '016c555907e052fa1823293858a8d236fc2722f5d76e22b45d401bab6d3da881'
+
+
+def lessons_probe(tmp, less):
+    """A chapter pilot (with `less` as pilot.cmd_run gives it, or none) at a made-up state, one objective failed at the chest, asked once:
+    (pilot, client, run dir, the sha256 of plan_data's data)."""
+    cp, game, chan, st, run_dir, client = start(tmp, replies=[{'reason': 'none', 'objectives': []}])
+    finish(game, chan)
+    cp.timeline.append({'id': 'p1-1-chest', 'kind': 'open_chest', 'what': 'open the chest', 'outcome': 'budget: time', 'goal_status': 'open', 'game_s': 40.0, 'end_pos': [9.0, 0.0, 4.0],
+                        'steps': [], 'why': '1 block(s), longest 12.0 s, rungs {}', 'area': 'Fake_A', 'end_area': 'Fake_A',
+                        'targets': [{'name': 'chest', 'at': [10.0, 5.0], 'y': 0.0, 'radius': 1.2}]})
+    if less is not None:
+        cp.pilot_kw['lessons'] = less
+    here = state(pos=[3.0, 0.0, 2.0], t=20.0)
+    data_sha = hashlib.sha256(json.dumps(cp.plan_data(here, 'start')[0], separators=(',', ':')).encode()).hexdigest()
+    cp.ask_planner(here, 'start')
+    return cp, client, run_dir, data_sha
+
+
+def lessons_checks(tmp):
+    """Lessons (lessons.py) in the chapter planner: off, the data and the request are byte for byte what they were; on, the request is the same with a `lessons` key and one
+    more sentence; with none to give, nothing changes; the planner row says {on, n, tokens_est, ids}; the objectives' pilots are given the lessons."""
+    book = tactics.Book(Path(tmp) / 'lessons-book')
+    book.add_block(map='Fake_A', age='child', at=[10.2, 0.0, 5.1], cause='wall', tried=['sidestep', 'angle'], worked='angle', how='recovered', target='chest', run='r1', source='live')
+    book.add_block(map='Fake_A', age='child', at=[26.0, 0.0, 0.0], cause='ledge-up', tried=['sidestep', 'hop'], worked=None, how='marked-bad', target='bank', run='r1', source='live')
+    off_row = {'on': False, 'n': 0, 'tokens_est': 0, 'ids': []}
+    saved = pilot.world_plan
+    pilot.world_plan = lambda: None   # (the data of a made-up world, whatever a private world model may add)
+    try:
+        with WithWorld():
+            cp, client, run_dir, data_sha = lessons_probe(tmp, None)
+            off = client.requests[0]
+            row = json.loads((run_dir / 'plans.jsonl').read_text().splitlines()[0])
+            check(data_sha == PLAN_DATA_PIN and hashlib.sha256(json.dumps(off).encode()).hexdigest() == REQUEST_PIN and off['input'][0]['content'] == sections.PLANNER_DEVELOPER,
+                  'lessons off: the chapter planner is given and sends what it did before lessons existed, byte for byte')
+            check(row['lessons'] == off_row and 'lessons' not in row['data'] and cp.cplans[0]['lessons'] == off_row and 'data' not in cp.cplans[0],
+                  f"lessons off: plans.jsonl and the summary say so ({row['lessons']})")
+
+            less = lessons.Lessons(book)
+            cp, client, run_dir, data_sha = lessons_probe(tmp, less)
+            on = client.requests[0]
+            text_off, text_on = off['input'][1]['content'][0]['text'], on['input'][1]['content'][0]['text']
+            data = json.loads(text_on)
+            row = json.loads((run_dir / 'plans.jsonl').read_text().splitlines()[0])
+            got = less.for_chapter(cp.state_view(state(pos=[3.0, 0.0, 2.0], t=20.0)), cp.timeline)
+            check(data_sha == PLAN_DATA_PIN, 'lessons on: plan_data is what it was (the lessons are added where the request is made)')
+            check(len(got['items']) == 2 and 'on the way to chest' in got['items'][0] and 'angle worked' in got['items'][0] and 'nothing worked' in got['items'][1],
+                  f"lessons on: the place the objective failed first, and where nothing worked second ({got['items']})")
+            check(list(data)[-1] == 'lessons' and data.pop('lessons') == got['items'] and json.dumps(data, separators=(',', ':')) == text_off,
+                  'lessons on: the data is the same and one key more, last')
+            check(on['input'][0]['content'] == off['input'][0]['content'] + ' ' + lessons.NOTE and {k: v for k, v in on.items() if k != 'input'} == {k: v for k, v in off.items() if k != 'input'},
+                  'and the developer text one sentence more, the rest of the request as it was')
+            check(row['lessons'] == {'on': True, 'n': 2, 'tokens_est': got['tokens'], 'ids': got['ids']} == cp.cplans[0]['lessons'] and row['data']['lessons'] == got['items'],
+                  f"plans.jsonl says {{on, n, tokens_est, ids}} and carries the lessons ({row['lessons']})")
+
+            cold = lessons.Lessons(tactics.Book(Path(tmp) / 'lessons-cold'))
+            cp, client, run_dir, data_sha = lessons_probe(tmp, cold)
+            row = json.loads((run_dir / 'plans.jsonl').read_text().splitlines()[0])
+            check(hashlib.sha256(json.dumps(client.requests[0]).encode()).hexdigest() == REQUEST_PIN and 'lessons' not in row['data'] and row['lessons'] == {**off_row, 'on': True},
+                  'lessons on with a cold library: the request is the one off sends (no key, no sentence); the row says on with none')
+
+            # a whole chapter (the world model as the other runs here have it): the first plan (Fake_A, which the library knows) carries lessons, the second (Fake_B, which it does
+            # not) none; every objective's pilot has them
+            pilot.world_plan = saved
+            cp, game, chan, st, run_dir, client = start(tmp, replies=[plan_one, plan_one])
+            less = lessons.Lessons(book)
+            cp.pilot_kw['lessons'] = less
+            outcome = cp.run(st)
+            finish(game, chan)
+            asked = [json.loads(r['input'][1]['content'][0]['text']) for r in client.requests]
+            rows = [json.loads(x) for x in (run_dir / 'plans.jsonl').read_text().splitlines()]
+            check(outcome == 'solved' and cp.pilots and all(p.lessons is less for p in cp.pilots), f'a chapter with lessons: solved, and each objective\'s pilot is given them ({outcome})')
+            check(len(asked) == 2 and len(asked[0]['lessons']) == 2 and 'lessons' not in asked[1] and [r['lessons']['n'] for r in rows] == [2, 0] and all(r['lessons']['on'] for r in rows),
+                  f"the plan in a known area carries lessons, the one in an unknown area none ({[r['lessons'] for r in rows]})")
+            check(client.requests[0]['input'][0]['content'].endswith(lessons.NOTE) and client.requests[1]['input'][0]['content'] == sections.PLANNER_DEVELOPER,
+                  'and the sentence is in the first request, not in the second')
+    finally:
+        pilot.world_plan = saved
+
+
+def tactics_summary_checks():
+    """A chapter's recover summary adds up the tactics library's numbers over its objectives' pilots (the A/B reads them from summary.json)."""
+    import types
+    mk = lambda mode, causes, tac: types.SimpleNamespace(recover_summary=lambda: {'on': True, 'blocks': 1, 'mode': mode, 'causes': causes, 'tactics': tac, 'episodes': []})  # noqa: E731
+    cp = types.SimpleNamespace(pilots=[mk('ranked', {'wall': 1}, {'sidestep': {'tried': 2, 'worked': 1}}), mk('ranked', {'wall': 1, 'held': 1}, {'sidestep': {'tried': 1, 'worked': 0}, 'wait': {'tried': 1, 'worked': 1}})],
+                               skipped={})
+    s = sections.ChapterPilot.recover_summary(cp)
+    check(s['mode'] == 'ranked' and s['causes'] == {'wall': 2, 'held': 1} and s['tactics'] == {'sidestep': {'tried': 3, 'worked': 1}, 'wait': {'tried': 1, 'worked': 1}},
+          f"the chapter's summary adds up the causes and what each tactic did ({s.get('causes')}, {s.get('tactics')})")
+    plain = types.SimpleNamespace(pilots=[types.SimpleNamespace(recover_summary=lambda: {'on': True, 'blocks': 0, 'episodes': []})], skipped={})
+    check('tactics' not in sections.ChapterPilot.recover_summary(plain), 'without a library there is nothing of it in the summary')
+
+
 def run():
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -732,6 +831,8 @@ def run_all(tmp):
         roam_checks(tmp)
         wait_time_checks(tmp)
         anomaly_checks(tmp)
+        lessons_checks(tmp)
+        tactics_summary_checks()
         cmd_run_checks(tmp)
 
 

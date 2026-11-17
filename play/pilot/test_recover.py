@@ -24,6 +24,7 @@ import deciders  # noqa: E402
 import humanize  # noqa: E402
 import pilot  # noqa: E402
 import recover  # noqa: E402
+import tactics  # noqa: E402
 
 RUN_MPS = 5     # the fake Link's running speed
 BODY_M = 0.4      # how close to an obstacle's edge he can get
@@ -221,7 +222,7 @@ class StubPlanner:
 
 
 def play(tmp, targets, obstacles, decider=None, start=(0, 0), final=None, recovery=True, human=None, bad=None, planner=None,
-         plan=None, stop_short=0, max_decisions=120, area='Fake_Area', follows=None, extra='', eyes=None):
+         plan=None, stop_short=0, max_decisions=120, area='Fake_Area', follows=None, extra='', eyes=None, tactics=None):
     """One pilot run against a FakeWorld: (pilot, outcome, world, run_dir)."""
     tmp = Path(tmp)
     seg_path = tmp / f'seg-{time.time_ns()}.toml'
@@ -237,7 +238,7 @@ def play(tmp, targets, obstacles, decider=None, start=(0, 0), final=None, recove
     run_dir = tmp / f'run-{time.time_ns()}'
     run_dir.mkdir()
     p = pilot.Pilot(seg, decider or deciders.Rules(), ch, run_dir, run_dir.name, lambda: True, planner, max_decisions,
-                    follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes)
+                    follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=tactics)
     p.plan = plan
     outcome = p.run(st)
     ch.send(['end'])
@@ -894,6 +895,148 @@ def level_checks(tmp):
     check(pilot.humanize_level(A, d) == 3, 'asked, it is')
 
 
+class Near:
+    """What routelib.PrivateWorld answers (persons, doors, props near a point, the ground height ahead): a made-up world model for the sensor."""
+
+    def __init__(self, persons=(), doors=(), props=(), ground=None):
+        self.p, self.d, self.pr, self.g = list(persons), list(doors), list(props), ground
+
+    @staticmethod
+    def _near(objs, mp, x, z, r):
+        return [(mp, o[0], o[1], 'Obj') for o in objs if math.hypot(o[0] - x, o[1] - z) <= r]
+
+    def persons(self, mp, x, z, r):
+        return self._near(self.p, mp, x, z, r)
+
+    def doors(self, mp, x, z, r):
+        return self._near(self.d, mp, x, z, r)
+
+    def props(self, mp, x, z, r):
+        return [o + ('sign',) for o in self._near(self.pr, mp, x, z, r)]
+
+    def ground(self, mp, x, z, y):
+        return self.g(mp, x, z, y) if self.g else y
+
+
+def tactics_checks(tmp):
+    """The ladder with the tactics library: the order comes from the book for the cause the sensor names, every rung is written back with its context, a
+    block is one episode row, and a pilot that knows nothing behaves as the old ladder did."""
+    def rung_labels(rd):
+        return [d['choice'] for d in rows(rd, 'decision') if str(d['choice']).startswith('recover:') and d['choice'] not in ('recover:close-in', 'recover:replan')]
+
+    def kit(name, world=None, mode='ranked'):
+        book = tactics.Book(Path(tmp) / f'book-{name}')
+        return book, {'book': book, 'sensor': tactics.Sensor(world), 'mode': mode}
+
+    # a pilot that knows nothing: the old ladder, in its old order (an unknown cause, an empty book)
+    book, kw = kit('parity')
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_BigA', tactics=kw)
+    rec = [e for e in rows(rd, 'recover') if e['status'] == 'recovered']
+    check(outcome == 'solved' and rung_labels(rd) == ['recover:sidestep', 'recover:angle'] and rec[0]['rung'] == 'angle',
+          f'an empty book and no world model: sidestep, then angle, as the old ladder ({rung_labels(rd)})')
+    blocked = [e for e in rows(rd, 'recover') if e['status'] == 'blocked']
+    check(blocked and blocked[0]['cause'] == 'unknown', 'the block row names the cause (unknown without a world model)')
+    att = book.rows('attempt')
+    check([(a['tactic'], a['outcome']) for a in att] == [('sidestep', 'failed'), ('angle', 'worked')] and all(a['map'] == 'Fake_BigA' and a['cause'] == 'unknown' and a['source'] == 'live' for a in att),
+          f'each rung is written back with its map, cause and result ({[(a["tactic"], a["outcome"]) for a in att]})')
+    check(all(a.get('at') and a.get('run') == rd.name and a.get('block') for a in att), 'with the place, the run and the block')
+    blk = book.rows('block')
+    check(len(blk) == 1 and blk[0]['tried'] == ['sidestep', 'angle'] and blk[0]['worked'] == 'angle' and blk[0]['how'] == 'recovered' and blk[0]['cause'] == 'unknown',
+          f'and the block is one episode row ({blk})')
+    dec = [d for d in rows(rd, 'decision') if d['choice'] == 'recover:sidestep'][0]
+    check(dec.get('recover_cause') == 'unknown' and dec.get('recover_order') and dec['recover_order'][0]['tactic'] == 'sidestep',
+          'the decision row says the cause and the order the ladder came from')
+    s = p.recover_summary()
+    check(s['mode'] == 'ranked' and s['causes'] == {'unknown': 1} and s['tactics'] == {'sidestep': {'tried': 1, 'worked': 0}, 'angle': {'tried': 1, 'worked': 1}},
+          f"summary.json's recover block says the causes and what each tactic did ({s['causes']}, {s['tactics']})")
+    # what worked there is first the next time, on another map: one rung instead of two
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_BigB', tactics=kw)
+    check(outcome == 'solved' and rung_labels(rd) == ['recover:angle'], f'the next block of the kind (another map) starts with what worked: angle first ({rung_labels(rd)})')
+
+    # the control arm: the old order whatever the book says, but it still writes what it sees
+    book2, kw2 = kit('fixed', mode='fixed')
+    for i in range(6):
+        book2.record('hop', 'unknown', 'worked', map='Fake_Elsewhere', source='journal', key=f'h{i}')
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_BigC', tactics=kw2)
+    check(rung_labels(rd)[:2] == ['recover:sidestep', 'recover:angle'] and len(book2.rows('attempt')) == 8, 'fixed: the old order though the book prefers hop; the attempts are still recorded')
+    # a read-only library (the scoreboard's cells): ranked from what is there, nothing written, the summary's numbers still kept
+    ro_book = tactics.Book(book2.dir, readonly=True)
+    before = book2.path.read_bytes()
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_BigD', tactics={'book': ro_book, 'sensor': tactics.Sensor(None), 'mode': 'ranked'})
+    check(outcome == 'solved' and rung_labels(rd)[0] == 'recover:hop' and book2.path.read_bytes() == before and p.recover_summary()['tactics'].get('sidestep', {}).get('tried', 0) >= 0
+          and sum(v['tried'] for v in p.recover_summary()['tactics'].values()) >= 1, f'read-only: ranked by the book (hop first), not a byte written, the run\'s own numbers kept ({rung_labels(rd)})')
+    book3, kw3 = kit('ranked-hop')
+    for i in range(6):
+        book3.record('hop', 'unknown', 'worked', map='Fake_Elsewhere', source='journal', key=f'h{i}')
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Wall((-30, 20), (30, 20), low=True)], area='Fake_Fence2', tactics=kw3)
+    check(outcome == 'solved' and rung_labels(rd) == ['recover:hop'], f'six wins of hop elsewhere: a low fence is cleared by the first rung ({rung_labels(rd)})')
+
+    # the cause decides the order: a person in the way: sidestep, wait, a wider sidestep
+    world_np = Near(persons=[(0.0, 18.0)])
+    book4, kw4 = kit('npc', world_np)
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_Npc', tactics=kw4)
+    blocked = [e for e in rows(rd, 'recover') if e['status'] == 'blocked']
+    check(blocked and blocked[0]['cause'] == 'npc-in-way' and blocked[0]['geom'].get('persons') == '1-2', f'a person at the post: npc-in-way ({blocked[0]["cause"] if blocked else None})')
+    check(outcome == 'solved' and rung_labels(rd) == ['recover:sidestep', 'recover:wait', 'recover:sidestep-wide'],
+          f'npc-in-way: sidestep, wait, a wider sidestep gets round ({rung_labels(rd)})')
+    check(any(x == 'wait 4' for x in world.log), 'the wait was sent as the game side knows it')
+    check({a['tactic'] for a in book4.rows('attempt')} == {'sidestep', 'wait', 'sidestep-wide'} and all(a['cause'] == 'npc-in-way' for a in book4.rows('attempt')),
+          'attempts are filed under the cause')
+    # a ledge from below: climb, jump, then the hop that clears the low fence
+    world_up = Near(ground=lambda mp, x, z, y: y + 1.0)
+    book5, kw5 = kit('ledge', world_up)
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Wall((-30, 20), (30, 20), low=True)], area='Fake_Ledge', tactics=kw5)
+    check(outcome == 'solved' and rung_labels(rd) == ['recover:climb', 'recover:jump', 'recover:hop'], f'ledge-up: climb, jump, hop ({rung_labels(rd)})')
+    check(any(x.startswith('climb timeout') for x in world.log) and any(x.startswith('jump ') for x in world.log), 'the climb and the jump steps were sent')
+    # the ladder is capped: five tactics, then replan (the target is left and the point marked bad)
+    box = [Wall((-10, 30), (10, 30)), Wall((-10, 30), (-10, 50)), Wall((10, 30), (10, 50)), Wall((-10, 50), (10, 50))]
+    book6, kw6 = kit('cap')
+    bad = recover.BadPoints(Path(tmp) / 'cache-cap')
+    p, outcome, world, rd = play(tmp, [('boxed', 0, 40, 2.5), ('after', 40, 0, 2.5)], box, bad=bad, area='Fake_Cap', tactics=kw6)
+    s = p.recover_summary()
+    check(len(rung_labels(rd)) <= 5 and s['marked_bad'] == 1 and outcome == 'solved', f'five tactics at most, then replan ({rung_labels(rd)})')
+    blk = book6.rows('block')
+    check(blk and blk[0]['how'] == 'marked-bad' and blk[0].get('worked') is None and set(blk[0]['tried']) == {a['tactic'] for a in book6.rows('attempt')}, 'a spent ladder is a block row with nothing that worked')
+    check(all(a['outcome'] == 'failed' for a in book6.rows('attempt')), 'and every rung of it a failure')
+    # a run with no tactics given is the pilot as it was (no book, no cause on the rows)
+    p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_Plain')
+    blocked = [e for e in rows(rd, 'recover') if e['status'] == 'blocked']
+    check(outcome == 'solved' and blocked and 'cause' not in blocked[0] and 'tactics' not in p.recover_summary(), 'without a tactics library the rows are as before')
+
+    # the settings of a run (pilot.make_tactics): --tactics, $PILOT_TACTICS, $PILOT_LEARN
+    class A:
+        tactics, tactics_dir, tactics_source = None, str(Path(tmp) / 'book-args'), None
+
+    keep = {k: os.environ.pop(k, None) for k in ('PILOT_TACTICS', 'PILOT_LEARN')}
+    try:
+        got = pilot.make_tactics(A, world=None)
+        check(got and got['mode'] == 'ranked' and got['source'] == 'live' and str(got['book'].dir) == A.tactics_dir and got['sensor'].world is None, 'by default: ranked, filed as live, in the folder asked for')
+        A.tactics, A.tactics_source = 'explore', 'selfplay'
+        got = pilot.make_tactics(A, world=None)
+        check(got['mode'] == 'explore' and got['source'] == 'selfplay', '--tactics explore --tactics-source selfplay (the nightly self-play)')
+        A.tactics = 'off'
+        check(pilot.make_tactics(A, world=None) is None, '--tactics off: the old ladder, nothing read or written')
+        A.tactics = None
+        os.environ['PILOT_TACTICS'] = 'fixed'
+        check(pilot.make_tactics(A, world=None)['mode'] == 'fixed', '$PILOT_TACTICS=fixed: the old order, attempts still written')
+        check(not pilot.make_tactics(A, world=None)['book'].readonly, 'a library is written by default')
+        A.tactics_readonly = True
+        check(pilot.make_tactics(A, world=None)['book'].readonly, '--tactics-readonly: the library is only read')
+        A.tactics_readonly = False
+        os.environ['PILOT_TACTICS_READONLY'] = '1'
+        check(pilot.make_tactics(A, world=None)['book'].readonly, '$PILOT_TACTICS_READONLY=1 as well')
+        del os.environ['PILOT_TACTICS_READONLY']
+        os.environ['PILOT_LEARN'] = 'off'
+        check(pilot.make_tactics(A, world=None) is None, '$PILOT_LEARN=off turns it off, whatever $PILOT_TACTICS says')
+        A.tactics = 'ranked'
+        check(pilot.make_tactics(A, world=None)['mode'] == 'ranked', 'the flag wins over the environment')
+    finally:
+        for k, v in keep.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix='recover-test-') as t:
         tmp = Path(t)
@@ -908,6 +1051,7 @@ def run():
         follow_checks(tmp)
         humanized_run_checks(tmp)
         vision_checks(tmp)
+        tactics_checks(tmp)
     print('test_recover: all passed')
 
 

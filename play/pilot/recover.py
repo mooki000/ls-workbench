@@ -9,7 +9,10 @@ What it does, in the order the pilot meets it:
   2. `Recovery.action` is the ladder, one rung per decision, no model call: sidestep, back up and come at it from an
      angle, roll, a jump-attack-free hop, skip the stuck route point, and last a local re-plan (the pilot calls its
      planner) with the point marked bad and the target left. Any ground gained ends the ladder: the rung that worked is
-     remembered for that spot (`soft`), a ladder that failed marks the spot `bad`.
+     remembered for that spot (`soft`), a ladder that failed marks the spot `bad`. Given a tactics library (tactics.py:
+     `Recovery(book=, sensor=)`) the rungs are its tactics, in the order its ranking gives for the cause of the block
+     (`mode` ranked; `fixed` keeps this order and still records; `explore` is the nightly self-play's), and every
+     rung's result and every block is written back to it.
   3. `BadPoints` is the memory, one file per map under the cache folder (pilot/cache, or $PILOT_CACHE): a point, a radius,
      what happened and which rung got past it. `reroute` bends a route's waypoints around the points before they are
      sent, `nudge_segment` moves a checkpoint out of a bad point's circle, and the planner reads what was tried.
@@ -29,6 +32,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import tactics
+from tactics import DIRS, dir_name, heading, move_line, parse_move, run_timeout, seg_dist, stick_for, wrap, yaw_to  # noqa: F401  (the moves' primitives moved to tactics.py; recover's callers find them here)
+
 HERE = Path(__file__).resolve().parent
 
 LADDER = ('sidestep', 'angle', 'roll', 'hop', 'next-point', 'replan')
@@ -44,64 +50,10 @@ NO_REPEAT = ('go', 'go-near')   # a candidate whose lines already ended stuck fr
 # what the eyes (vision.py) may offer at a stuck point; the first of them goes before the ladder's own rungs, once per block
 VISION_RUNGS = ('vision-side-left', 'vision-side-right', 'vision-wait-scene', 'vision-talk', 'vision-fight')
 ARRIVE_SLACK_M = 0.25          # Link stands this far outside a target's radius after a move that reached it (he drifts a little)
-DIRS = [(0, 'up'), (45, 'up-right'), (90, 'right'), (135, 'down-right'), (180, 'down'), (-135, 'down-left'),
-        (-90, 'left'), (-45, 'up-left')]
-
-
-def wrap(d):
-    return (d + 180.0) % 360.0 - 180.0
-
-
-def yaw_to(dx, dz):
-    return math.degrees(math.atan2(dx, dz))
-
-
-def heading(yaw):
-    """(dx, dz) of a unit step along the yaw (0 along +z, 90 along +x)."""
-    r = math.radians(yaw)
-    return math.sin(r), math.cos(r)
 
 
 def is_travel(label):
     return label in TRAVEL or str(label).startswith(('recover:', 'vision-side'))
-
-
-def parse_move(line):
-    w = line.split()
-    if len(w) < 3 or w[0] not in ('walk', 'run'):
-        return None
-    try:
-        return w[0], float(w[1]), float(w[2]), w[3:]
-    except ValueError:
-        return None
-
-
-def move_line(verb, x, z, radius, timeout):
-    return f'{verb} {x:.2f} {z:.2f} radius {radius:g} timeout {int(timeout)}'
-
-
-def run_timeout(metres):
-    return int(max(6, metres / 3 + 5))
-
-
-def seg_dist(p, a, b):
-    """(distance, t) of point p to the segment a-b, t in 0..1 along it."""
-    dx, dz = b[0] - a[0], b[1] - a[1]
-    ll = dx * dx + dz * dz
-    t = 0.0 if ll < 1e-9 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / ll))
-    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dz)), t
-
-
-def stick_for(yaw, camera, sign=1.0, mag=1.0):
-    """(lx, ly) in -32767..32767 that moves Link toward the world yaw: the stick's angle is the camera's yaw minus the wanted
-    yaw, right positive (the game side's walk steers the same way; `sign` is its learned handedness)."""
-    want = math.radians(wrap(camera - yaw) * sign)
-    return round(mag * 32767 * math.sin(want)), round(mag * 32767 * math.cos(want))
-
-
-def dir_name(yaw, camera, sign=1.0):
-    want = wrap(camera - yaw) * sign
-    return min(DIRS, key=lambda d: abs(wrap(d[0] - want)))[1]
 
 
 def is_blocked(result, moved=0.0, left=None):
@@ -345,6 +297,7 @@ class Action:
     rung: str = ''
     kind: str = 'lines'
     at: tuple = None
+    info: dict = None        # with a tactics library: the cause and the order this rung came from (the decision row carries it)
 
 
 @dataclass
@@ -366,6 +319,9 @@ class RecState:
     learned: str = None
     vision_used: bool = False                        # the eyes' own rung was taken in this block
     episode: dict = None
+    sense: dict = None                               # with a tactics library: {cause, why, geom, map, age, at} of the block being worked on
+    attempts: list = field(default_factory=list)    # the tactics tried in the current block: {tactic, outcome, gain_m, moved_m}
+    order: list = field(default_factory=list)       # the ranking the last rung was taken from: [{tactic, score, n, wins}]
 
     @property
     def verdict(self):
@@ -394,12 +350,20 @@ class Config:
     cap_other: int = 6       # identical answers that are not moves (a press, a wait) with nothing changed: the target is left
     reuse_max: int = 2       # an unchanged state is answered from the last answer this often, then asked again
     replans_max: int = 12
+    rungs_max: int = 5       # with a tactics library: this many tactics in a block, then replan (the old ladder had five and replan)
+    explore_rungs: int = 12  # the nightly self-play's longer ladder
 
 
 class Recovery:
-    def __init__(self, bad=None, cfg=None):
+    def __init__(self, bad=None, cfg=None, book=None, sensor=None, mode='ranked', source='live'):
+        """book: a tactics.Book (None: the old ladder, nothing recorded); sensor: a tactics.Sensor (the cause of a block; none: unknown); mode: `ranked` (the
+        book's order), `fixed` (the old order; what happens is still recorded), `explore` (the book's order with the optimism bonus: the nightly self-play);
+        source: what the attempts are filed under."""
         self.bad = bad
         self.cfg = cfg or Config()
+        self.book, self.mode, self.source = book, mode, source
+        self.sensor = sensor if sensor is not None or book is None else tactics.Sensor(None)
+        self.history = []   # every tactic attempt of this run: {tactic, cause, outcome, gain_m} (summary.json's `recover.tactics`)
 
     def new_state(self):
         c = self.cfg
@@ -407,24 +371,34 @@ class Recovery:
 
     # ---- the ladder
 
+    def tactic_ctx(self, rs, ctx):
+        """The ladder's ctx as the tactics build from it: the block's place, the side, the route lines that were blocked."""
+        b = rs.blocked or {}
+        return dict(ctx, block=b.get('pos'), side=rs.side, block_lines=b.get('lines'), block_idx=b.get('idx'))
+
     def available(self, rs, ctx):
-        """The rungs not yet tried in this block that can be tried here, in order (a rung learned for this spot first)."""
-        names = list(LADDER)
+        """The tactics not yet tried in this block that can be tried here, best first, then `replan` (a tactic learned for this spot first). Without a book, or
+        in `fixed` mode, the old ladder; with one, the book's ranking for the block's cause, capped at `rungs_max` tactics."""
+        ranked = self.book is not None and self.mode != 'fixed'
+        s = rs.sense or {}
+        cause = (s.get('cause') or 'unknown') if ranked else 'unknown'
+        tctx = self.tactic_ctx(rs, ctx)
+        rows = []
+        if ranked:
+            rows = self.book.rank(cause, map=s.get('map'), age=s.get('age'), at=s.get('at'), geom=s.get('geom'), explore=self.mode == 'explore')
+            names = [r['tactic'] for r in rows]
+        else:
+            names = list(LADDER)
+        names = [n for n in names if n != 'replan']
         if rs.learned in names:
             names.remove(rs.learned)
             names.insert(0, rs.learned)
-        out = []
-        for n in names:
-            if n in rs.tried:
-                continue
-            if n == 'hop' and (not ctx.get('hop_ok', True) or ctx.get('camera') is None):
-                continue
-            if n == 'roll' and ctx.get('camera') is None:
-                continue
-            if n == 'next-point' and not self.next_lines(rs, ctx):
-                continue
-            out.append(n)
-        if 'replan' not in out and 'replan' not in rs.tried:
+        out = [n for n in names if n not in rs.tried and tactics.applicable(n, cause, tctx, self.book)]
+        if ranked:
+            rs.order = [{'tactic': r['tactic'], 'score': round(r['score'], 3), 'n': r['n'], 'wins': r['wins']} for r in rows if r['tactic'] in out]
+            limit = self.cfg.explore_rungs if self.mode == 'explore' else self.cfg.rungs_max
+            out = out[:max(0, limit - sum(1 for n in rs.tried if n not in ('vision', 'replan')))]
+        if 'replan' not in rs.tried:
             out.append('replan')
         return out
 
@@ -432,57 +406,19 @@ class Recovery:
     def next_lines(rs, ctx):
         """The route points after the one that ended stuck: of the lines that were blocked, else of the plan from here."""
         b = rs.blocked or {}
-        lines, idx = b.get('lines') or [], b.get('idx')
-        if idx is not None and idx + 1 < len(lines) and all(parse_move(x) for x in lines[idx + 1:]):
-            return list(lines[idx + 1:])
-        go = ctx.get('go_lines') or []
-        if len(go) >= 2 and all(parse_move(x) for x in go):
-            return list(go[1:])
-        return []
+        return tactics.next_lines(dict(ctx, block_lines=b.get('lines'), block_idx=b.get('idx')))
 
     def action(self, rs, ctx):
-        """The next rung as an Action, marked tried. ctx: pos (x, z), camera, sign, target {x, z, radius}, go_lines (the plan
-        to the target from here), hop_ok."""
-        cfg = self.cfg
+        """The next rung as an Action, marked tried. ctx: pos (x, z), camera, sign, target {x, z, radius}, go_lines (the plan to the target from here), hop_ok;
+        with a tactics library also doors, alt_lines (the world model's alternative edge) and plan_from (a planner's way from a point)."""
         name = (self.available(rs, ctx) or ['replan'])[0]
         rs.tried.append(name)
-        px, pz = ctx['pos']
-        tx, tz = ctx['target']['x'], ctx['target']['z']
-        radius = ctx['target'].get('radius', 1.0)
-        d = math.hypot(tx - px, tz - pz)
-        theta = yaw_to(tx - px, tz - pz) if d > 1e-3 else 0.0
-        go = list(ctx.get('go_lines') or [move_line('run', tx, tz, radius, run_timeout(d))])
-        at = (round(px, 2), round(pz, 2))
-        cam, sign, side = ctx.get('camera'), ctx.get('sign', 1.0), rs.side
-        rx, rz = (rs.blocked or {}).get('pos') or (px, pz)   # the sidestep and the angle are measured from where the block was
-        dref = math.hypot(tx - rx, tz - rz)
-        tref = yaw_to(tx - rx, tz - rz) if dref > 1e-3 else theta
-        if name == 'sidestep':
-            hx, hz = heading(tref + 90.0 * side)
-            lines = [move_line('walk', rx + cfg.side_m * hx, rz + cfg.side_m * hz, 0.6, 4)] + go
-            text = f"step {cfg.side_m:g} m to the {'left' if side > 0 else 'right'} of the way to the target, then on to it"
-        elif name == 'angle':
-            bx, bz = heading(tref + 180.0)
-            back = (rx + cfg.back_m * bx, rz + cfg.back_m * bz)
-            length = max(4.0, min(10.0, dref * 0.5))
-            hx, hz = heading(tref - side * cfg.angle_deg)   # the other side from the sidestep
-            via = (back[0] + length * hx, back[1] + length * hz)
-            lines = [move_line('walk', back[0], back[1], 0.4, 4), move_line('walk', via[0], via[1], 1.5, 6)] + go
-            text = (f"back up {cfg.back_m:g} m from the block and come at it {cfg.angle_deg:g} degrees to the "
-                    f"{'right' if side > 0 else 'left'}, then on to the target")
-        elif name == 'roll':
-            lines = [f'roll {dir_name(theta, cam, sign)}', 'wait 0.4'] + go
-            text = 'roll toward the target, then on to it'
-        elif name == 'hop':
-            lx, ly = stick_for(theta, cam, sign)
-            lines = [f'raw 0:LX={lx}+LY={ly}/800,0.15:X/100 1.2', 'wait 0.3'] + go
-            text = 'jump (X, no sword) toward the target, then on to it'
-        elif name == 'next-point':
-            lines = self.next_lines(rs, ctx)
-            text = 'skip the route point that ended stuck and go to the next'
-        else:
-            return Action('recover:replan', [], 'plan again from here, mark the point bad, leave the target', 'replan', 'replan', at)
-        return Action(f'recover:{name}', lines, text, name, 'lines', at)
+        at = (round(ctx['pos'][0], 2), round(ctx['pos'][1], 2))
+        info = {'cause': (rs.sense or {}).get('cause') or 'unknown', 'order': list(rs.order[:4])} if self.book is not None else None
+        if name == 'replan':
+            return Action('recover:replan', [], 'plan again from here, mark the point bad, leave the target', 'replan', 'replan', at, info)
+        lines, text = tactics.make(name, self.tactic_ctx(rs, ctx), self.cfg, self.book)
+        return Action(f'recover:{name}', lines, text, name, 'lines', at, info)
 
     def close_in(self, ctx):
         """A reach target's stand-off point was reached short of its radius: walk onto the target itself."""
@@ -512,33 +448,80 @@ class Recovery:
         ladder = bool(rs.blocked) and label.startswith(('recover:', 'vision-')) and label != 'recover:close-in'
         rs.progress.observe(t, xz, dist, result, moved, left, target.radius, travel, ladder)
         v = rs.verdict
+        if self.book is not None and ladder and label.startswith('recover:') and label != 'recover:replan':
+            self.note_attempt(rs, area, label[len('recover:'):], result, moved, st, target, run)
         if rs.blocked and rs.progress.gained:
             events.append(self.recovered(rs, area, st, run, target.name))
         if v['stuck'] and rs.blocked is None:
-            events.append(self.start_block(rs, area, xz, t, label, lines, results, target.name, v['why']))
+            events.append(self.start_block(rs, area, xz, t, label, lines, results, target.name, v['why'], st=st, target=target))
         if rs.progress.gained:
             rs.streak, rs.streak_key = 0, None
         return events
 
-    def start_block(self, rs, area, xz, t, label, lines, results, target_name, why):
+    def note_attempt(self, rs, area, tactic, result, moved, st, target, run):
+        """A tactic's rung ran: it worked when ground was gained, else it failed (a step that says nothing about ground is no attempt). Written to the book."""
+        if result in NEUTRAL_RESULTS or not rs.blocked:
+            return
+        s = rs.sense or {}
+        pos, d0 = st['pos'], rs.blocked.get('dist')
+        gain = None if d0 is None else round(d0 - math.hypot(target.x - pos[0], target.z - pos[2]), 2)
+        outcome = 'worked' if rs.progress.gained else 'failed'
+        rs.attempts.append({'tactic': tactic, 'outcome': outcome, 'gain_m': gain, 'moved_m': moved})
+        self.history.append({'tactic': tactic, 'cause': s.get('cause') or 'unknown', 'outcome': outcome, 'gain_m': gain})
+        try:
+            self.book.record(tactic, s.get('cause') or 'unknown', outcome, map=s.get('map') or area, age=s.get('age'), at=s.get('at'), geom=s.get('geom'), gain_m=gain,
+                             source=self.source, run=run, side='L' if rs.side > 0 else 'R', block=f'{run}#{len(rs.episodes)}', why=s.get('why'))
+        except (OSError, ValueError) as e:   # a library that cannot be written is a record lost, never a reason to stop
+            rs.attempts[-1]['error'] = f'{type(e).__name__}: {e}'[:120]
+
+    def sense_block(self, area, xz, results, idx, st, target):
+        """The cause and the geometry of a block: from the step that ended stuck (its verb, result, detail and the point it wanted), the state and the sensor."""
+        ev = results[idx] if idx is not None and idx < len(results) else next((r for r in reversed(results or []) if r and r.get('ev') == 'step'), None)
+        verb, want = 'run', ((target.x, target.z) if target is not None else None)
+        result, detail, moved = 'stuck', '', None
+        if ev:
+            w = (ev.get('src') or '').split()
+            if w and w[0] in ('walk', 'run', 'enter', 'pickup') and len(w) >= 3:
+                try:
+                    verb, want = w[0], (float(w[1]), float(w[2]))
+                except ValueError:
+                    pass
+            result, detail, moved = ev.get('result') or 'stuck', ev.get('detail') or '', ev.get('moved')
+        st = st or {}
+        return self.sensor.sense(map=area, pos=st.get('pos') or [xz[0], 0.0, xz[1]], want=want, result=result, verb=verb, detail=detail, moved=moved,
+                                 prompt=st.get('prompt'), event=st.get('event') or 0, target_y=getattr(target, 'y', None))
+
+    def start_block(self, rs, area, xz, t, label, lines, results, target_name, why, st=None, target=None):
         idx = None
         for i, r in enumerate(results):
             if r and r.get('ev') == 'step' and r['src'].split()[0] in ('walk', 'run') and r.get('result') in ('stuck', 'timeout'):
                 idx = i
                 break
-        rs.blocked = {'pos': (round(xz[0], 2), round(xz[1], 2)), 't': t, 'label': label, 'lines': list(lines), 'idx': idx}
+        rs.blocked = {'pos': (round(xz[0], 2), round(xz[1], 2)), 't': t, 'label': label, 'lines': list(lines), 'idx': idx,
+                      'dist': None if target is None else round(math.hypot(target.x - xz[0], target.z - xz[1]), 2)}
         rs.tried, rs.learned, rs.vision_used = [], None, False
+        rs.attempts, rs.order, rs.sense = [], [], None
+        if self.book is not None:
+            try:
+                rs.sense = self.sense_block(area, xz, results, idx, st, target)
+            except Exception:   # noqa: BLE001  the sensor is an aid: a block without a cause is an unknown one
+                rs.sense = {'cause': 'unknown', 'why': 'the sensor failed', 'geom': {}, 'map': area, 'at': None}
         if self.bad is not None:
             e = self.bad.near(area, xz[0], xz[1], margin=1.0)
             fix = (e or {}).get('fix') or ''
             if fix.startswith('sidestep-'):
                 rs.learned, rs.side = 'sidestep', (1 if fix.endswith('left') else -1)
-            elif fix in LADDER:
+            elif fix in LADDER or (self.book is not None and fix in tactics.TACTICS):
                 rs.learned = fix
         rs.episode = {'target': target_name, 'at': list(rs.blocked['pos']), 't0': t, 't1': None, 's': None, 'why': why, 'rungs': [],
                       'how': None}
+        if rs.sense:
+            rs.episode['cause'] = rs.sense['cause']
         rs.episodes.append(rs.episode)
-        return {'status': 'blocked', 'at': list(rs.blocked['pos']), 'why': why, 'learned': rs.learned}
+        ev = {'status': 'blocked', 'at': list(rs.blocked['pos']), 'why': why, 'learned': rs.learned}
+        if rs.sense:
+            ev.update(cause=rs.sense['cause'], geom=rs.sense.get('geom'))
+        return ev
 
     def recovered(self, rs, area, st, run, target_name):
         """Ground was gained after a block: the rung that did it (the last tried) is kept for the spot as a `soft` point."""
@@ -547,7 +530,7 @@ class Recovery:
         fix = (f"sidestep-{'left' if rs.side > 0 else 'right'}" if rung == 'sidestep' else rung)
         if self.bad is not None and fix:
             self.bad.add(area, b['pos'][0], b['pos'][1], 'soft', why=f"blocked by {b['label']}", run=run, target=target_name, fix=fix)
-        self.close_episode(rs, t, 'recovered')
+        self.close_episode(rs, t, 'recovered', area=area, run=run)
         ev = {'status': 'recovered', 'rung': rung, 'at': list(b['pos']), 's': rs.episodes[-1]['s'] if rs.episodes else None}
         rs.blocked, rs.tried, rs.learned = None, [], None
         return ev
@@ -557,18 +540,28 @@ class Recovery:
         b = rs.blocked or {'pos': (st['pos'][0], st['pos'][2]), 'label': ''}
         if self.bad is not None:
             self.bad.add(area, b['pos'][0], b['pos'][1], 'bad', why=why, run=run, target=target_name)
-        self.close_episode(rs, st.get('t'), 'marked-bad')
+        self.close_episode(rs, st.get('t'), 'marked-bad', area=area, run=run)
         ev = {'status': 'marked-bad', 'at': list(b['pos']), 'rungs': list(rs.tried), 's': rs.episodes[-1]['s'] if rs.episodes else None}
         rs.blocked, rs.tried, rs.learned = None, [], None
         rs.progress.anchor(st.get('t'), (st['pos'][0], st['pos'][2]), dist)
         return ev
 
-    def close_episode(self, rs, t, how):
+    def close_episode(self, rs, t, how, area=None, run=None):
+        """The block is over (recovered, marked-bad, left): its length is kept, and with a book it is filed as one episode: the cause, the geometry, what was tried
+        in what order and what finally worked (the lessons' source)."""
         e = rs.episode
         if e and e.get('how') is None:
             e['t1'], e['how'] = t, how
             e['s'] = round((t - e['t0']), 2) if t is not None and e.get('t0') is not None else None
             e['rungs'] = list(rs.tried)
+            s = rs.sense
+            if self.book is not None and s:
+                try:
+                    self.book.add_block(map=s.get('map') or area, age=s.get('age'), at=s.get('at'), cause=s['cause'], why=s.get('why'), geom=s.get('geom'),
+                                        tried=[a['tactic'] for a in rs.attempts], worked=next((a['tactic'] for a in rs.attempts if a['outcome'] == 'worked'), None),
+                                        how=how, s=e['s'], target=e.get('target'), run=run, source=self.source)
+                except (OSError, ValueError):
+                    pass
         rs.episode = None
 
     # ---- the guard in front of the decider
