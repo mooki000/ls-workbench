@@ -50,6 +50,7 @@ class Cell:
     start: dict = None            # {map, x, z, tol_m}: where the first sample must be (else the run is `invalid`, not a failure)
     enabled: bool = True
     note: str = ''
+    blocker: str = None           # a KNOWN cause outside the pilot that makes the cell fail today (e.g. a game input that does nothing): a failed run is stored as `blocked`, not as a failure of the player
 
     @property
     def wall_s(self):
@@ -71,7 +72,7 @@ PUBLIC = (
     Cell('chapter-lake', 'one short chapter: the field to the lake', 'cross the open field to the lake shore (a chapter: objectives, a planner)', kind='chapter',
          budget_s=200, max_decisions=60),
 )
-LOCAL_FIELDS = ('segment', 'save', 'proof', 'start', 'budget_s', 'max_decisions', 'enabled', 'note')
+LOCAL_FIELDS = ('segment', 'save', 'proof', 'start', 'budget_s', 'max_decisions', 'enabled', 'note', 'blocker')
 
 
 class BoardError(ValueError):
@@ -130,7 +131,10 @@ def proof_errors(p, top=True):
             bad.append('rupees_gain needs a whole gain of 1 or more')
     elif k == 'at':
         if not all(isinstance(p.get(f), (int, float)) for f in ('x', 'z', 'r')) or not p.get('map'):
-            bad.append('at needs map, x, z, r (and optionally y_min, y_max)')
+            bad.append('at needs map, x, z, r (and optionally y_min, y_max, forbid)')
+        for z in p.get('forbid') or ():
+            if not isinstance(z, dict) or not all(isinstance(z.get(f), (int, float)) for f in ('x', 'z', 'r')):
+                bad.append('a forbid zone needs x, z, r (and optionally y_min, y_max)')
     elif k == 'map':
         if not p.get('to'):
             bad.append('map needs `to`')

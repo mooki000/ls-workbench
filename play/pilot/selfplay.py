@@ -76,6 +76,7 @@ COOL_NIGHTS = 3
 TOP_N = 8               # the rungs of the ladder that count in "how little is known"
 SCARCE_N = 12.0         # a cause with this many attempts in the Book is half known
 RUNS_FULL = 12          # a place that stopped this many runs has the full weight of impact
+STRAIGHT_MISS_M = 1.5   # a visit runs straight at the want: the stuck point must lie within this far of the line from the approach point to the want
 W_LEARN, W_IMPACT = 0.6, 0.4
 DIVERSITY = 0.7         # a second cluster of the same cause on the same map tonight counts this much of its value
 SEC_PER_RUNG = 8.0      # about this much game time for a rung of the ladder
@@ -314,6 +315,10 @@ def candidates(lib, book, ledger, night, *, cool_nights=COOL_NIGHTS, ignore_ledg
                 skip('no want')
                 continue
             ap, why = approach_point(m, c)
+            if ap:
+                miss = tactics.seg_dist((c['at'][0], c['at'][2]), (ap['pos'][0], ap['pos'][2]), tuple(c['want']))[0]
+                if miss > STRAIGHT_MISS_M:   # (the visit runs straight at the want: a stuck point the line misses is walked past, as hold 1's three visits did)
+                    ap, why = None, f'the straight run from the approach to its want passes {miss:.1f} m from the stuck point (more than {STRAIGHT_MISS_M:g} m)'
             age = (ap or {}).get('age') or cluster_age(m, c)
             if age not in ('child', 'adult'):
                 skip('age unknown')
@@ -402,6 +407,7 @@ def segment_text(name, night, area, want, save, wall, budget_s, max_decisions=40
         f'save = {json.dumps(str(save))}',
         'boot = "continue"',
         'humanize = 0',
+        'straight = true',   # no offline planner: the visit runs straight at the want, as the runs that were stopped there did (the first hold's plans routed round every block: 0 blocks in 3 visits)
         f'wall = {int(wall)}',
         f'budget_seconds = {int(budget_s)}',
         f'max_decisions = {int(max_decisions)}',
@@ -1353,6 +1359,109 @@ def seed_book(a, log=print):
         return None
 
 
+# ---- the nightly timer: a transient user timer (systemd-run --user --on-calendar, no unit file written), each firing re-arms the next night, like PlayBench's
+
+TIMER_PREFIX = 'pilot-selfplay-'
+
+
+def next_calendar(at, now=None):
+    """'YYYY-MM-DD HH:MM:SS': the next time of day `at` (HH:MM) strictly after `now`."""
+    now = now or datetime.datetime.now()
+    hh, mm = (int(x) for x in at.split(':'))
+    t = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if t <= now:
+        t += datetime.timedelta(days=1)
+    return t.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def timer_unit(cal):
+    return TIMER_PREFIX + cal.replace(' ', '-').replace(':', '')
+
+
+def timer_argv(a, cal, quiet=None, measuring=None, python=None):
+    """systemd-run's command line: the unit, the calendar, the two lane locks as the service's environment, and the frozen code's `timer fire` (which re-arms)."""
+    argv = ['systemd-run', '--user', f'--unit={timer_unit(cal)}', f'--on-calendar={cal}', '--timer-property=AccuracySec=60s', '--collect',
+            f'--setenv=PILOT_QUIET_LOCK={quiet or QUIET}', f'--setenv=PILOT_MEASURING_LOCK={measuring or MEASURING}',
+            python or sys.executable, '-I', '-B', str(Path(a.code) / 'pilot' / 'selfplay.py'), 'timer', 'fire', '--copy', str(a.copy), '--code', str(a.code),
+            '--max-sessions', str(a.max_sessions), '--name', a.name, '--at', a.at, '--user-authorized', '--authority', a.authority or '']
+    if a.refreeze:
+        argv += ['--refreeze', str(a.refreeze)]
+    if a.root:
+        argv += ['--root', str(a.root)]
+    return argv
+
+
+def arm_timer(a, now=None, run=subprocess.run, quiet=None, measuring=None):
+    """Arm the next night's transient timer and record it (<root>/timer.json: the unit, the calendar, the command and the authority). Refused without the user's word
+    (--user-authorized, --authority: what the user said) and without the lane's lock files in the environment."""
+    if not getattr(a, 'user_authorized', False):
+        raise PlanError('arming the nightly timer needs the user\'s word: pass --user-authorized and --authority "<what the user said>"')
+    quiet, measuring = quiet or QUIET, measuring or MEASURING
+    if not quiet or not measuring:
+        raise PlanError('the timer needs the main lane\'s lock files: set PILOT_QUIET_LOCK and PILOT_MEASURING_LOCK')
+    cal = next_calendar(a.at, now)
+    argv = timer_argv(a, cal, quiet, measuring)
+    r = run(argv, capture_output=True, text=True)
+    root = Path(a.root or default_root())
+    root.mkdir(parents=True, exist_ok=True)
+    info = {'at': now_iso(), 'calendar': cal, 'unit': timer_unit(cal), 'command': argv, 'result': (r.stdout + r.stderr).strip(), 'rc': r.returncode, 'authority': a.authority}
+    (root / 'timer.json').write_text(json.dumps(info, indent=1))
+    if r.returncode:
+        raise PlanError(f'systemd-run failed: {info["result"]}')
+    return info
+
+
+def fire_timer(a, arm=None, run=subprocess.run, nightly=None):
+    """What the timer runs: arm the next night FIRST (a failure below must not end the chain), replace the frozen code (a hold of it that is running keeps its code), then
+    one `nightly`. A night skipped (a waiter of its own still queued, a ran-already night, a refusal) prints why and is no failure. Always returns 0."""
+    arm = arm or arm_timer
+    nightly = nightly or (lambda b: b.fn(b))
+    try:
+        info = arm(a)
+        print(f'timer: next night armed: {info["unit"]}', flush=True)
+    except Exception as e:   # noqa: BLE001
+        print(f'timer: the next night could not be armed: {e}', flush=True)
+    if a.refreeze:
+        r = run(['bash', str(a.refreeze), str(a.code)], capture_output=True, text=True)
+        if r.returncode == 3:
+            print('timer: a hold of the frozen code is running: the code is left as it is', flush=True)
+        elif r.returncode:
+            print(f'timer: night skipped: the code could not be frozen ({(r.stderr or r.stdout).strip()[-200:]})', flush=True)
+            return 0
+        else:
+            print('timer: ' + r.stdout.strip(), flush=True)
+    args = ['nightly', '--copy', str(a.copy), '--code', str(a.code), '--max-sessions', str(a.max_sessions), '--name', a.name] + (['--root', str(a.root)] if a.root else [])
+    rc = nightly(make_parser().parse_args(args))
+    print(f'timer: nightly returned {rc}' + (' (skipped or refused: the reason is printed above)' if rc else ''), flush=True)
+    return 0
+
+
+def cmd_timer(a):
+    if a.action == 'arm':
+        try:
+            info = arm_timer(a)
+        except PlanError as e:
+            print('refused:', e)
+            return 2
+        print(f'armed: {info["unit"]} at {info["calendar"]}')
+        return 0
+    if a.action == 'fire':
+        return fire_timer(a)
+    root = Path(a.root or default_root())
+    try:
+        info = json.loads((root / 'timer.json').read_text())
+    except (OSError, ValueError):
+        print('no timer recorded')
+        return 0
+    if a.action == 'status':
+        print(json.dumps({k: info[k] for k in ('unit', 'calendar', 'at', 'authority')}))
+        print(subprocess.run(['systemctl', '--user', 'list-timers', '--all', '--no-pager'], capture_output=True, text=True).stdout)
+        return 0
+    r = subprocess.run(['systemctl', '--user', 'stop', info['unit'] + '.timer'], capture_output=True, text=True)
+    print(f'disarmed {info["unit"]}' if r.returncode == 0 else f'could not stop {info["unit"]}: {r.stderr.strip()}')
+    return r.returncode
+
+
 def cmd_nightly(a):
     """plan, saves, check, queue for one night; running it again for the same night changes nothing, and it never queues beside another waiter of its own."""
     try:
@@ -1479,6 +1588,18 @@ def make_parser():
     p.add_argument('plan')
     p.add_argument('--out')
     p.set_defaults(fn=cmd_report)
+    p = sub.add_parser('timer')
+    p.add_argument('action', choices=('arm', 'fire', 'status', 'disarm'))
+    p.add_argument('--at', default='03:30', help='the time of day (HH:MM)')
+    p.add_argument('--copy')
+    p.add_argument('--code', help='the frozen code folder')
+    p.add_argument('--max-sessions', dest='max_sessions', type=int, default=3)
+    p.add_argument('--name', default='PilotLearn')
+    p.add_argument('--refreeze', help='a script that replaces the frozen code (called with the code folder; exit 3: a hold of it is running)')
+    p.add_argument('--root')
+    p.add_argument('--user-authorized', dest='user_authorized', action='store_true')
+    p.add_argument('--authority', default='', help='what the user said (recorded in timer.json)')
+    p.set_defaults(fn=cmd_timer)
     p = sub.add_parser('nightly')
     add_plan_args(p)
     p.add_argument('--name', default='PilotLearn')

@@ -222,8 +222,8 @@ class StubPlanner:
 
 
 def play(tmp, targets, obstacles, decider=None, start=(0, 0), final=None, recovery=True, human=None, bad=None, planner=None,
-         plan=None, stop_short=0, max_decisions=120, area='Fake_Area', follows=None, extra='', eyes=None, tactics=None):
-    """One pilot run against a FakeWorld: (pilot, outcome, world, run_dir)."""
+         plan=None, stop_short=0, max_decisions=120, area='Fake_Area', follows=None, extra='', eyes=None, tactics=None, hud=None):
+    """One pilot run against a FakeWorld: (pilot, outcome, world, run_dir). hud: a function of the live folder that makes the Hud."""
     tmp = Path(tmp)
     seg_path = tmp / f'seg-{time.time_ns()}.toml'
     seg_path.write_text(segment_text(targets, area, max_decisions, extra))
@@ -238,7 +238,8 @@ def play(tmp, targets, obstacles, decider=None, start=(0, 0), final=None, recove
     run_dir = tmp / f'run-{time.time_ns()}'
     run_dir.mkdir()
     p = pilot.Pilot(seg, decider or deciders.Rules(), ch, run_dir, run_dir.name, lambda: True, planner, max_decisions,
-                    follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=tactics)
+                    follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=tactics,
+                    **({'hud': hud(live)} if hud else {}))
     p.plan = plan
     outcome = p.run(st)
     ch.send(['end'])
@@ -998,7 +999,17 @@ def tactics_checks(tmp):
     blk = book6.rows('block')
     check(blk and blk[0]['how'] == 'marked-bad' and blk[0].get('worked') is None and set(blk[0]['tried']) == {a['tactic'] for a in book6.rows('attempt')}, 'a spent ladder is a block row with nothing that worked')
     check(all(a['outcome'] == 'failed' for a in book6.rows('attempt')), 'and every rung of it a failure')
-    # a run with no tactics given is the pilot as it was (no book, no cause on the rows)
+    # a segment with `straight = true` is played with no offline planner (the self-play's visits must walk into a block, not round it)
+    saved_plan, pilot.world_plan = pilot.world_plan, (lambda: 'A PLANNER')
+    try:
+        sp = Path(tmp) / 'seg-straight.toml'
+        sp.write_text(segment_text([('t', 0, 40, 2.5)], 'Fake_S', 40, 'straight = true\n'))
+        plain = Path(tmp) / 'seg-plain.toml'
+        plain.write_text(segment_text([('t', 0, 40, 2.5)], 'Fake_S', 40))
+        mk = lambda path: pilot.Pilot(pilot.Segment(path), deciders.Rules(), pilot.Channel(Path(tmp) / f'live-{path.stem}'), Path(tmp), path.stem, lambda: True)  # noqa: E731
+        check(pilot.Segment(sp).straight and not pilot.Segment(plain).straight and mk(sp).plan is None and mk(plain).plan == 'A PLANNER', 'straight = true: no offline planner; without it the planner as before')
+    finally:
+        pilot.world_plan = saved_plan
     p, outcome, world, rd = play(tmp, [('t', 0, 40, 2.5)], [Post(0, 20, 2.2)], area='Fake_Plain')
     blocked = [e for e in rows(rd, 'recover') if e['status'] == 'blocked']
     check(outcome == 'solved' and blocked and 'cause' not in blocked[0] and 'tactics' not in p.recover_summary(), 'without a tactics library the rows are as before')

@@ -4,6 +4,7 @@
                   best sample closed, when the proof is a place), `? why` (invalid: kept, not counted), `-` (not run)
   trend table     one row per night: the pilot commit and the game build it played with, and per arm: cells solved of the cells that counted, the median time to
                   goal of those solved, stuck seconds, decisions and USD over the cells that counted
+  blocked         a failed run of a cell with a known cause outside the pilot (a game input that does nothing): shown as `blocked`, left out of solved/valid
   changes         between two nights: the cells that flipped, only over cells whose fingerprint (frozen segment, save, proof, budget) and arm hash are the same
   chart           (1) cells solved per night and arm, with the nights the pilot commit or the game build changed marked; (2) the grid cell x night per arm (green met,
                   orange-to-pink fail by progress, yellow invalid, grey not run); (3) stuck seconds and cost per night
@@ -28,6 +29,8 @@ def label(row):
         return '-'
     if not row['valid']:
         return '? invalid'
+    if row.get('blocker') and not row['success']:
+        return 'blocked'
     if row['success']:
         return f"ok {row['time_to_goal_s']:.0f} s" if row['time_to_goal_s'] is not None else 'ok'
     return f"fail {row['progress'] * 100:.0f}%" if row['progress'] is not None else 'fail'
@@ -36,14 +39,15 @@ def label(row):
 def aggregates(counted, arm, cells):
     """One arm's numbers for one night over the cells that counted ({(cell, arm): row})."""
     rows = [counted[(c, arm)] for c in cells if (c, arm) in counted]
-    valid = [r for r in rows if r['valid']]
+    blocked = [r for r in rows if r['valid'] and not r['success'] and r.get('blocker')]
+    valid = [r for r in rows if r['valid'] and r not in blocked]   # (a known cause outside the pilot: neither a pass nor a failure of the player)
     solved = [r for r in valid if r['success']]
     ttg = [r['time_to_goal_s'] for r in solved if r['time_to_goal_s'] is not None]
 
     def total(key):
         xs = [r[key] for r in valid if r[key] is not None]
         return round(sum(xs), 1) if xs else None
-    return {'run': len(rows), 'valid': len(valid), 'invalid': len(rows) - len(valid), 'solved': len(solved), 'median_ttg': round(statistics.median(ttg), 1) if ttg else None,
+    return {'run': len(rows), 'valid': len(valid), 'blocked': len(blocked), 'invalid': len(rows) - len(valid) - len(blocked), 'solved': len(solved), 'median_ttg': round(statistics.median(ttg), 1) if ttg else None,
             'stuck_s': total('stuck_s'), 'decisions': total('decisions'), 'cost_usd': round(sum(r['cost_usd'] or 0 for r in rows), 4) if rows else None}
 
 
@@ -65,7 +69,7 @@ def night_md(night, counted, cells, arms):
             if r is None:
                 continue
             out.append(f"| {c} | {a} | {label(r)} | {fmt(r['time_to_goal_s'])} | {fmt(r['stuck_s'])} | {fmt(r['decisions'])} | {fmt(r['cost_usd'], 4)} | "
-                       f"{fmt(None if r['progress'] is None else round(r['progress'] * 100))} | {(r['why'] or '')[:90].replace('|', '/')} |")
+                       f"{fmt(None if r['progress'] is None else round(r['progress'] * 100))} | {((('blocked: ' + r['blocker'] + '; ') if r.get('blocker') and not r['success'] else '') + (r['why'] or ''))[:110].replace('|', '/')} |")
     return '\n'.join(out) + '\n'
 
 
@@ -78,7 +82,7 @@ def trend_md(history, cells, arms):
         ag = {a: aggregates(counted, a, cells) for a in arms}
         mark = lambda key, v: v if prev is None or prev.get(key) == v else f'**{v}**'   # noqa: E731
         ident = [n['night'], mark('pilot_commit', n['pilot_commit'] or '?'), mark('build', n['build'] or '?')]
-        solved = [f"{ag[a]['solved']}/{ag[a]['valid']}" + (f" (+{ag[a]['invalid']} invalid)" if ag[a]['invalid'] else '') if ag[a]['run'] else '-' for a in arms]
+        solved = [f"{ag[a]['solved']}/{ag[a]['valid']}" + (f" (+{ag[a]['invalid']} invalid)" if ag[a]['invalid'] else '') + (f" (+{ag[a]['blocked']} blocked)" if ag[a]['blocked'] else '') if ag[a]['run'] else '-' for a in arms]
         rest = [f"{fmt(ag[a]['median_ttg'])} | {fmt(ag[a]['stuck_s'])} | {fmt(ag[a]['decisions'])} | {fmt(ag[a]['cost_usd'], 4)}" for a in arms]
         out.append('| ' + ' | '.join(ident + solved + rest) + ' |')
         prev = n
@@ -96,7 +100,7 @@ def grid_md(history, cells, arm):
             if r is None:
                 cs.append('.')
             else:
-                sym = '?' if not r['valid'] else '+' if r['success'] else '-'
+                sym = '?' if not r['valid'] else '+' if r['success'] else 'b' if r.get('blocker') else '-'
                 if prev is not None and (prev['fingerprint'], prev['arm_hash']) != (r['fingerprint'], r['arm_hash']):
                     sym += '*'
                 cs.append(sym)
@@ -129,6 +133,8 @@ def _cell_color(r):
         return '#efe08a'
     if r['success']:
         return '#2e9e4f'
+    if r.get('blocker'):
+        return '#9fb4c9'
     p = r['progress']
     if p is None:
         return '#e4a0a0'
@@ -188,6 +194,7 @@ def chart_svg(history, cells, arms, title='Pilot scoreboard'):
             s.text(xs[i], y0 + 14, night['night'][4:6] + '-' + night['night'][6:8], 10, 'middle', '#444')
             c = (night['pilot_commit'] or '?')[:7]
             b = (night['build'] or '?')
+            b = b.rsplit('-', 1)[-1] if '-g' in b else b   # (the build's commit part: the version prefix is the same for weeks)
             changed = prev is not None and (prev[0] != c or prev[1] != b)
             s.text(xs[i], y0 + 26, c, 9, 'middle', '#b0301c' if changed and prev[0] != c else '#777')
             s.text(xs[i], y0 + 37, b[:12], 8, 'middle', '#b0301c' if changed and prev[1] != b else '#999')
@@ -218,7 +225,7 @@ def chart_svg(history, cells, arms, title='Pilot scoreboard'):
     ticks(y1)
     # (2) grids
     gy = 60 + hA + 10
-    s.text(20, gy, '2. Each cell, each night (green: met, number = game seconds to goal; pink to orange: not met, by progress; yellow: invalid; grey: not run)', 12, weight='bold')
+    s.text(20, gy, '2. Each cell, each night (green: met, number = game seconds to goal; pink to orange: not met, by progress; blue-grey: blocked by a known cause; yellow: invalid; grey: not run)', 12, weight='bold')
     gy += 12
     for k, a in enumerate(arms):
         col = PALETTE[k % len(PALETTE)]

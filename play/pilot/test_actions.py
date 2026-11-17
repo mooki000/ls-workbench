@@ -66,6 +66,15 @@ def song_checks():
         check(actions.song_table() == {} and actions.note_orders()[0] == ('L', 'R', 'Y', 'X', 'A'), 'no private data: no songs, the hint-bar order first')
     finally:
         os.environ.pop('PILOT_SONG_PITCHES', None)
+    # the shipped files agree: the table's pitches under the confirmed button order give exactly the notes of songs.json (proven in the game: Storms, Minuet; the rest inferred)
+    sp, sj = HERE / 'chapters' / 'song_pitches.json', HERE / 'songs.json'
+    if sp.is_file() and sj.is_file():
+        book = json.loads(sj.read_text())
+        order = actions.note_orders()[0]
+        check(order == ('L', 'R', 'A', 'Y', 'X'), f'the button order believed first is the songbook\'s (L D, R F, A A, Y B, X high D): {order}')
+        notes = {**book['inferred'], **book['proven']}
+        bad = {n: (actions.song_buttons(n, order), s.split()) for n, s in notes.items() if actions.song_table().get(n) and actions.song_buttons(n, order) != s.split()}
+        check(not bad and actions.song_buttons('minuet', order) == 'L X Y A Y A'.split(), f'the pitches table gives the songs.json notes for every song both hold ({bad})')
 
 
 # ---- obstacles

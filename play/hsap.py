@@ -5,7 +5,7 @@ inputs and Link's state through HOS_CONTROL (protocol 1, including the oot subsc
 Received snapshots are normalized for the local pilot and journalled in <live>/state.jsonl, not read from that file.
 
     hsap.py <copy> <tag> <wall seconds> --live <dir> [--save <game user folder>] [--boot newgame|continue|none]
-            [--shots <presents>] [--analog] [--opponent <file>] [--reconnect-wait <s>]
+            [--shots <presents>] [--analog] [--opponent <file>] [--reconnect-wait <s>] [--hud on|off]
             [--game-sock <control socket> --game-live <live input file> --game-log <log> --game-pid <pid>]
 
 Events written: gameplay (the first state with Link in control), step (in = the step's line in steps.txt, src, result,
@@ -53,9 +53,14 @@ Steps (one a line; # starts a note):
   faceat <x> <z> [degrees]    short stick pushes until Link faces the point (default 20 degrees): done / timeout
   ztarget [ms]                hold ZL (default 1200): targeted (the camera or Link turned 4 degrees or more) / none
   camera <left|right|up|down> [ms] | camera to <yaw> [tolerance]   the right stick: turned / none (the yaw before and after)
-  ocarina <note> ... [hold <ms>] [gap <ms>] | ocarina out | ocarina away   D-pad Left takes the ocarina out (the game's log says `oc: the note wait
-                              turned on`), the notes (L R A Y X, the game's own note buttons) are pressed 0.45 s apart, B puts it
-                              away: played / out / away / no-ocarina (no note wait in 3.5 s)
+  ocarina <note> ... [hold <ms>] [gap <ms>] [ready <ms>] | ocarina out | ocarina away   D-pad Left takes the ocarina out (the game's log says
+                              `oc: the note wait turned on`; first it waits until Link is free: a song's playback holds him and a D-pad Left sent
+                              into it is lost); the window then warms up for `ready` ms (default 3000) from that line, since a window opened a
+                              moment ago ignores its first note; the notes (L R A Y X, the game's own note buttons) go out as ONE timed sequence,
+                              each held 100 ms and starting 250 ms after the one before by default (what the game took the Song of Storms at);
+                              then up to 4 s for the game to close its note wait itself: played (it did: a song was taken, the step waits for
+                              Link to be free again) / no-song (it did not: B puts the ocarina away) / out / away / no-ocarina (no note wait in
+                              3.5 s, or Link held 25 s)
   item [button] [ms]          press the item button (default ZR, 150 ms) and report what changed: used / none
   rendezvous <name> [timeout <s>]   two players meet: each writes $HSAP_RENDEZVOUS/<name>.$HSAP_SIDE, waits for another file,
                               and both go 1.5 s after the later one's time (one wall clock): met / timeout / alone (no folder)
@@ -103,6 +108,20 @@ External game (--game-sock, --game-live, --game-log, --game-pid, all four; the d
 that log from its start, appends `duel ready` lines to that live file (never truncated), and counts the game as alive while the
 pid exists (a zombie is gone). `wall` bounds hsap's own life. `end`, the wall time, or the game's exit ends hsap (exit 0) and
 never stops, signals or kills the game. --boot defaults to none; --save and --shots do not apply.
+
+The panel (the pilot's decisions on the game's own screen). The pilot (pilot/pilot.py, --hud on|off) writes the panel's text to
+<live>/hud.txt: plain ASCII, lines separated by newlines (at most 14 lines of 56 characters), the file replaced whole by a rename;
+an empty or absent file means nothing to show. hsap looks at that file about every 0.1 s and sends its text with the bridge's `overlay`
+command ({"cmd":"overlay","text":...,"seconds":60}) when it changed (at most four requests a second: the latest text wins and nothing
+is queued), again every 25 s while it stays the same (the game drops a panel 60 s after the last request), `overlay_clear` when the
+file is emptied or removed and at the end of the run (the game also clears it when this connection closes), and again after a game
+restart. Replies are only read for their error codes, never waited for: no step and no decision waits on the panel. `unavailable` (no
+renderer hook) or `unknown_cmd` (an older build) stops the panel for the rest of the run, noted once in out.jsonl, and nothing else
+about the run changes; another refusal (bad_request, ...) is noted once, that text is not sent again and the next one is tried.
+--hud off or HSAP_HUD=0 (either one) turns all of it off: nothing is sent and the game's environment is as it was. With the panel on
+(the default), a game hsap starts itself is given RX_VK_SHOT_MENU=1: its periodic pictures (--shots) then carry the panel, while the
+bridge's `shot` (the pilot's eyes use it) never does. An external game (--game-sock) is never started or changed by hsap: it gets the
+panel over the control socket, and whether its pictures show it is up to how it was started.
 """
 import argparse
 import collections
@@ -127,6 +146,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # (python3 -I implies
 from hs_names import GAME_EXECUTABLES, log_path
 import hsap_actions
 from hsap_actions import ACTION_VERBS, ActionSteps, plays
+import hsap_items
+from hsap_items import ITEM_VERBS, ItemSteps
 
 HS_RUN = '/home/mooki/Games/.hookshot-harness/hs-run.sh'
 SLOT_VARS = ('HSGATE_SLOT_DIR', 'HSGATE_INTEL_SLOT_DIR', 'HSGATE_SLOT_TEST', 'HSGATE_SLOT_NODESKTOP', 'HSGATE_IN_GATE')
@@ -141,8 +162,15 @@ EMPTY_PROMPTS = (None, '', 'Empty')   # what the sample's `prompt` says when the
 BUTTON_NAMES = ('A', 'B', 'X', 'Y', 'L', 'R', 'ZL', 'ZR', 'PLUS', 'MINUS', 'LS', 'RS', 'LEFT', 'UP', 'RIGHT', 'DOWN')
 NOTE_BUTTONS = ('L', 'R', 'A', 'Y', 'X')   # the ocarina's five note buttons (while it waits for a note); D-pad Left takes it out
 INTERACT_VERBS = ('interact', 'chest', 'talk', 'advance', 'pickup', 'enter', 'ztarget', 'camera', 'faceat', 'ocarina', 'item',
-                  'rendezvous') + ACTION_VERBS   # (`climb` and `roll`: only the forms plays() names; the old forms are handled before)
+                  'rendezvous') + ACTION_VERBS + ITEM_VERBS   # (`climb` and `roll`: only the forms plays() names; the old forms are handled before)
 CAMERA_KEYS = {'left': 'RLEFT', 'right': 'RRIGHT', 'up': 'RUP', 'down': 'RDOWN'}
+HUD_CMDS = ('overlay', 'overlay_clear')   # the control bridge's panel commands
+
+
+def hud_wanted(arg=None, environ=None):
+    """Whether the panel is on: yes, unless --hud off or HSAP_HUD=0 (either one turns it off)."""
+    environ = os.environ if environ is None else environ
+    return arg != 'off' and environ.get('HSAP_HUD') != '0'
 
 
 def prompt_empty(prompt):
@@ -444,7 +472,7 @@ class Game:
     ones given, `wall` bounds hsap's own life, and stop() touches nothing of the game."""
     INPUT_CMDS = ('press', 'stick', 'sequence')
 
-    def __init__(self, copy, tag, wall, run_dir, save=None, watch=(), shots=0, extra=(), reconnect_wait=0.0, external=None):
+    def __init__(self, copy, tag, wall, run_dir, save=None, watch=(), shots=0, extra=(), reconnect_wait=0.0, external=None, hud=False):
         watch = list(dict.fromkeys(watch))
         if len(watch) > 64 or any(not valid_flag(name) for name in watch):
             raise ValueError('watch: at most 64 flag names (1..47 characters), or 0x followed by eight hex digits')
@@ -456,6 +484,7 @@ class Game:
         if not external:
             self.live_in.write_text('')   # (an external game's live file is the game's: never truncated)
         self.state_out = open(self.state_path, 'w')
+        self.inputs_out = open(self.dir / 'inputs.jsonl', 'w')   # every input request as sent, with the present it was sent at (bughunt's replay, the input recording)
         if external:
             self.control_dir, self.control_path = None, external.sock
         else:
@@ -467,6 +496,7 @@ class Game:
         self.tx, self.rx = bytearray(), bytearray()
         self.next_id, self.pending = 0, {}
         self.watch, self.reconnect_wait = watch, float(reconnect_wait)
+        self.hud = None   # the panel's sender (Executor makes it), which the replies to its requests go to
         self.down, self.down_since, self.restarts = False, None, 0   # control socket lost, awaited again; how often
         self.t_resync, self.t_shift, self.t_last = False, 0.0, None   # game time stays one clock across a restart
         self.duel = DuelTracker()
@@ -484,10 +514,14 @@ class Game:
             self.R = self.copy / 'runs' / tag
             env = {k: v for k, v in os.environ.items() if k not in SLOT_VARS and k != 'OPENAI_API_KEY'}
             cmd = [HS_RUN, str(self.copy), tag, str(int(wall))]
+            if os.environ.get('HSAP_WINDOW') == '1':   # a windowed run (hs-run.sh --window: only while its window-ok switch exists; HS_WINDOW_GEOMETRY sizes it)
+                cmd.append('--window')
             if save:
                 cmd += ['--user', str(save)]
             cmd += [f'HOS_CONTROL={self.control_path}', f'HOS_INPUT_LIVE={self.live_in}',
                     f'RX_VK_SHOT_EVERY={shots or 600}']
+            if hud:   # the periodic pictures carry the panel (the bridge's `shot` does not)
+                cmd.append('RX_VK_SHOT_MENU=1')
             cmd += list(extra)
             self.cmd = cmd
             with open(self.dir / 'hs-run.out', 'w') as out:
@@ -498,7 +532,7 @@ class Game:
         self.changes = {}        # hash -> last value, from the samples' "changed"
         self.presents = 0
         self.history = collections.deque(maxlen=4000)   # (n_states, sample): what a step changed is read from the newest samples
-        self.oc, self.oc_lines = None, []   # the ocarina's note wait as the game's log says it (on, off) and every `oc:` line
+        self.oc, self.oc_lines, self.oc_since = None, [], 0.0   # the ocarina's note wait as the game's log says it (on, off), every `oc:` line, and when it turned on
 
     def alive(self):
         if self.deadline is not None and time.monotonic() >= self.deadline:
@@ -517,10 +551,20 @@ class Game:
         rid = self.next_id
         if self.down and cmd in self.INPUT_CMDS:   # the old process's pad: an input meant for it is never sent to the new one
             return rid
+        if cmd in self.INPUT_CMDS:
+            self.record_input({'cmd': cmd, **{k: v for k, v in args.items() if k not in ('exclusive', 'wait')}})
         self.pending[rid] = cmd
         self.tx.extend((json.dumps({'id': rid, 'cmd': cmd, **args}, separators=(',', ':')) + '\n').encode())
         self._flush()
         return rid
+
+    def record_input(self, row):
+        """One line of <live>/inputs.jsonl: the request (press, stick or sequence, or a debug `!` line as cmd live) and `present`, the newest
+        present the game has reported when it was sent. Read by pilot/bughunt.py and pilot/inputlog.py; the game side never reads it."""
+        row['present'] = self.presents
+        row['mono'] = round(time.monotonic(), 3)
+        self.inputs_out.write(json.dumps(row, separators=(',', ':')) + '\n')
+        self.inputs_out.flush()
 
     def _connect(self):
         if self.sock is None:
@@ -652,6 +696,7 @@ class Game:
 
     def send(self, line):
         if line.startswith('!'):
+            self.record_input({'cmd': 'live', 'line': line})
             with open(self.live_in, 'a') as f:
                 f.write(line + '\n')
             return None
@@ -666,6 +711,10 @@ class Game:
                 rid = message.get('id')
                 cmd = self.pending.pop(rid, None)
                 if cmd is None:
+                    continue
+                if cmd in HUD_CMDS:   # the panel's replies are read for their error codes: never an error of the run
+                    if self.hud is not None:
+                        self.hud.reply(rid, cmd, message)
                     continue
                 if not message['ok']:
                     error, detail = message.get('error'), str(message.get('message', ''))
@@ -720,7 +769,7 @@ class Game:
                 if m2:
                     self.oc_lines.append(m2.group(1))
                     if 'note wait turned on' in m2.group(1):
-                        self.oc = 'on'
+                        self.oc, self.oc_since = 'on', time.time()
                     elif 'note wait turned off' in m2.group(1):
                         self.oc = 'off'
                 m = re.search(r'vk: (\d+) presents, ', line)
@@ -780,11 +829,123 @@ class Game:
         return out
 
 
+class HudSender:
+    """The panel on the game's own screen: what the pilot wrote to <live>/hud.txt (see the module docstring), sent with the control
+    bridge's `overlay` command. tick() runs in every wait loop of the Executor and never waits: a request is made without waiting for its
+    reply (Game.poll hands the reply to reply()), at most one in MIN_GAP_S, only while the socket is up and has nothing queued, and the
+    newest text is all there is to send (no backlog). The game drops the panel LIFE_S after its last request, so an unchanged text is sent
+    again every KEEPALIVE_S; it also drops it when this connection closes, so a restarted game gets the text again at once."""
+    LIFE_S = 60           # `seconds` of every overlay request
+    KEEPALIVE_S = 25.0    # the same text again after this long without a request
+    MIN_GAP_S = 0.26      # between two requests: no second holds five (the game is told four a second at most)
+    LOOK_S = 0.1          # how often the file is looked at
+    MAX_BYTES = 8192      # read at most this much of it (the game takes 2048 and refuses more)
+
+    def __init__(self, game, path, note):
+        self.g, self.path, self.note = game, Path(path), note
+        game.hud = self
+        self.sig, self.want = None, ''   # the file as last read ((inode, mtime, size) or None) and the text it asks for
+        self.sent, self.sent_at, self.last_req = None, 0.0, None   # the text the game shows as far as we know; when; the last request
+        self.refused, self.off, self.closed = None, None, False    # a text the game refused; why sending stopped for good; ended
+        self.asked, self.noted = {}, set()   # request id -> text of the overlay requests not yet answered; the notes made
+        self.next_look, self.restarts = 0.0, game.restarts
+
+    def look(self):
+        """The file's text, when its inode, time or size changed: trailing blank lines left out, '' for an empty or absent file."""
+        try:
+            st = os.stat(self.path)
+            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        if sig == self.sig:
+            return
+        self.sig = sig
+        if sig is None:
+            self.want = ''
+            return
+        try:
+            with open(self.path, 'rb') as f:
+                raw = f.read(self.MAX_BYTES)
+        except OSError:
+            return   # (gone again: the next look finds out)
+        self.want = raw.decode('utf-8', 'replace').replace('\r\n', '\n').rstrip().lstrip('\n')
+
+    def tick(self):
+        if self.off or self.closed:
+            return
+        now, g = time.monotonic(), self.g
+        if now >= self.next_look:
+            self.next_look = now + self.LOOK_S
+            self.look()
+        if g.restarts != self.restarts:   # a new process: the old one's panel went with its connection
+            self.restarts, self.sent, self.asked = g.restarts, None, {}
+        if g.sock is None or g.connecting or g.down or g.tx:
+            return
+        if self.last_req is not None and now - self.last_req < self.MIN_GAP_S:
+            return
+        if self.want:
+            if self.want != self.refused and (self.want != self.sent or now - self.sent_at >= self.KEEPALIVE_S):
+                self.send(now, self.want)
+        elif self.sent is not None:
+            self.send(now, None)
+
+    def send(self, now, text):
+        """The text as the panel, or (None) the panel cleared. Not waited for."""
+        if text is None:
+            self.g.request('overlay_clear')
+            self.sent = None
+        else:
+            rid = self.g.request('overlay', text=text, seconds=self.LIFE_S)
+            self.asked[rid] = text
+            while len(self.asked) > 16:
+                del self.asked[next(iter(self.asked))]
+            self.sent, self.sent_at = text, now
+            self.refused = None   # (a text the game refused is only ever skipped while it is still the newest)
+        self.last_req = now
+
+    def reply(self, rid, cmd, message):
+        """The game's answer to a panel request: only an error matters. `unavailable` and `unknown_cmd` end the panel for the run;
+        any other refusal is noted once per code and the refused text is not sent again."""
+        text = self.asked.pop(rid, None)
+        if message.get('ok'):
+            return
+        error, detail = str(message.get('error')), ' '.join(str(message.get('message', '')).split())[:120]
+        if error in ('unavailable', 'unknown_cmd'):
+            self.off = error
+            self.note_once('off', f'overlay: the game answers {error} ({detail}); no panel is sent for the rest of the run, nothing else changes')
+            return
+        if cmd == 'overlay' and text is not None:
+            self.refused = text
+        self.note_once(error, f'overlay: the game refused a panel text ({error}: {detail}); that text is not sent again')
+
+    def note_once(self, key, text):
+        if key not in self.noted:
+            self.noted.add(key)
+            self.note(ev='note', text=text)
+
+    def close(self):
+        """The run ends: the panel is cleared while the connection still takes it (the game clears it itself when it closes). Once."""
+        if self.closed:
+            return
+        self.closed, g = True, self.g
+        if self.off or self.sent is None or g.sock is None or g.connecting or g.down:
+            return
+        wait = self.MIN_GAP_S - (time.monotonic() - self.last_req) if self.last_req is not None else 0.0
+        try:
+            if wait > 0:
+                time.sleep(wait)   # (four a second at most, the clear included: the only wait the panel ever makes)
+            g.request('overlay_clear')
+        except (ControlError, OSError):
+            pass   # (the connection is gone: the game has cleared it)
+        self.sent = None
+
+
 hsap_actions.bind(globals())   # (the helpers above: the steps of ActionSteps share them; hsap_actions cannot import this module back)
+hsap_items.bind(globals())     # (and the item steps' too)
 
 
-class Executor(ActionSteps):
-    def __init__(self, game, live_dir, boot, opponent_path=None):
+class Executor(ActionSteps, ItemSteps):
+    def __init__(self, game, live_dir, boot, opponent_path=None, hud=False):
         self.g, self.live = game, Path(live_dir)
         self.steps_tail = Tail(self.live / 'steps.txt')
         self.out = open(self.live / 'out.jsonl', 'a')
@@ -804,6 +965,7 @@ class Executor(ActionSteps):
         self.counters, self.key_hits = set(), {}   # change-scan keys that move all the time (clocks): learned, left out of results
         self.extra = {}                            # the structured part of the running step's result (its changes)
         self.cam_sign, self.cam_rate = 1.0, 120.0  # the right stick: +1 when RRIGHT raises the camera's yaw; degrees a second
+        self.hud = HudSender(game, self.live / 'hud.txt', self.emit) if hud else None   # the pilot's panel on the game's screen
 
     def emit(self, **e):
         self.out.write(json.dumps(e) + '\n')
@@ -848,6 +1010,8 @@ class Executor(ActionSteps):
         time.sleep(seconds)
         new = self.g.poll()
         self.note_changes(new)
+        if self.hud is not None:
+            self.hud.tick()
         if new and self.report and self.t() >= self.report_next:
             self.state_event('report')
             self.report_next = self.t() + self.report
@@ -915,6 +1079,8 @@ class Executor(ActionSteps):
             self.read_steps()
             if not self.queue:
                 self.state_event('wait')
+        if self.hud is not None:
+            self.hud.close()
         if self.g.external and not self.ended:
             self.emit(ev='note', text=self.g.end_reason())
         self.emit(ev='done', t=self.t())
@@ -1016,7 +1182,7 @@ class Executor(ActionSteps):
                 raise BadStep(f'{k}: {e}') from None
         if k in INTERACT_VERBS:
             try:
-                return getattr(self, 'step_' + k)(w[1:])
+                return getattr(self, 'step_' + k.replace('-', '_'))(w[1:])
             except ValueError as e:
                 raise BadStep(f'{k}: {e}') from None
         raise BadStep(f'unknown step {k}')
@@ -1530,13 +1696,29 @@ class Executor(ActionSteps):
             raise ValueError('faceat <x> <z> [degrees]')
         return self.face_point(float(args[0]), float(args[1]), float(args[2]) if len(args) == 3 else 20.0)
 
+    OC_TAKES_S, OC_FREE_S, OC_READY_MS = 4.0, 25.0, 3000   # (how long after the last note the game may take to close its note wait; how long a song's playback may hold Link; how long a fresh window ignores notes)
+
+    def wait_control(self, seconds):
+        """True once Link is free (no event, no load) in two samples that arrive after this call (the last sample may be older than the
+        song the game just took) within `seconds`; the note wait itself holds him, so ask only with the ocarina away"""
+        end, seen, free = time.time() + seconds, self.g.n_states, 0
+        while time.time() < end and self.g.alive():
+            if self.g.n_states != seen:
+                seen = self.g.n_states
+                st = self.g.st or {}
+                free = free + 1 if not st.get('event') and not st.get('loading') else 0
+                if free >= 2:
+                    return True
+            self.tick(0.05)
+        return False
+
     def step_ocarina(self, args):
-        usage = 'ocarina <note> ... [hold <ms>] [gap <ms>] (notes: ' + ' '.join(NOTE_BUTTONS) + ') | ocarina out | ocarina away'
+        usage = 'ocarina <note> ... [hold <ms>] [gap <ms>] [ready <ms>] (notes: ' + ' '.join(NOTE_BUTTONS) + ') | ocarina out | ocarina away'
         if not args:
             raise ValueError(usage)
         notes, opts, i = [], {}, 0
-        while i < len(args):   # (hold: how long each note button is held, default 150 ms; gap: the pause after each note, default 450 ms)
-            if args[i] in ('hold', 'gap'):
+        while i < len(args):   # (hold: how long each note button is held, default 100 ms; gap: the pause after each note, default 150 ms)
+            if args[i] in ('hold', 'gap', 'ready'):
                 if i + 1 >= len(args) or not args[i + 1].isdigit() or args[i] in opts:
                     raise ValueError(usage)
                 opts[args[i]] = int(args[i + 1])
@@ -1544,8 +1726,8 @@ class Executor(ActionSteps):
             else:
                 notes.append(args[i])
                 i += 1
-        hold, gap = opts.get('hold', 150), opts.get('gap', 450)
-        if not notes or not 50 <= hold <= 3000 or not 0 <= gap <= 5000:
+        hold, gap, ready = opts.get('hold', 100), opts.get('gap', 150), opts.get('ready', self.OC_READY_MS)
+        if not notes or not 50 <= hold <= 3000 or not 0 <= gap <= 5000 or not 0 <= ready <= 10000:
             raise ValueError(usage)
         args = notes
         mode = args[0] if args[0] in ('out', 'away') and len(args) == 1 and not opts else None
@@ -1569,6 +1751,10 @@ class Executor(ActionSteps):
             away()
             return 'away', 'the ocarina was ' + ('put away; ' + lines() if was == 'on' else 'not out: nothing was sent')
         if self.g.oc != 'on':
+            # a song the game took plays back and holds Link: a D-pad Left sent into that is lost (hold pi2-h1: the next notes then went to Link as
+            # plain buttons, L opened the item wheel), so wait until he is free
+            if not self.wait_control(self.OC_FREE_S):
+                return 'no-ocarina', f'Link was still held {self.OC_FREE_S:g} s after the step began (a scene, a text or a song playing): nothing was sent'
             self.wait_input(self.g.press('LEFT', 120))   # the D-pad's Left takes the ocarina out
             end = time.time() + 3.5
             while self.g.oc != 'on' and time.time() < end and self.g.alive():
@@ -1577,14 +1763,27 @@ class Executor(ActionSteps):
                 return 'no-ocarina', f'no `oc: the note wait turned on` line in 3.5 s after D-pad Left ({lines() or "no oc line at all"})'
         if mode == 'out':
             return 'out', 'the ocarina waits for a note; ' + lines()
-        for note in args:
-            self.wait_input(self.g.press(note, hold))
-            self.wait(gap / 1000.0)
-        self.wait(2.5)   # (the game hears the song, plays it back, acts on it)
-        away()
+        # all the notes as ONE timed sequence (the game's frames, not this program's wall clock between requests): 100 ms notes starting 250 ms
+        # apart took the Song of Storms in every run of hold pi2-h1; one request a note, 150/450 ms or 400/450 ms, never did
+        every = (hold + gap) / 1000.0
+        # a window opened a moment ago ignores its first note (holds pi2-h1..h3: 21 of 22 tries in a fresh window gave no song, 6 of 6 in one open 3 s or more did):
+        # the window warms up first, `ready` ms from the game's `turned on` line
+        warm = ready / 1000.0 - (time.time() - self.g.oc_since)
+        if warm > 0:
+            self.wait(warm)
+        self.wait_input(self.g.send(','.join(f'{k * every:g}:{note}/{hold}' for k, note in enumerate(args))))
+        # a song the game takes closes its note wait itself a moment after the last note; one it does not take leaves the wait open
+        end = time.time() + self.OC_TAKES_S
+        while self.g.oc == 'on' and time.time() < end and self.g.alive():
+            self.tick(0.05)
+        taken = self.g.oc != 'on'
+        if taken:
+            self.wait_control(self.OC_FREE_S)   # (it plays the song back and acts on it: weather, a warp, a door)
+        else:
+            away()
         self.advance_text(time.time() + 12.0)
         ch = self.changes(before, self.snap(), mark)
-        return self.outcome('played', ch, f"{len(args)} notes {' '.join(args)}; {lines()}")
+        return self.outcome('played' if taken else 'no-song', ch, f"{len(args)} notes {' '.join(args)}; {lines()}")
 
     def step_item(self, args):
         if len(args) > 2:
@@ -1797,6 +1996,14 @@ class BadStep(Exception):
     pass
 
 
+def env_pair(text):
+    """--env's NAME=VALUE: the game's switches are upper case words (HOS_..., RX_...); a value has no white space (the command line of
+    hs-run.sh carries it as one word)"""
+    if not re.fullmatch(r'[A-Z][A-Z0-9_]*=\S*', text):
+        raise argparse.ArgumentTypeError(f'{text!r} is not NAME=VALUE (an upper case name, a value without white space)')
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('copy')
@@ -1806,6 +2013,9 @@ def main():
     ap.add_argument('--save')
     ap.add_argument('--boot', choices=('newgame', 'continue', 'none'), default=None)
     ap.add_argument('--shots', type=int, default=0)
+    ap.add_argument('--env', action='append', type=env_pair, default=[], metavar='NAME=VALUE',
+                    help='one more switch for the game of this run, as hs-run.sh takes them after its own (repeatable: '
+                         'HOS_CONTROL_MEM=ro lets a second client read the guest memory)')
     ap.add_argument('--keep-going', action='store_true', help='after the steps are done, keep the game until end')
     ap.add_argument('--analog', action='store_true', help='steer with exact stick values through the control socket')
     ap.add_argument('--opponent', help='a JSON file {x, y, z, map, w} a runner keeps with the other player\'s place: the duel '
@@ -1813,6 +2023,9 @@ def main():
     ap.add_argument('--reconnect-wait', type=float, default=180.0, metavar='SECONDS',
                     help='a game that restarts itself replaces its control socket: wait this long for the new one and '
                          'subscribe again (0: end the run as before)')
+    ap.add_argument('--hud', choices=('on', 'off'), default=None,
+                    help='the pilot\'s decisions on the game\'s own screen (the control bridge\'s `overlay` command; the panel text is '
+                         '<live>/hud.txt); default on unless HSAP_HUD=0; off sends nothing and leaves the game\'s environment alone')
     ap.add_argument('--game-sock', metavar='PATH', help='external game: the control socket of a game somebody else runs (hsap '
                     'connects, and reconnects, as an additional client); starts no game')
     ap.add_argument('--game-live', metavar='FILE', help='external game: the HOS_INPUT_LIVE file the game already reads (the '
@@ -1825,8 +2038,8 @@ def main():
     if any(x is not None for x in given):
         if any(x is None for x in given):
             ap.error('an external game needs --game-sock, --game-live, --game-log and --game-pid together')
-        if a.save or a.shots:
-            ap.error('--save and --shots belong to a game hsap starts: not with --game-sock')
+        if a.save or a.shots or a.env:
+            ap.error('--save, --shots and --env belong to a game hsap starts: not with --game-sock')
         if a.wall <= 0:
             ap.error('the wall time of an external game (the life of hsap itself) must be positive')
         try:
@@ -1843,13 +2056,14 @@ def main():
         if w and w[0] == 'watch':
             watch += [x for x in w[1:] if valid_flag(x)]
     boot = a.boot or ('none' if external else 'continue' if a.save else 'newgame')
-    g = Game(a.copy, a.tag, a.wall, live, save=a.save, watch=sorted(set(watch))[:64], shots=a.shots,
-             reconnect_wait=a.reconnect_wait, external=external)
-    ex = Executor(g, live, boot, opponent_path=a.opponent)
+    hud = hud_wanted(a.hud)
+    g = Game(a.copy, a.tag, a.wall, live, save=a.save, watch=sorted(set(watch))[:64], shots=a.shots, extra=a.env,
+             reconnect_wait=a.reconnect_wait, external=external, hud=hud)
+    ex = Executor(g, live, boot, opponent_path=a.opponent, hud=hud)
     ex.analog = ex.analog or a.analog
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))   # (a stop from the pilot still stops the game: finally below)
     ex.emit(ev='note', text=('external game (hsap starts and stops nothing): ' if external else 'hs-run: ') + ' '.join(g.cmd),
-            boot=boot, analog=ex.analog)
+            boot=boot, analog=ex.analog, hud=hud)
     result = 0
     try:
         ex.run()
@@ -1857,6 +2071,8 @@ def main():
         ex.emit(ev='note', text=str(e))
         result = 1
     finally:
+        if ex.hud is not None:
+            ex.hud.close()   # (a run that ended in an error: the normal end did it already, once)
         g.stop()
         ex.emit(ev='note', text=(f'hsap ended; the game (pid {external.pid}) was left running' if external else
                                  f'game stopped; run folder {g.R}'), saves={Path(p).parent.name: t for p, t in g.saves().items()})

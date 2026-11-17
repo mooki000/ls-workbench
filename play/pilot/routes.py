@@ -9,6 +9,7 @@
     routes.py target list | remove NAME
     routes.py frontier NAME [--json]               the walked point nearest the target and how far it is
     routes.py route MAP --from X Y Z --to X Z      the library's way to the frontier, then the world model's plan beyond it (--world)
+    routes.py backfill                             hearts lost at old stuck points, read from the runs' journals
     routes.py report                               what each run added (metres, new edges, frontier gain) and the targets' history
 Hold subcommands (plan, check, saves, run, queue) are frontier.py's.
 """
@@ -155,6 +156,11 @@ def cmd_route(a):
     return 0 if (r['steps'] or r['ok']) else 2
 
 
+def cmd_backfill(a):
+    print(f'{routelib.RouteLib(a.lib).backfill_life()} stuck records filled')
+    return 0
+
+
 def cmd_report(a):
     lib = routelib.RouteLib(a.lib)
     led = lib.runs()
@@ -211,6 +217,8 @@ def main(argv=None):
     p.add_argument('--radius', type=float, default=2.5)
     p.add_argument('--json', action='store_true')
     p.set_defaults(fn=cmd_route)
+    p = sub.add_parser('backfill')
+    p.set_defaults(fn=cmd_backfill)
     p = sub.add_parser('report')
     p.set_defaults(fn=cmd_report)
     a = ap.parse_args(argv)

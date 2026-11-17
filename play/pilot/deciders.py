@@ -11,6 +11,10 @@ tried, the candidate steps), each picks one candidate's label. All behind one in
 The planner (Planner) is no decider: called seldom, it may reorder the goals and their targets (Responses API with a
 JSON schema); with lessons on (lessons.py) its request carries the few most similar past failures and what finally worked.
 
+drivers/ (PilotDrivers) puts these and more behind one interface with fallbacks: `drivers.chain.Chain` has this interface (name,
+choose(ctx) -> Choice, stop_reason, min_gap_s), so the run loop is the same for a chain of drivers as for one decider; Choice.driver
+says who made the choice and Choice.candidate a step the driver brought itself (a script, a recorded chunk, an agent's own steps).
+
 A duel goal (kind "duel", pilot.py's duel_candidates) is decided by the same deciders: the rules have a fixed policy
 (Rules.pick_duel: practice swing, Ready, close in to about 1.3 m, face him, swing about once a second, guard once when a new
 swing of his has just been judged and he is close); the model gets its own prompt and a single choice question
@@ -48,6 +52,8 @@ class Choice:
     label: str
     predicates: dict = field(default_factory=dict)
     info: dict = field(default_factory=dict)   # what goes into the transcript: request, answer, latency, usage, cost
+    driver: str = None      # the driver that made it (drivers/): None for the plain deciders, which are their own name
+    candidate: tuple = None  # (label, lines, text): a step the driver brings that the pilot did not offer (a script, a recorded chunk)
 
 
 @dataclass
@@ -286,6 +292,7 @@ class Decisions:
         self.rules = Rules()
         self.max_cost = max_cost
         self.stop_reason, self.errors = None, 0
+        self.last_error = None   # the exception of the last request that failed (the driver layer sorts failures by its type)
         self.min_gap_s, self.last_request_t = DUEL_MIN_GAP_S, None   # for a duel goal (the pilot waits it out)
 
     def body(self, ctx):
@@ -399,10 +406,14 @@ class Decisions:
             'prompt_cache_key': 'pilot-interact',
         }
 
+    def request_for(self, ctx):
+        """The request body of this decision point's kind: a duel goal's, an interaction goal's, or the walking prompt's."""
+        duel = getattr(ctx.goal, 'kind', None) == 'duel'
+        return self.duel_body(ctx) if duel else self.interact_body(ctx) if interact.is_interaction(ctx.goal) else self.body(ctx)
+
     def choose(self, ctx):
         duel = getattr(ctx.goal, 'kind', None) == 'duel'
-        kind = interact.is_interaction(ctx.goal)
-        body = self.duel_body(ctx) if duel else self.interact_body(ctx) if kind else self.body(ctx)
+        body = self.request_for(ctx)
         if self.stop_reason:   # no request after the model was stopped
             c = self.rules.choose(ctx)
             c.info = {'fallback': f'stopped: {self.stop_reason}'}
@@ -423,6 +434,7 @@ class Decisions:
                                             estimate=est)
         except (openai_api.NoKey, openai_api.CapReached, openai_api.ApiError) as e:
             self.errors += 1
+            self.last_error = e
             if isinstance(e, openai_api.ApiError) and str(e).startswith('HTTP 4') and not str(e).startswith('HTTP 429') \
                     and self.errors >= 2:
                 self.stop_reason = f'two requests in a row refused: {e}'[:300]

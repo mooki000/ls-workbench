@@ -229,11 +229,11 @@ def run_hold(night, hold, cfg, tools_dir, *, pilot_cmd=None, env=None, chain=Tru
         short = fallback
     st.night_identity(night, pilot_commit=short, tools_commit=plan.get('tools_commit'))
     (hold_dir / 'identity.json').write_text(json.dumps({'pilot_commit': short, 'pilot_dir': str(pilot_dir), 'fallback_from': commit[:9] if fallback else None,
-                                                      'copies': usable, 'copy_problems': problems, 'tools': str(tools_dir)}, indent=1))
+                                                      'copies': usable, 'copy_problems': problems, 'tools': str(tools_dir), 'game_env': cfg.get('game_env') or {}}, indent=1))
     hold_plan = {'night': night, 'hold': hold, 'out': str(hold_dir), 'pilot_dir': str(pilot_dir), 'python': python, 'copies': usable, 'local': str(config.LOCAL),
                  'items': pending, 'hold_s': cfg['hold_s'] - (time.time() - t0), 'reserve_s': cfg['reserve_s'], 'shots': cfg['shots'],
                  'allowance_usd': cfg['allowance_usd'] if any(arms[a].get('planner') or arms[a]['decider'] != 'rules' for a in plan['arms']) else None,
-                 'allowance_since': nightly.now_iso(), 'env': {'PILOT_OPENAI_KEY_FILE': cfg['key_file'], **(env or {})}, 'pilot_cmd': pilot_cmd}
+                 'allowance_since': nightly.now_iso(), 'env': {'PILOT_OPENAI_KEY_FILE': cfg['key_file'], **{str(k): str(v) for k, v in (cfg.get('game_env') or {}).items()}, **(env or {})}, 'pilot_cmd': pilot_cmd}
     (hold_dir / 'plan.json').write_text(json.dumps(hold_plan, indent=1))
     h = runner.Hold(hold_plan)
     summary = h.play()
@@ -268,7 +268,7 @@ def run_hold(night, hold, cfg, tools_dir, *, pilot_cmd=None, env=None, chain=Tru
             replaced = None
         pid = nightly.queue_hold(cfg, night, hold + 1, tools_dir, popen=queue_popen, replacing=replaced)
         print(f'{len(left)} items left: hold {hold + 1} queued (waiter {pid})', flush=True)
-    if not [r for r in nightly.pending_items(plan, st.counted(night), attempts, cfg['max_attempts'])] or hold >= cfg['max_holds_per_night']:
+    if not plan.get('proof') and (not [r for r in nightly.pending_items(plan, st.counted(night), attempts, cfg['max_attempts'])] or hold >= cfg['max_holds_per_night']):
         d = weekly_draft(cfg, st, night)
         if d:
             print(f'weekly draft written: {d}', flush=True)

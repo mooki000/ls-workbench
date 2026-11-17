@@ -17,10 +17,12 @@ CREATE TABLE IF NOT EXISTS cells (
     night TEXT NOT NULL, cell TEXT NOT NULL, arm TEXT NOT NULL, attempt INTEGER NOT NULL, hold INTEGER, tag TEXT,
     success INTEGER NOT NULL, time_to_goal_s REAL, stuck_s REAL, decisions INTEGER, cost_usd REAL, progress REAL,
     start_ok INTEGER, valid INTEGER NOT NULL, why TEXT, pilot_outcome TEXT, play_s REAL, build TEXT, pilot_commit TEXT,
-    fingerprint TEXT, arm_hash TEXT, row_json TEXT NOT NULL, PRIMARY KEY (night, cell, arm, attempt));
+    fingerprint TEXT, arm_hash TEXT, row_json TEXT NOT NULL, blocker TEXT, PRIMARY KEY (night, cell, arm, attempt));
+CREATE TABLE IF NOT EXISTS rejudged (
+    night TEXT NOT NULL, cell TEXT NOT NULL, arm TEXT NOT NULL, attempt INTEGER NOT NULL, at TEXT NOT NULL, reason TEXT NOT NULL, old_json TEXT NOT NULL);
 '''
 COLS = ('night', 'cell', 'arm', 'attempt', 'hold', 'tag', 'success', 'time_to_goal_s', 'stuck_s', 'decisions', 'cost_usd', 'progress', 'start_ok', 'valid',
-        'why', 'pilot_outcome', 'play_s', 'build', 'pilot_commit', 'fingerprint', 'arm_hash')
+        'why', 'pilot_outcome', 'play_s', 'build', 'pilot_commit', 'fingerprint', 'arm_hash', 'blocker')
 
 
 class Store:
@@ -30,6 +32,9 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
+        if 'blocker' not in [r[1] for r in self.db.execute('PRAGMA table_info(cells)')]:   # (a store made before blockers existed)
+            self.db.execute('ALTER TABLE cells ADD COLUMN blocker TEXT')
+            self.db.commit()
 
     def close(self):
         self.db.close()
@@ -69,6 +74,28 @@ class Store:
             raise ValueError(f'{row.get("night")}/{row.get("cell")}/{row.get("arm")} attempt {row.get("attempt")} is already stored') from None
         self.db.commit()
 
+    def rejudge(self, night, cell, arm, attempt, new_row, reason, at):
+        """Replace the JUDGEMENT of a stored result (its proof was wrong, not its sample): the journal is the same, the referee's reading of it changed. The row as it was
+        is kept whole in `rejudged` with the reason and the time; nothing else about the run (tag, metrics, cost, evidence) changes."""
+        old = self.db.execute('SELECT * FROM cells WHERE night=? AND cell=? AND arm=? AND attempt=?', (night, cell, arm, attempt)).fetchone()
+        if old is None:
+            raise KeyError(f'{night}/{cell}/{arm}/{attempt}')
+        self.db.execute('INSERT INTO rejudged VALUES (?,?,?,?,?,?,?)', (night, cell, arm, attempt, at, reason, json.dumps(dict(old), sort_keys=True)))
+        cols = ('success', 'time_to_goal_s', 'progress', 'start_ok', 'valid', 'why', 'fingerprint')
+        self.db.execute(f'UPDATE cells SET {",".join(c + "=?" for c in cols)}, row_json=? WHERE night=? AND cell=? AND arm=? AND attempt=?',
+                        [new_row[c] for c in cols] + [json.dumps(new_row, sort_keys=True), night, cell, arm, attempt])
+        self.db.commit()
+
+    def annotate_blocker(self, night, cell, blocker):
+        """Mark the stored FAILED results of a cell on a night as blocked by a known cause (text); successes are left alone. Returns how many rows changed."""
+        cur = self.db.execute('UPDATE cells SET blocker=? WHERE night=? AND cell=? AND success=0 AND valid=1', (blocker, night, cell))
+        self.db.commit()
+        return cur.rowcount
+
+    def rejudgements(self, night=None):
+        q, a = ('SELECT * FROM rejudged WHERE night=? ORDER BY at', (night,)) if night else ('SELECT * FROM rejudged ORDER BY at', ())
+        return [dict(r) for r in self.db.execute(q, a)]
+
     def attempts(self, night):
         return [dict(r) for r in self.db.execute('SELECT * FROM cells WHERE night=? ORDER BY cell, arm, attempt', (night,))]
 
@@ -87,8 +114,17 @@ class Store:
         return (r[0] or 0) + 1
 
     def all_counted(self, last_nights=None):
-        """[(night row, {(cell, arm): row})] for the stored nights, oldest first (the last `last_nights` of them)."""
-        return [(n, self.counted(n['night'])) for n in self.nights(last_nights)]
+        """[(night row, {(cell, arm): row})] for the stored nights, oldest first (the last `last_nights` of them). A PROVING run (a plan with `proof`: a few cells played
+        to see that a fix works before a night) is not a night of the trend and is left out."""
+        def real(n):
+            try:
+                return not json.loads(n['plan_json'] or '{}').get('proof')
+            except ValueError:
+                return True
+        nights = [n for n in self.nights() if real(n)]
+        if last_nights:
+            nights = nights[-last_nights:]
+        return [(n, self.counted(n['night'])) for n in nights]
 
     def export_jsonl(self, path):
         with open(path, 'w') as f:

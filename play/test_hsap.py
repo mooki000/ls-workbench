@@ -49,13 +49,16 @@ class FakeRunner:
 class FakeBridge:
     """A world with y up and a following camera. All names and geometry here are invented fixtures."""
     def __init__(self, path, live, run, clock, start=(0.0, 0.0, 0.0), camera=0.0, handed=1, follow=True,
-                 walls=(), boot_events=5, flags=None, prompt_at=None, ack_delay=0, listening=True, subscribe_error=None):
+                 walls=(), boot_events=5, flags=None, prompt_at=None, ack_delay=0, listening=True, subscribe_error=None,
+                 overlay='ok'):
         self.path, self.run, self.clock = path, run, clock
         self.pos, self.cam, self.handed, self.follow = list(start), camera, handed, follow
         self.walls, self.boot_events = list(walls), boot_events
         self.flags, self.prompt_at = dict(flags or {}), prompt_at
         self.ack_delay = ack_delay
         self.subscribe_error = subscribe_error
+        self.overlay_mode, self.overlay_log = overlay, []   # 'ok', or the error code every overlay request is answered with
+        self.panel, self.panel_until = None, None            # the text on the game's screen and when the game drops it by itself
         self.listener, self.conn = None, None
         self.rx, self.tx = bytearray(), bytearray()
         self.write_limit = None
@@ -128,6 +131,7 @@ class FakeBridge:
                 self.inputs.clear()   # waited inputs belong to the connection
                 self.waiting.clear()
                 self.sub = None
+                self.panel = None   # the game clears the panel when the connection that set it closes
                 return
             self.rx.extend(data)
         while b'\n' in self.rx:
@@ -169,8 +173,46 @@ class FakeBridge:
             self.inputs.extend(steps)
             self.waiting.append((end + self.ack_delay, request, start, end))
             self.max_waiting = max(self.max_waiting, len(self.waiting))
+        elif cmd in ('overlay', 'overlay_clear'):
+            self.overlay_request(request)
         else:
             self.fail(request, 'unknown_cmd', 'no such command')
+
+    def overlay_request(self, request):
+        """The game side's contract: `overlay` text (at most 2048 bytes of valid UTF-8 once controls, DEL and C1 are dropped, at most
+        16 lines, trailing blank lines ignored) and `seconds` (a number in (0, 3600], omitted: no expiry), `overlay_clear`; the panel is
+        dropped by the game when `seconds` pass without a new overlay. A game that cannot says unavailable, an older one unknown_cmd."""
+        self.overlay_log.append((self.clock.now, request))
+        if self.overlay_mode != 'ok':
+            self.fail(request, self.overlay_mode, f'overlay: {self.overlay_mode}')
+            return
+        if request['cmd'] == 'overlay_clear':
+            self.panel = None
+            self.reply(request, lines=0, bytes=0)
+            return
+        text, seconds = request.get('text'), request.get('seconds')
+        if not isinstance(text, str):
+            self.fail(request, 'bad_request', 'text must be a string')
+            return
+        kept = ''.join(c for c in text if c == '\n' or not (ord(c) < 0x20 or ord(c) == 0x7f or 0x80 <= ord(c) < 0xa0))
+        lines = kept.split('\n')
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if len('\n'.join(lines).encode()) > 2048 or len(lines) > 16:
+            self.fail(request, 'bad_request', 'text: more than 2048 bytes or 16 lines')
+            return
+        if seconds is not None and not (isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and 0 < seconds <= 3600):
+            self.fail(request, 'bad_request', 'seconds must be in (0, 3600]')
+            return
+        self.panel = '\n'.join(lines) or None
+        self.panel_until = None if seconds is None else self.clock.now + seconds
+        self.reply(request, lines=len(lines), bytes=len('\n'.join(lines).encode()))
+
+    def shown(self):
+        """What the game's screen says now: the panel unless its seconds ran out."""
+        if self.panel is not None and self.panel_until is not None and self.clock.now >= self.panel_until:
+            self.panel = None
+        return self.panel
 
     def names(self, names):
         axes, buttons = {}, []
@@ -270,6 +312,15 @@ class Clock:
     def __init__(self):
         self.now, self.next_frame = 1000.0, 1000.0 + 1 / 60
         self.bridge = None
+        self.due = []   # [(time, function)]: things the test does while simulated time passes (the pilot writing its panel file)
+
+    def at(self, when, function):
+        self.due.append((when, function))
+
+    def run_due(self):
+        for item in sorted((d for d in self.due if d[0] <= self.now + 1e-9), key=lambda d: d[0]):
+            self.due.remove(item)
+            item[1]()
 
     def time(self):
         return self.now
@@ -279,6 +330,7 @@ class Clock:
         while self.next_frame <= end + 1e-9:
             self.now = self.next_frame
             self.next_frame += 1 / 60
+            self.run_due()
             self.bridge.pump()
             self.bridge.tick()
             self.bridge.pump()
@@ -287,10 +339,11 @@ class Clock:
 
 
 class Simulation:
-    def __init__(self, watch=None, **options):
+    def __init__(self, watch=None, hud_game=False, **options):
         self.options = options
         self.watch = list(options.get('flags', {})) if watch is None else watch
         self.executors, self.input_samples = [], []
+        self.hud_game = hud_game   # hsap.Game(hud=...): the game is started with the panel's picture switch
 
     def __enter__(self):
         self.stack = contextlib.ExitStack()
@@ -300,7 +353,7 @@ class Simulation:
         for name, value in [('time', self.clock.time), ('monotonic', self.clock.time), ('sleep', self.clock.sleep)]:
             self.stack.enter_context(mock.patch.object(hsap.time, name, value))
         self.stack.enter_context(mock.patch.object(hsap.subprocess, 'Popen', self.launch))
-        self.game = hsap.Game(self.copy, 'test', 60, self.live, watch=self.watch)
+        self.game = hsap.Game(self.copy, 'test', 60, self.live, watch=self.watch, **({'hud': True} if self.hud_game else {}))
         self.stack.enter_context(mock.patch.object(self.game, 'game_pids', return_value=[]))
         request = self.game.request
 
@@ -313,6 +366,7 @@ class Simulation:
         return self
 
     def launch(self, cmd, **kwargs):
+        self.launched, self.launch_env = list(cmd), kwargs.get('env')
         assert cmd[0] == hsap.HS_RUN and kwargs['start_new_session'] is True
         args = dict(arg.split('=', 1) for arg in cmd[4:] if '=' in arg)
         assert 'HOS_CONTROL' in args and 'HOS_INPUT_LIVE' in args
@@ -329,9 +383,9 @@ class Simulation:
         states += self.game.poll()
         return states
 
-    def executor(self, steps=(), boot='none'):
+    def executor(self, steps=(), boot='none', hud=False):
         (self.live / 'steps.txt').write_text(''.join(s + '\n' for s in steps))
-        ex = hsap.Executor(self.game, self.live, boot)
+        ex = hsap.Executor(self.game, self.live, boot, **({'hud': True} if hud else {}))
         ex.analog = False   # independent of the caller's HSAP_ANALOG environment
         self.executors.append(ex)
         return ex
@@ -815,6 +869,7 @@ class DuelBridge(FakeBridge):
         self.rx.clear()
         self.tx.clear()
         self.sub = None
+        self.panel = None
 
     def revive(self):
         os.unlink(self.path)
@@ -829,6 +884,7 @@ class DuelBridge(FakeBridge):
 
 class DuelSimulation(Simulation):
     def launch(self, cmd, **kwargs):
+        self.launched, self.launch_env = list(cmd), kwargs.get('env')
         args = dict(arg.split('=', 1) for arg in cmd[4:] if '=' in arg)
         self.bridge = DuelBridge(Path(args['HOS_CONTROL']), Path(args['HOS_INPUT_LIVE']), self.copy / 'runs/test',
                                  self.clock, **self.options)
@@ -847,9 +903,9 @@ class DuelSimulation(Simulation):
         tmp.write_text(json.dumps(data))
         os.replace(tmp, self.opp_path)
 
-    def executor(self, steps=(), boot='none', opponent=True):
+    def executor(self, steps=(), boot='none', opponent=True, hud=False):
         (self.live / 'steps.txt').write_text(''.join(s + '\n' for s in steps))
-        ex = hsap.Executor(self.game, self.live, boot, opponent_path=str(self.opp_path) if opponent else None)
+        ex = hsap.Executor(self.game, self.live, boot, opponent_path=str(self.opp_path) if opponent else None, **({'hud': True} if hud else {}))
         ex.analog = False
         self.executors.append(ex)
         return ex
@@ -1149,17 +1205,53 @@ def main_wiring_checks():
         def record(self):
             seen.append({'opponent': self.opponent_path, 'wait': self.g.reconnect_wait, 'analog': self.analog,
                          'cmd': list(self.g.cmd)})
-        for name, extra in (('options', ['--opponent', str(root / 'o.json'), '--analog', '--shots', '12', '--reconnect-wait', '7']),
-                            ('defaults', [])):
+        for name, extra in (('options', ['--opponent', str(root / 'o.json'), '--analog', '--shots', '12', '--reconnect-wait', '7',
+                                         '--env', 'HOS_CONTROL_MEM=ro', '--env', 'HSAP_TEST_EXTRA=1']),
+                            ('defaults', []), ('window', [])):
             argv = ['hsap.py', str(root / 'copy'), 'tag-' + name, '60', '--live', str(root / ('live-' + name))] + extra
+            window = {'HSAP_WINDOW': '1'} if name == 'window' else {}
             with mock.patch.object(hsap, 'HS_RUN', str(script)), mock.patch.object(hsap.Executor, 'run', record), \
-                    mock.patch.object(sys, 'argv', argv):
+                    mock.patch.object(sys, 'argv', argv), mock.patch.dict(os.environ, window):
+                if not window:
+                    os.environ.pop('HSAP_WINDOW', None)
                 hsap.main()
-        a, b = seen
+        a, b, c = seen
         check(a['opponent'] == str(root / 'o.json') and a['wait'] == 7.0 and a['analog'] is True and 'RX_VK_SHOT_EVERY=12' in a['cmd'],
               '--opponent, --reconnect-wait, --analog and --shots reach the executor, the game and its command')
         check(b['opponent'] is None and b['wait'] == 180.0 and 'RX_VK_SHOT_EVERY=600' in b['cmd'],
               'without them: no opponent, 180 s to wait for a restarted game\'s socket, a picture every 600 presents')
+        check('HOS_CONTROL_MEM=ro' in a['cmd'] and 'HSAP_TEST_EXTRA=1' in a['cmd'] and a['cmd'].index('HOS_CONTROL_MEM=ro') > a['cmd'].index('RX_VK_SHOT_EVERY=12'),
+              '--env NAME=VALUE (repeatable) goes to hs-run.sh after the control switches')
+        check(not any(x.startswith(('HOS_CONTROL_MEM', 'HSAP_TEST_EXTRA')) for x in b['cmd']), 'and without --env nothing of the kind is passed')
+        for bad in ('HOS_CONTROL_MEM', 'hos_x=1', 'A B=1', '=1', 'X=a b'):
+            argv = ['hsap.py', str(root / 'copy'), 'tag-bad', '60', '--live', str(root / 'live-bad'), '--env', bad]
+            err = io.StringIO()
+            with mock.patch.object(hsap, 'HS_RUN', str(script)), mock.patch.object(hsap.Executor, 'run', record), \
+                    mock.patch.object(sys, 'argv', argv), contextlib.redirect_stderr(err):
+                try:
+                    hsap.main()
+                    refused = False
+                except SystemExit as e:
+                    refused = e.code == 2
+            check(refused and '--env' in err.getvalue(), f'--env {bad!r} is refused by the command line (exit 2) before anything starts')
+        check('--window' in c['cmd'] and '--window' not in a['cmd'] + b['cmd'],
+              'HSAP_WINDOW=1 adds --window to the hs-run.sh command; without it the command has none')
+        # --hud on|off and HSAP_HUD=0: the panel sender and the game's picture switch
+        seen.clear()
+
+        def record_hud(self):
+            seen.append({'hud': self.hud is not None, 'game_hud': 'RX_VK_SHOT_MENU=1' in self.g.cmd, 'ge': self.g.hud is self.hud})
+        for name, extra, env in (('hud-default', [], {}), ('hud-on', ['--hud', 'on'], {}), ('hud-off', ['--hud', 'off'], {}),
+                                 ('hud-env', [], {'HSAP_HUD': '0'}), ('hud-on-env', ['--hud', 'on'], {'HSAP_HUD': '0'})):
+            argv = ['hsap.py', str(root / 'copy'), 'tag-' + name, '60', '--live', str(root / ('live-' + name))] + extra
+            with mock.patch.object(hsap, 'HS_RUN', str(script)), mock.patch.object(hsap.Executor, 'run', record_hud), \
+                    mock.patch.object(sys, 'argv', argv), mock.patch.dict(os.environ, env):
+                if 'HSAP_HUD' not in env:
+                    os.environ.pop('HSAP_HUD', None)
+                hsap.main()
+        check([s['hud'] for s in seen] == [True, True, False, False, False] and [s['game_hud'] for s in seen] == [True, True, False, False, False],
+              'the panel is on by default and with --hud on, off with --hud off or HSAP_HUD=0 (also over --hud on); RX_VK_SHOT_MENU=1 goes '
+              'to the game only when it is on')
 
 
 REAL_POPEN, REAL_KILL, REAL_SLEEP, REAL_MONOTONIC = subprocess.Popen, os.kill, time.sleep, time.monotonic   # (the simulations replace them)
@@ -1201,7 +1293,7 @@ class ExternalSimulation(DuelSimulation):
         for line in self.old_log:
             self.bridge.log(line)
         self.game = hsap.Game(self.copy, 'ext', self.wall, self.live, reconnect_wait=self.reconnect_wait,
-                              external=hsap.ExternalGame(self.sock, self.live_file, self.log, self.pid))
+                              external=hsap.ExternalGame(self.sock, self.live_file, self.log, self.pid), **({'hud': True} if self.hud_game else {}))
         self.stack.enter_context(mock.patch.object(self.game, 'game_pids',
                                                    side_effect=AssertionError('an external game has no game_pids')))
         return self
@@ -1474,7 +1566,8 @@ class WorldBridge(DuelBridge):
     `scene` frames of a cutscene (event 1, a Dm_ music), rupees, a flag (a hash text, reported by the change scan), a map
     change. The D-pad's Left takes the ocarina out (the log says the note wait is on; B puts it away), the note buttons
     are kept in `notes`; the right stick turns the camera 2 degrees a frame; ZL turns Link `lock_turn` degrees; ZR counts."""
-    def __init__(self, *args, things=(), ocarina=True, lock_turn=0.0, zr_effect=True, oc_event=False, **kwargs):
+    def __init__(self, *args, things=(), ocarina=True, lock_turn=0.0, zr_effect=True, oc_event=False, song=(), song_gap=30, song_busy=360,
+                 oc_busy=0, warm=0, **kwargs):
         self.oc_event = oc_event   # the real game holds Link (event 1) while the ocarina waits for a note
         self.things = [dict(t) for t in things]
         self.map_name, self.rupees, self.life, self.music = 'Test_Map', 0, 12, 'BGM_Test'
@@ -1482,6 +1575,9 @@ class WorldBridge(DuelBridge):
         self.notes, self.zr, self.a_log, self.oc_on, self.ocarina = [], 0, [], False, ocarina
         self.lock_turn, self.zr_effect, self.pressed_log = lock_turn, zr_effect, []
         self.note_log, self.held_s = [], 0.0
+        self.song, self.song_gap, self.song_busy, self.busy_left = list(song), song_gap, song_busy, oc_busy
+        self.song_at, self.songs_taken, self.lost = 0, 0, []
+        self.warm, self.oc_open, self.dropped, self.fresh_first = warm, 0, [], False   # (the first note in the first `warm` frames of a window is ignored: the game does this)
         super().__init__(*args, **kwargs)
 
     def near_thing(self):
@@ -1493,7 +1589,7 @@ class WorldBridge(DuelBridge):
     def game_state(self, frame=None):
         s = super().game_state(frame)
         thing = self.near_thing()
-        busy = self.text_left > 0 or self.scene_left > 0 or (self.oc_event and self.oc_on)
+        busy = self.text_left > 0 or self.scene_left > 0 or (self.oc_event and self.oc_on) or self.busy_left > 0
         s.update(map=self.map_name, rupees=self.rupees, life=self.life,
                  prompt=thing['prompt'] if thing and not busy else 'Empty',
                  music='Dm_Test_Scene' if self.scene_left > 0 else self.music)
@@ -1515,13 +1611,26 @@ class WorldBridge(DuelBridge):
 
     def pressed(self, b):
         self.pressed_log.append((self.frame + 1, b))
+        if self.busy_left > 0:   # (the song plays back: Link is held, a button is lost)
+            self.lost.append((self.frame + 1, b))
+            return
         if self.oc_on:
             if b == 'B':
                 self.oc_on = False
                 self.log("[hos X] oc: the note wait turned off (the action's kind 1)")
             elif b in ('L', 'R', 'A', 'Y', 'X'):
+                if self.fresh_first and self.frame + 1 - self.oc_open < self.warm:   # (the first note of a window opened a moment ago is not recorded)
+                    self.dropped.append(b)
+                    self.fresh_first = False
+                    return
+                self.fresh_first = False
                 self.notes.append(b)
                 self.note_log.append((b, self.frame + 1, round(self.held_s, 3)))
+                n = len(self.song)
+                if n and self.notes[-n:] == self.song:   # (taken when the last n notes are the song and each started within song_gap frames of the one before)
+                    starts = [f for _, f, _ in self.note_log[-n:]]
+                    if all(y - x <= self.song_gap for x, y in zip(starts, starts[1:])):
+                        self.song_at = self.frame + 1 + 12
             return
         if b == 'A':
             self.a_log.append(self.frame + 1)
@@ -1532,7 +1641,7 @@ class WorldBridge(DuelBridge):
             elif self.near_thing():
                 self.effect(self.near_thing())
         elif b == 'LEFT' and self.ocarina:
-            self.oc_on = True
+            self.oc_on, self.oc_open, self.fresh_first = True, self.frame + 1, True
             self.log("[hos X] oc: the note wait turned on (buttons) (the action's kind 1)")
         elif b == 'ZR':
             self.zr += 1
@@ -1543,6 +1652,12 @@ class WorldBridge(DuelBridge):
 
     def tick(self):
         nxt = self.frame + 1
+        if self.song_at and nxt >= self.song_at:   # (the game takes the song by itself: it closes the note wait and plays it back)
+            self.song_at, self.oc_on, self.busy_left = 0, False, self.song_busy
+            self.log("[hos X] oc: the note wait turned off (the action's kind 1)")
+            self.songs_taken += 1
+        if self.busy_left > 0:
+            self.busy_left -= 1
         for s in list(self.inputs):
             if s['start'] == nxt:
                 self.held_s = (s['end'] - s['start']) / 60.0
@@ -1761,21 +1876,75 @@ def interact_gear_checks():
         sim.executor(['ocarina L R A', 'end']).run()
         a = sim.steps()[0]
         wire = [b for _, b in sim.bridge.pressed_log]
-        check(a['result'] == 'played' and wire == ['LEFT', 'L', 'R', 'A', 'B'] and sim.bridge.notes == ['L', 'R', 'A'],
-              f"ocarina takes it out (D-pad Left), plays the notes in order, puts it away ({wire})")
+        check(a['result'] == 'no-song' and wire == ['LEFT', 'L', 'R', 'A', 'B'] and sim.bridge.notes == ['L', 'R', 'A'],
+              f"ocarina takes it out (D-pad Left), plays the notes in order, and when the game takes no song puts it away with B: no-song ({a['result']}; {wire})")
         check('note wait turned on' in a['detail'] and 'note wait turned off' in a['detail'] and 'L R A' in a['detail'],
               f"the detail has the notes and the game's oc lines ({a['detail']})")
         check(not sim.bridge.oc_on, 'the ocarina is away afterwards')
-        check([h for _, _, h in sim.bridge.note_log] == [0.15] * 3 and all(b[1] - a[1] >= 27 for a, b in zip(sim.bridge.note_log, sim.bridge.note_log[1:])),
-              f'notes are held 150 ms and start 0.45 s apart by default ({sim.bridge.note_log})')
-    # hold and gap: longer notes with longer pauses (the five-note songs of pi-solo-2a did not wake the windmill's flag at 150 ms / 0.45 s)
+        check([h for _, _, h in sim.bridge.note_log] == [0.1] * 3 and [b[1] - a_[1] for a_, b in zip(sim.bridge.note_log, sim.bridge.note_log[1:])] == [15, 15],
+              f'notes are held 100 ms and start 0.25 s apart by default: the timing the game took Storms at in every run of hold pi2-h1 ({sim.bridge.note_log})')
+        seqs = [r for r in sim.bridge.requests if r['cmd'] == 'sequence' and 'L/' in r.get('script', '')]
+        check(len(seqs) == 1 and seqs[0]['units'] == 'hos' and seqs[0]['script'] == '0:L/100,0.25:R/100,0.5:A/100',
+              f"the notes go out as ONE timed sequence, not one request each ({[r.get('script') for r in seqs]})")
+    # hold and gap: the notes' length and the pause after each (a song taken at 100/150 ms)
     with WorldSimulation(boot_events=0, follow=False) as sim:
         sim.executor(['ocarina L R A hold 400 gap 600', 'end']).run()
         a = sim.steps()[0]
         log = sim.bridge.note_log
-        check(a['result'] == 'played' and sim.bridge.notes == ['L', 'R', 'A'] and [h for _, _, h in log] == [0.4] * 3 and
-              all(b[1] - a_[1] >= 58 for a_, b in zip(log, log[1:])),
+        check(a['result'] == 'no-song' and sim.bridge.notes == ['L', 'R', 'A'] and [h for _, _, h in log] == [0.4] * 3 and
+              [b[1] - a_[1] for a_, b in zip(log, log[1:])] == [60, 60],
               f"ocarina ... hold 400 gap 600: each note held 0.4 s, the next started 1.0 s after the one before ({log}; {a['detail']})")
+    # a window just opened ignores the notes pressed in its first 3 s (holds pi2-h1..h3: 21 of 22 tries in a fresh window gave no song, 6 of 6 in one that had been
+    # open 3 s or more did; with the poller on, the first note was missing and the game had five notes): the step lets the window warm up before the notes, unless it has been open that long
+    storms = ['L', 'R', 'X', 'L', 'R', 'X']
+    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
+        sim.executor(['ocarina L R X L R X', 'end']).run()
+        a = sim.steps()[0]
+        first = sim.bridge.note_log[0][1] if sim.bridge.note_log else None
+        left = [f for f, x in sim.bridge.pressed_log if x == 'LEFT'][0]
+        check(a['result'] == 'played' and not sim.bridge.dropped and first is not None and first - left >= 175,
+              f"the step waits for the window: no note was lost, the first came {None if first is None else first - left} frames after the D-pad Left ({a['result']}; dropped {sim.bridge.dropped})")
+    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
+        sim.executor(['ocarina L R X L R X ready 0', 'end']).run()
+        a = sim.steps()[0]
+        check(a['result'] == 'no-song' and sim.bridge.dropped == ['L'],
+              f"ready 0 plays at once: the first note is lost and there is no song ({a['result']}; dropped {sim.bridge.dropped})")
+    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
+        sim.executor(['ocarina out', 'wait 3.5', 'ocarina L R X L R X', 'end']).run()
+        a, b = [s for s in sim.steps() if s['src'].split()[0] == 'ocarina']
+        first = sim.bridge.note_log[0][1]
+        left = [f for f, x in sim.bridge.pressed_log if x == 'LEFT'][0]
+        check(b['result'] == 'played' and first - left < 300 and not sim.bridge.dropped,
+              f"a window that has been open 3.5 s needs no further wait: the notes start {first - left} frames after the D-pad Left ({b['result']}, {b['secs']} s)")
+    # a song the game takes: it closes the note wait by itself (no B from us), plays it back and holds Link; the step waits for control and says played
+    storms = ['L', 'R', 'X', 'L', 'R', 'X']
+    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
+        sim.executor(['ocarina L R X L R X', 'end']).run()
+        a = sim.steps()[0]
+        wire = [b for _, b in sim.bridge.pressed_log]
+        check(a['result'] == 'played' and wire == ['LEFT'] + storms and sim.bridge.songs_taken == 1 and 'B' not in wire,
+              f"a song the game takes ends played and nobody presses B ({a['result']}; {wire}; {a['detail']})")
+        check(sim.game.st['event'] == 0 and sim.bridge.busy_left == 0 and a['secs'] >= 5.0,
+              f"the step waited until the song's playback let Link go ({a['secs']} s, event {sim.game.st['event']})")
+    # the same notes too slowly (0.6 s apart: invented rule, the game's own is not known beyond 0.25 s): not taken, put away
+    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
+        sim.executor(['ocarina L R X L R X gap 450', 'end']).run()
+        a = sim.steps()[0]
+        check(a['result'] == 'no-song' and sim.bridge.songs_taken == 0 and [b for _, b in sim.bridge.pressed_log][-1] == 'B',
+              f"notes the game does not take end no-song and the ocarina is put away ({a['result']})")
+    # after a song the playback holds Link and a D-pad Left sent into it is lost: the step after the song finds him free; and an `ocarina out`
+    # asked while a scene or a playback holds Link waits for control before the D-pad Left
+    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
+        sim.executor(['ocarina L R X L R X', 'ocarina out', 'ocarina away', 'end']).run()
+        a, b, c = sim.steps()
+        check(a['result'] == 'played' and b['result'] == 'out' and c['result'] == 'away' and not sim.bridge.lost,
+              f"ocarina out right after a taken song works and no button was lost ({a['result']}, {b['result']}, {c['result']}; lost {sim.bridge.lost})")
+    with WorldSimulation(boot_events=0, follow=False, oc_busy=420) as sim:
+        sim.executor(['ocarina out', 'ocarina away', 'end']).run()
+        a, b = sim.steps()
+        left = [f for f, x in sim.bridge.pressed_log if x == 'LEFT']
+        check(a['result'] == 'out' and not sim.bridge.lost and len(left) == 1 and left[0] > 420 - 5,
+              f"ocarina out while Link is held (7 s of playback) waits and sends the D-pad Left once he is free ({a['result']}; LEFT at {left}; lost {sim.bridge.lost})")
     with WorldSimulation(boot_events=0, follow=False, ocarina=False) as sim:
         sim.executor(['ocarina A', 'end']).run()
         a = sim.steps()[0]
@@ -1881,12 +2050,305 @@ def interact_checks():
     interact_bad_checks()
 
 
+# ---- the panel: the pilot's decisions on the game's own screen (the control bridge's `overlay` command)
+
+OVERLAY = ('overlay', 'overlay_clear')
+PANEL = 'GOAL door [open] FOR porch\ndecision 1/40  t 0.0 s\nSTEP go running'
+PANEL2 = 'GOAL door [open] FOR porch\ndecision 2/40  t 9.5 s\nSTEP go -> reached'
+
+
+def write_hud(sim, text):
+    """What the pilot does: a temporary file renamed over <live>/hud.txt (an empty text: an empty file)."""
+    tmp = sim.live / 'hud.txt.tmp'
+    tmp.write_text(text + '\n' if text else '')
+    os.replace(tmp, sim.live / 'hud.txt')
+
+
+def sets_of(sim):
+    return [(t, r) for t, r in sim.bridge.overlay_log if r['cmd'] == 'overlay']
+
+
+def others_of(sim):
+    """Every request that is not the panel's, without its id (the panel's requests take ids too)."""
+    return [{k: v for k, v in r.items() if k != 'id'} for r in sim.bridge.requests if r['cmd'] not in OVERLAY]
+
+
+def hud_wire_checks():
+    with Simulation(boot_events=0) as sim:
+        ex = sim.executor(hud=True)
+        check(sim.game.hud is ex.hud and ex.hud is not None, 'the executor makes the panel sender and the game routes its replies to it')
+        sim.exchange()
+        for _ in range(10):
+            ex.tick(0.05)
+        check(not sim.bridge.overlay_log, 'no panel file: nothing is sent, not even a clear')
+        write_hud(sim, PANEL)
+        for _ in range(10):
+            ex.tick(0.05)
+        ov = sim.bridge.overlay_log
+        check(len(ov) == 1 and set(ov[0][1]) == {'id', 'cmd', 'text', 'seconds'} and ov[0][1]['cmd'] == 'overlay' and
+              ov[0][1]['text'] == PANEL and ov[0][1]['seconds'] == 60,
+              'the panel is one `overlay` request on the open connection: {id, cmd, text with its newlines, seconds: 60}')
+        check(sim.bridge.shown() == PANEL and not [c for c in sim.game.pending.values() if c in OVERLAY],
+              'the game shows it, and its ok reply was consumed like any other (nothing left pending)')
+        for _ in range(10):
+            ex.tick(0.05)
+        write_hud(sim, PANEL)   # (the pilot wrote the same text again: a new file, the same words)
+        for _ in range(20):
+            ex.tick(0.05)
+        check(len(sets_of(sim)) == 1, 'the same text again is not sent again')
+        write_hud(sim, PANEL2 + '\n\n')
+        for _ in range(10):
+            ex.tick(0.05)
+        check(len(sets_of(sim)) == 2 and sets_of(sim)[1][1]['text'] == PANEL2 and sim.bridge.shown() == PANEL2,
+              'a new text is sent at once, trailing newlines left out')
+        big = '\n'.join('x' * 56 for _ in range(14))
+        write_hud(sim, big)
+        for _ in range(10):
+            ex.tick(0.05)
+        check(sim.bridge.shown() == big, 'a full panel (14 lines of 56 characters) is accepted by a game that enforces the caps')
+        ids = [r['id'] for _, r in sim.bridge.overlay_log]
+        check(len(set(ids)) == len(ids) and not set(ids) & {r['id'] for r in sim.bridge.requests if r['cmd'] not in OVERLAY},
+              'the requests use ids of their own, like any other command')
+
+
+def hud_throttle_checks():
+    # the pilot writes a new text every 50 ms for three seconds: at most four requests a second, the latest text wins, no backlog
+    with Simulation(boot_events=0) as sim:
+        ex = sim.executor(['wait 6', 'end'], hud=True)
+        t0 = sim.clock.time()
+        texts = [f'GOAL g [open] FOR t\ndecision {i}/99  t {i}.0 s' for i in range(1, 61)]
+        for i, text in enumerate(texts):
+            sim.clock.at(t0 + 1.0 + i * 0.05, lambda text=text: write_hud(sim, text))
+        last_write = t0 + 1.0 + 59 * 0.05
+        ex.run()
+        sim.clock.sleep(0.1)   # (the fake game reads what hsap sent last)
+        sets = [(t, r['text']) for t, r in sets_of(sim)]
+        times = [t for t, _ in sets]
+        check(len(sets) >= 8 and all(b - a >= 0.25 for a, b in zip(times, times[1:])) and
+              all(times[i + 4] - times[i] >= 1.0 for i in range(len(times) - 4)),
+              f'at most four requests in any second ({len(sets)} requests in {times[-1] - times[0]:.1f} s)')
+        check(len(sets) < len(texts) // 2 and all(text in texts for _, text in sets), f'texts that were overwritten before their turn are never sent ({len(sets)} of {len(texts)})')
+        check(sets[-1][1] == texts[-1] and sets[-1][0] <= last_write + 0.4, 'the latest text wins, and it goes out at the next turn: no backlog to work off')
+        check(sim.bridge.overlay_log[-1][1]['cmd'] == 'overlay_clear' and all(b[0] - a[0] >= 0.25 for a, b in zip(sim.bridge.overlay_log, sim.bridge.overlay_log[1:])),
+              'the clear at the end keeps the spacing too')
+    # a socket that does not take writes: one request waits at most, never a pile
+    with Simulation(boot_events=0) as sim:
+        ex = sim.executor(hud=True)
+        sim.exchange()
+        limited = SendBudget(sim.game.sock, 0)
+        sim.game.sock = limited
+        for i in range(12):
+            write_hud(sim, f'text {i}')
+            ex.tick(0.3)
+        check(bytes(sim.game.tx).count(b'"cmd":"overlay"') <= 1, 'a blocked socket holds at most one panel request, not one per change')
+        limited.budget = None
+        for _ in range(20):
+            ex.tick(0.3)
+        check(sim.bridge.shown() == 'text 11', 'when it frees up the latest text is what the game shows')
+
+
+def hud_keepalive_checks():
+    with Simulation(boot_events=0) as sim:
+        write_hud(sim, PANEL)
+        ex = sim.executor(['wait 100', 'end'], hud=True)
+        t0 = sim.clock.time()
+        samples = []
+        for k in range(5, 100):
+            sim.clock.at(t0 + k, lambda: samples.append(sim.bridge.shown()))
+        ex.run()
+        sets = sets_of(sim)
+        gaps = [b[0] - a[0] for a, b in zip(sets, sets[1:])]
+        check(len(sets) >= 4 and all(25.0 <= g <= 25.5 for g in gaps) and all(r['text'] == PANEL and r['seconds'] == 60 for _, r in sets),
+              f'nothing changed for 100 s: the same text again every 25 s, seconds 60 each time ({len(sets)} requests, gaps {[round(g, 2) for g in gaps]})')
+        check(len(samples) == 95 and all(s == PANEL for s in samples),
+              'the game (which drops a panel 60 s after its last request) showed it every second of the run')
+    with Simulation(boot_events=0) as sim:   # a change restarts the 25 s
+        ex = sim.executor(['wait 70', 'end'], hud=True)
+        t0 = sim.clock.time()
+        write_hud(sim, PANEL)
+        sim.clock.at(t0 + 20, lambda: write_hud(sim, PANEL2))
+        ex.run()
+        sets = sets_of(sim)
+        check([r['text'] for _, r in sets][:2] == [PANEL, PANEL2] and 24.5 <= sets[2][0] - sets[1][0] <= 25.5,
+              'a new text is sent at once and its own 25 s run from there')
+
+
+def hud_clear_checks():
+    with Simulation(boot_events=0) as sim:
+        write_hud(sim, PANEL)
+        ex = sim.executor(['wait 5', 'end'], hud=True)
+        ex.run()
+        sim.clock.sleep(0.1)
+        ov = sim.bridge.overlay_log
+        check([r['cmd'] for _, r in ov] == ['overlay', 'overlay_clear'] and set(ov[-1][1]) == {'id', 'cmd'} and sim.bridge.shown() is None,
+              'at the end of a run (the end step) the panel is cleared with overlay_clear, before the connection closes')
+        check(sim.bridge.conn is not None, 'while the connection is still open (the game need not drop it itself)')
+    with Simulation(boot_events=0) as sim:
+        ex = sim.executor(['wait 3', 'end'], hud=True)
+        ex.run()
+        check(not sim.bridge.overlay_log, 'a run that never had a panel sends nothing at all at its end')
+    with Simulation(boot_events=0) as sim:   # an emptied or removed file clears the panel, once; a new text shows it again
+        ex = sim.executor(hud=True)
+        sim.exchange()
+        write_hud(sim, PANEL)
+        for _ in range(20):
+            ex.tick(0.05)
+        write_hud(sim, '')
+        for _ in range(20):
+            ex.tick(0.05)
+        check([r['cmd'] for _, r in sim.bridge.overlay_log] == ['overlay', 'overlay_clear'] and sim.bridge.shown() is None,
+              'the pilot empties the file: overlay_clear')
+        for _ in range(700):
+            ex.tick(0.05)
+        check(len(sim.bridge.overlay_log) == 2, 'nothing more while there is nothing to show (no keep-alive of an empty panel)')
+        write_hud(sim, PANEL2)
+        for _ in range(20):
+            ex.tick(0.05)
+        check(sim.bridge.shown() == PANEL2, 'a new text shows it again')
+        os.unlink(sim.live / 'hud.txt')
+        for _ in range(20):
+            ex.tick(0.05)
+        check(sim.bridge.shown() is None and [r['cmd'] for _, r in sim.bridge.overlay_log] == ['overlay', 'overlay_clear', 'overlay', 'overlay_clear'],
+              'a removed file clears it too')
+    with Simulation(boot_events=0) as sim:   # the run ends in an error: the clear is tried and never raises
+        write_hud(sim, PANEL)
+        ex = sim.executor(hud=True)
+        sim.exchange()
+        for _ in range(10):
+            ex.tick(0.05)
+        sim.bridge.conn.close()
+        sim.bridge.conn = None
+        ex.hud.close()
+        check(True, 'closing the panel after the connection is gone raises nothing')
+
+
+def hud_run_case(mode, hud, flip=None):
+    """One run of the same steps, the pilot's panel file changing during it: what hsap did (steps, every other request), what the
+    panel did (its requests, the notes it left, what the game shows at the end)."""
+    with Simulation(boot_events=1, overlay=mode) as sim:
+        t0 = sim.clock.time()
+        sim.clock.at(t0 + 1.0, lambda: write_hud(sim, PANEL))
+        sim.clock.at(t0 + 12.0, lambda: write_hud(sim, PANEL2))
+        sim.clock.at(t0 + 20.0, lambda: write_hud(sim, PANEL))
+        if flip:
+            sim.clock.at(t0 + flip[0], lambda: setattr(sim.bridge, 'overlay_mode', flip[1]))
+        ex = sim.executor(['walk 6 8 radius 0.6 timeout 15', 'press A 100', 'wait 40', 'end'], hud=hud)
+        ex.run()
+        sim.clock.sleep(0.1)
+        ev = sim.events()
+        return {'steps': [e for e in ev if e['ev'] in ('step', 'bad', 'gameplay')], 'others': others_of(sim),
+                'sets': [r['text'] for _, r in sets_of(sim)], 'all': [r['cmd'] for _, r in sim.bridge.overlay_log],
+                'notes': [e['text'] for e in ev if e['ev'] == 'note' and 'overlay' in e['text']], 'shown': sim.bridge.shown(),
+                'done': [e for e in ev if e['ev'] == 'done']}
+
+
+def hud_error_checks():
+    off = hud_run_case('ok', hud=False)
+    check(off['all'] == [] and off['shown'] is None and len(off['steps']) == 5, 'the baseline: the same run with the panel off sends nothing')
+    ok = hud_run_case('ok', hud=True)
+    check(len(ok['sets']) >= 4 and ok['all'][-1] == 'overlay_clear' and ok['shown'] is None and not ok['notes'],
+          f"a game that does it: the panel follows the file, keep-alives in the long wait, cleared at the end ({ok['all']})")
+    check(ok['steps'] == off['steps'] and ok['others'] == off['others'] and len(ok['done']) == 1,
+          'steps, their results, times and every other request are exactly those of the run with the panel off')
+    for mode in ('unavailable', 'unknown_cmd'):
+        run = hud_run_case(mode, hud=True)
+        check(run['all'] == ['overlay'] and run['shown'] is None,
+              f'{mode}: one request, and not another for the rest of the run (no new text, no keep-alive, no clear): {run["all"]}')
+        check(len(run['notes']) == 1 and mode in run['notes'][0] and 'overlay' in run['notes'][0],
+              f'{mode}: noted once in the run\'s own event file ({run["notes"]})')
+        check(run['steps'] == off['steps'] and run['others'] == off['others'] and len(run['done']) == 1,
+              f'{mode}: nothing else about the run changed: the same steps, results, times and requests as with the panel off')
+    for mode in ('bad_request', 'busy'):
+        run = hud_run_case(mode, hud=True, flip=(8.0, 'ok'))
+        check(run['sets'][:2] == [PANEL, PANEL2] and len(run['notes']) == 1,
+              f'{mode}: noted once; the refused text is not sent again as a keep-alive; the next text is tried ({run["sets"][:3]})')
+        check(run['notes'] and mode in run['notes'][0], f'{mode}: the note names the code ({run["notes"]})')
+        check(run['shown'] is None and run['all'][-1] == 'overlay_clear', f'{mode}: not stopped for good: once the game takes it, it is cleared at the end too')
+        check(run['steps'] == off['steps'] and run['others'] == off['others'], f'{mode}: the run itself is unchanged')
+    # the refusal comes while a step is waiting: no ControlError, whatever the code
+    run = hud_run_case('something_new', hud=True)
+    check(len(run['notes']) == 1 and 'something_new' in run['notes'][0] and run['steps'] == off['steps'],
+          'any other refusal code is noted once and never ends the run')
+
+
+def hud_off_checks():
+    with Simulation(boot_events=0) as sim:
+        write_hud(sim, PANEL)
+        ex = sim.executor(['wait 40', 'end'], hud=False)
+        ex.run()
+        check(ex.hud is None and sim.game.hud is None and not sim.bridge.overlay_log, 'panel off: nothing is sent, however the file changes')
+    before = dict(os.environ)
+    for hud, want in ((False, False), (True, True)):
+        with Simulation(boot_events=0, hud_game=hud) as sim:
+            menu = [a for a in sim.launched if 'RX_VK_SHOT_MENU' in a]
+            check(menu == (['RX_VK_SHOT_MENU=1'] if want else []),
+                  f'a game hsap starts: RX_VK_SHOT_MENU=1 {"is" if want else "is not"} in its command with the panel {"on" if want else "off"}')
+            check('RX_VK_SHOT_MENU' not in sim.launch_env and sim.launch_env == {k: v for k, v in os.environ.items() if k not in hsap.SLOT_VARS and k != 'OPENAI_API_KEY'},
+                  'and the environment hsap gives the runner is the same either way')
+    check(dict(os.environ) == before, 'hsap never changes its own environment')
+    with ExternalSimulation(boot_events=0, hud_game=True, follow=False) as sim:
+        ex = sim.executor(['wait 2', 'end'], hud=True, opponent=False)
+        write_hud(sim, PANEL)
+        ex.run()
+        sim.clock.sleep(0.1)
+        check(not sim.spawned and not any('RX_VK_SHOT_MENU' in str(a) for a in sim.game.cmd) and
+              [r['cmd'] for _, r in sim.bridge.overlay_log] == ['overlay', 'overlay_clear'],
+              'an external game is never started or changed (no RX_VK_SHOT_MENU), and still gets the panel over the control socket, cleared at the end')
+    ask = hsap.hud_wanted
+    check(ask(None, {}) and ask('on', {}) and not ask('off', {}) and not ask(None, {'HSAP_HUD': '0'}) and not ask('on', {'HSAP_HUD': '0'}) and
+          ask('on', {'HSAP_HUD': '1'}) and ask(None, {'HSAP_HUD': ''}), '--hud off or HSAP_HUD=0 turn the panel off; otherwise it is on')
+
+
+def hud_restart_checks():
+    # the game execs itself: its panel went with the old connection, so the same text is shown again on the new one at once
+    with DuelSimulation(boot_events=0) as sim:
+        sim.game.reconnect_wait = 30.0
+        ex = sim.executor(hud=True, opponent=False)
+        sim.exchange()
+        write_hud(sim, PANEL)
+        for _ in range(20):
+            ex.tick(0.05)
+        check(sim.bridge.shown() == PANEL, 'before the restart the panel is shown')
+        sim.bridge.drop()
+        for _ in range(40):
+            ex.tick(0.05)
+        write_hud(sim, PANEL2)
+        for _ in range(40):
+            ex.tick(0.05)
+        check(sim.game.down and b'overlay' not in bytes(sim.game.tx) and not [c for c in sim.game.pending.values() if c in OVERLAY],
+              'while the socket is gone nothing is queued for the new process')
+        sent_before = len(sim.bridge.overlay_log)
+        sim.bridge.revive()
+        for _ in range(100):
+            ex.tick(0.05)
+        check(not sim.game.down and len(sim.bridge.overlay_log) == sent_before + 1 and sim.bridge.shown() == PANEL2,
+              'the new process gets the latest text within seconds, not after a keep-alive')
+        sim.bridge.drop()
+        for _ in range(40):
+            ex.tick(0.05)
+        sim.bridge.revive()
+        for _ in range(100):
+            ex.tick(0.05)
+        check(sim.bridge.shown() == PANEL2, 'and again after a second restart with no new text: the same text is shown again')
+
+
+def hud_checks():
+    hud_wire_checks()
+    hud_throttle_checks()
+    hud_keepalive_checks()
+    hud_clear_checks()
+    hud_error_checks()
+    hud_off_checks()
+    hud_restart_checks()
+
+
 def main():
     transport_checks()
     executor_checks()
     duel_checks()
     external_checks()
     interact_checks()
+    hud_checks()
     print('test_hsap: all passed')
 
 if __name__ == '__main__':

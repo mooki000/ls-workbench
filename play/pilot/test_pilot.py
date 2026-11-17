@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -23,12 +24,14 @@ sys.path.insert(0, str(HERE))
 import deciders  # noqa: E402
 import follow_feed  # noqa: E402
 import lessons  # noqa: E402
+import hud_text  # noqa: E402
 import openai_api  # noqa: E402
 import pilot  # noqa: E402
 import standin  # noqa: E402
 import tactics  # noqa: E402
 import test_actions  # noqa: E402
 import test_eyes  # noqa: E402
+import test_hud_text  # noqa: E402
 import test_interact  # noqa: E402
 import test_lessons  # noqa: E402
 import test_recover  # noqa: E402
@@ -156,7 +159,23 @@ class FakeGame(threading.Thread):
             time.sleep(0.01)
 
 
-def play(decider, tmp, max_decisions=None, planner=None):
+class RecordingHud(hud_text.Hud):
+    """The panel texts a run wrote, in order (the file only ever holds the last one)."""
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        self.texts = []
+
+    def write(self, text):
+        self.texts.append(text)
+        super().write(text)
+
+
+class FailingHud(RecordingHud):
+    def write(self, text):
+        raise OSError(28, 'No space left on device')
+
+
+def play(decider, tmp, max_decisions=None, planner=None, hud=False):
     seg_path = tmp / 'fake.toml'
     seg_path.write_text(SEGMENT)
     seg = pilot.Segment(seg_path)
@@ -169,7 +188,9 @@ def play(decider, tmp, max_decisions=None, planner=None):
     st = ch.wait(lambda e: e['ev'] == 'state', 5)
     run_dir = tmp / f'run-{decider.name}-{time.time_ns()}'
     run_dir.mkdir()
-    p = pilot.Pilot(seg, decider, ch, run_dir, run_dir.name, lambda: True, planner, max_decisions)
+    panel = (RecordingHud(live / 'hud.txt') if hud is True else hud) if hud else None
+    p = pilot.Pilot(seg, decider, ch, run_dir, run_dir.name, lambda: True, planner, max_decisions,
+                    **({'hud': panel} if panel is not None else {}))
     p.plan = None
     outcome = p.run(st)
     ch.send(['end'])
@@ -1507,6 +1528,252 @@ def lessons_checks(tmp):
           'lessons on with a cold library: the request off sends, and the row says on with none')
 
 
+# ---- the panel: what the pilot says on the game's own screen (hud_text.py; hsap.py sends <live>/hud.txt)
+
+def hud_rows(text):
+    return text.split('\n')
+
+
+def hud_during(texts, n, total):
+    """The texts written while decision n was the one on the panel."""
+    return [t for t in texts if hud_rows(t)[1].startswith(f'decision {n}/{total}')]
+
+
+def hud_checks(tmp):
+    seg, p, outcome, ch, run_dir = play(deciders.Rules(), tmp, hud=True)
+    texts, total = p.hud.texts, seg.max_decisions
+    tr = transcript(run_dir)
+    decs = [e for e in tr if e['kind'] == 'decision']
+    results = {e['n']: e for e in tr if e['kind'] == 'result'}
+    check(outcome == 'solved' and len(decs) == len(p.decisions) > 3, f'rules solve the made-up house with the panel on ({outcome}, {len(decs)} decisions)')
+    check(texts and all(test_hud_text.valid(t) for t in texts), f'{len(texts)} panel texts, each within 14 lines of 56 ASCII characters')
+    check(all(a != b for a, b in zip(texts, texts[1:])), 'a text is written only when it changed')
+    rows = lambda n: [r for t in hud_during(texts, n, total) for r in hud_rows(t)]   # noqa: E731
+    missing = [d['n'] for d in decs if 'STEP choosing the next step' not in rows(d['n'])]
+    check(not missing, f'every decision shows its candidates before the decider answers ({missing})')
+    missing = [d['n'] for d in decs if f"STEP {d['choice']} running" not in rows(d['n']) or f"> {d['choice']}" not in rows(d['n'])]
+    check(not missing, f'and then the chosen candidate marked > and the step running ({missing})')
+    missing = [d['n'] for d in decs if (f"STEP {d['choice']} -> {results[d['n']]['result']}" if d['n'] in results else None) not in rows(d['n'])
+               and (d['n'] in results or not any(r.startswith(f"STEP {d['choice']} -> ") for r in rows(d['n'])))]
+    check(not missing, f'and its result word when the step ended (a target left without a step: done or failed) ({missing})')
+    missing = [d['n'] for d in decs[1:] if not any(r.startswith('LAST ') for r in rows(d['n']))]
+    check(not missing, f'from the second decision on the step before is there as LAST ({missing})')
+    last = hud_rows(texts[-1])
+    check(last[0] == 'GOAL talk [met] FOR friend' and last[2] == 'RUN solved' and (ch.live / 'hud.txt').read_text().rstrip('\n') == texts[-1],
+          f'at the end: the last goal met, RUN solved, and that text is what the file holds ({last[:3]})')
+    check(any(r.startswith('MODEL rules, no model asked') for r in rows(1)) and 'COST none yet: no model call' in rows(1) and 'STATE moving freely' in rows(1),
+          'rules: no model asked, no cost, moving freely')
+    # the same run without a panel: every decision, every step line, the same
+    _, p0, outcome0, ch0, run0 = play(deciders.Rules(), tmp)
+    check(not (ch0.live / 'hud.txt').exists(), 'a pilot without a Hud writes no file')
+    key = lambda tr_: [(e['n'], e['choice'], e['goal'], e['target']) for e in tr_ if e['kind'] == 'decision']   # noqa: E731
+    check(outcome0 == outcome and p0.decisions == p.decisions and ch0.steps.read_text() == ch.steps.read_text() and key(transcript(run0)) == key(tr),
+          'with the panel on or off the pilot decides and sends exactly the same: the same decisions, goals, targets and step lines')
+    # a panel that cannot be written ends nothing: noted once in the transcript, the run is the same
+    broken = FailingHud(tmp / 'never-written-hud.txt')
+    _, pb, outcomeb, chb, runb = play(deciders.Rules(), tmp, hud=broken)
+    notes = [e for e in transcript(runb) if e['kind'] == 'hud']
+    check(outcomeb == 'solved' and pb.decisions == p.decisions and len(notes) == 1 and notes[0]['error'] == 'OSError: No space left on device',
+          f'a Hud that cannot write: one `hud` row in the transcript ({notes}), the same decisions, still solved')
+
+
+def hud_recover_checks(tmp):
+    made = []
+
+    def factory(live):
+        made.append(RecordingHud(Path(live) / 'hud.txt'))
+        return made[-1]
+    posts = [test_recover.Post(0, 20)]
+    p, outcome, world, rd = test_recover.play(tmp, [('t', 0, 40, 2.5)], posts, area='Fake_Post', hud=factory)
+    texts = made[0].texts
+    check(outcome == 'solved' and p.recover_summary()['blocks'] == 1, f'a post in the way: blocked once, solved ({outcome})')
+    allrows = [r for t in texts for r in hud_rows(t)]
+    check('RECOVERY rung sidestep' in allrows and 'MODEL recovery ladder' in allrows and any(r.startswith('> recover:sidestep') for r in allrows),
+          'a recovery rung is a panel of its own: RECOVERY rung sidestep, MODEL recovery ladder, the rung as the chosen candidate')
+    check(any(r.startswith('STUCK ') and ', rung ' in r for r in allrows), 'and the decision after the stuck move shows STUCK <s> s, rung <n>')
+    check(all(test_hud_text.valid(t) for t in texts), 'every one within the limits')
+    p0, outcome0, world0, rd0 = test_recover.play(tmp, [('t', 0, 40, 2.5)], posts, area='Fake_Post')
+    check(outcome0 == outcome and p0.decisions == p.decisions and world0.log == world.log,
+          'and the run is the same without the panel: the same decisions, the same lines sent to the game')
+
+
+def hud_eyes_checks(tmp):
+    import vision   # noqa: E402
+
+    class EyesFirst:
+        """The first decision looks: a fresh look with the row vision.py would have written."""
+        def __init__(self):
+            self.asked = 0
+
+        def before_decision(self, st, goal=None, target=None, mem=None, tried=None, n=None):
+            self.asked += 1
+            if self.asked > 1:
+                return None
+            row = {'wall': time.time(), 'why': ['first'], 'cost_usd': 0.0004, 'oddities': [],
+                   'answers': {'front': 'door', 'screen': 'play', 'p': {'text_box': 0.9, 'stuck': 0.1}, 'says': 'free text that stays off the panel'}}
+            return vision.Look({'front': 'door', 'p': {}, 'age_s': 0.0}, [], True, row)
+    made = []
+
+    def factory(live):
+        made.append(RecordingHud(Path(live) / 'hud.txt'))
+        return made[-1]
+    p, outcome, world, rd = test_recover.play(tmp, [('t', 0, 40, 2.5)], [], eyes=EyesFirst(), hud=factory)
+    texts = made[0].texts
+    first = hud_rows(texts[0])
+    check(outcome == 'solved' and first[1].startswith('decision 1/') and any(r.startswith('VISION ') and r.endswith(' s ago: ahead door, text box 90%') for r in first) and
+          'COST $0.0004 so far, 1 model call' in first, f'a look made before the first decision is on its panel: VISION, and its cost ({first[-3:]})')
+    check(not any('free text' in t for t in texts), 'what the look said in words never goes on the panel')
+
+
+def hud_model_checks(tmp, client_base):
+    """The stand-in model decider and planner: what the panel says of the model, its percentages and its cost."""
+    client = openai_api.Client('hud-run', 'fake-house', client_base)
+    _, p4, outcome4, ch4, run4 = play(deciders.Decisions(client), tmp, max_decisions=6, planner=deciders.Planner(client), hud=True)
+    texts = p4.hud.texts
+    allrows = [r for t in texts for r in hud_rows(t)]
+    import re as _re
+    check(any(_re.fullmatch(r'MODEL gpt-6-luna \d+\.\d\d s sure 60%', r) for r in allrows) and 'MODEL gpt-6-luna (asking)' in allrows,
+          'the model: asking while the request is out, then its name, latency and how sure it was')
+    check(any(_re.fullmatch(r'> \S+  70%', r) for r in allrows) and any(_re.fullmatch(r'  \S+  \d+%', r) for r in allrows),
+          'the candidates carry the model\'s percentages, the chosen one marked')
+    led = openai_api.summary('hud-run', standin=True)
+    calls, cost = sum(v['requests'] for v in led.values()), sum(v['cost_usd'] for v in led.values())
+    m = _re.fullmatch(r'COST \$([0-9.]+) so far, (\d+) model calls', next(r for r in hud_rows(texts[-1]) if r.startswith('COST ')))
+    check(m and int(m.group(2)) == calls and abs(float(m.group(1)) - cost) < 2e-4 and 'planner' in led,
+          f'the cost row is the ledger\'s: decisions and the planner ({m and m.group(0)} against {calls} requests, ${cost:.6f})')
+    check(not any(w in t for t in texts for w in ('sk-test', '/tmp', '127.0.0.1', 'input_json', '"pos"', 'request')),
+          'no key, path, address, request body or position anywhere in the panel')
+    check(all(test_hud_text.valid(t) for t in texts), 'every text within the limits')
+    # a model that costs real money (the ledger priced from tokens): the panel's cost row is the ledger's, to the fourth decimal
+    _, p5, outcome5, _, _ = play(deciders.Decisions(PricedClient('hud-cost')), tmp, max_decisions=6, hud=True)
+    led = openai_api.summary('hud-cost')
+    calls, cost = sum(v['requests'] for v in led.values()), sum(v['cost_usd'] for v in led.values())
+    m = _re.fullmatch(r'COST \$([0-9.]+) so far, (\d+) model calls', next(r for r in hud_rows(p5.hud.texts[-1]) if r.startswith('COST ')))
+    check(m and cost > 0.0002 and int(m.group(2)) == calls and abs(float(m.group(1)) - cost) <= 5.1e-5 and
+          any('sure 70%' in r for t in p5.hud.texts for r in hud_rows(t)),
+          f'the cost row is the ledger\'s to the fourth decimal ({m and m.group(0)} against {calls} requests, ${cost:.6f}), and how sure the model was')
+
+
+def hud_wire_checks(tmp):
+    """The two halves together: the pilot's Hud writing <live>/hud.txt, hsap's sender reading it and sending it to a fake game that
+    enforces the game side's caps (test_hsap.FakeBridge): what the game shows is exactly what the Hud wrote."""
+    import types
+    import test_hsap
+    with test_hsap.Simulation(boot_events=0) as sim:
+        ex = sim.executor(hud=True)
+        sim.exchange()
+        hud = hud_text.Hud(sim.live / 'hud.txt', total=40, eyes=True)
+        g, t = types.SimpleNamespace(name='door', status='open'), types.SimpleNamespace(name='porch')
+        labels = ['go', 'wait', 'side-left', 'side-right', 'roll', 'hop', 'back-off']
+
+        def settle():
+            for _ in range(20):
+                ex.tick(0.05)
+        hud.deciding(1, g, t, 3.0, 'openai-decisions', labels, model='model-x')
+        settle()
+        check(sim.bridge.shown() == hud.text and hud.text.startswith('GOAL door [open] FOR porch\ndecision 1/40  t 3.0 s'),
+              'the game shows the panel the Hud wrote (the candidates offered, before the decider answers)')
+        hud.decided('go', 'openai-decisions', labels, {'request': {'model': 'model-x'}, 'latency_ms': 420.0, 'confidence': 0.82, 'cost_usd': 0.0002,
+                                                       'answers': [{'name': 'next_step', 'probabilities': [{'value': 'go', 'probability': 0.82}, {'value': 'wait', 'probability': 0.09}]}]})
+        settle()
+        shown = sim.bridge.shown()
+        check(shown == hud.text and '> go  82%' in shown.split('\n') and 'MODEL model-x 0.42 s sure 82%' in shown.split('\n'),
+              'and the chosen one with the model\'s percentage, its latency and how sure it was')
+        hud.result('reached', g, t=4.5)
+        settle()
+        check(sim.bridge.shown() == hud.text and 'STEP go -> reached' in sim.bridge.shown().split('\n'), 'and the step\'s result')
+        hud.finish('solved')
+        settle()
+        check(sim.bridge.shown().split('\n')[2] == 'RUN solved', 'and the end of the run')
+        hud.clear()
+        settle()
+        check(sim.bridge.shown() is None and [r['cmd'] for _, r in sim.bridge.overlay_log][-1] == 'overlay_clear',
+              'and the pilot\'s clear takes it off the screen')
+        check(all(r['cmd'] != 'overlay' or len(r['text'].split('\n')) <= 14 for _, r in sim.bridge.overlay_log) and
+              len([1 for _, r in sim.bridge.overlay_log if r['cmd'] == 'overlay']) == 4, 'four texts sent for four panel changes, none refused')
+
+
+def hud_cmd_checks(tmp):
+    """`pilot.py run` hands the switch to hsap and writes <live>/hud.txt; a fake hsap process (the made-up house behind hsap's command line)."""
+    import argparse
+    import contextlib
+    import io
+    fake = tmp / 'fake_hsap_hud.py'
+    fake.write_text(
+        "import json, sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(HERE)!r})\nimport test_pilot\n"
+        "a = sys.argv[1:]\nlive = Path(a[a.index('--live') + 1])\nlive.mkdir(parents=True, exist_ok=True)\n"
+        "(live / 'argv.json').write_text(json.dumps(a))\ntest_pilot.FakeGame(live).run()\n")
+    seg_path = tmp / 'hud-cmd.toml'
+    seg_path.write_text(SEGMENT)
+    written = []
+    real_write = hud_text.Hud.write
+
+    def spy(self, text):
+        written.append((str(self.path), text))
+        real_write(self, text)
+
+    def run(tag, env=None, attach=None, **extra):
+        args = argparse.Namespace(segment=str(seg_path), decider='rules', replay=None, planner=False, copy=str(tmp / 'copy'), tag=tag,
+                                  attach=attach, save=None, wall=60, max_decisions=None, follow=[], end_hold=0.0, shots=0, api_base=None,
+                                  allowance_usd=None, allowance_since='2026-01-01', matches=None, humanize=0, no_bad_points=True, **extra)
+        written.clear()
+        saved = pilot.HSAP
+        pilot.HSAP = fake
+        try:
+            with mock.patch.dict(os.environ, env or {}), mock.patch.object(hud_text.Hud, 'write', spy), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = pilot.cmd_run(args)
+        finally:
+            pilot.HSAP = saved
+        run_dir = pilot.HERE / 'runs' / tag
+        return code, run_dir, json.loads((run_dir / 'live' / 'argv.json').read_text()) if (run_dir / 'live' / 'argv.json').exists() else None
+
+    with mock.patch.dict(os.environ):
+        os.environ.pop('HSAP_HUD', None)
+        code, run_dir, argv = run('hud-run-default')
+    texts = [t for _, t in written if t]
+    check(argv[argv.index('--hud') + 1] == 'on' and (run_dir / 'live' / 'hud.txt').exists(),
+          'by default hsap is started with --hud on and the pilot writes <live>/hud.txt')
+    check(texts and all(test_hud_text.valid(t) for t in texts) and written[-1][1] == '' and (run_dir / 'live' / 'hud.txt').read_text() == '' and
+          any(hud_rows(t)[2].startswith('RUN ') for t in texts),
+          f'{len(texts)} texts, RUN <outcome> at the end, and the panel cleared (an empty file) before the end step ends the game side')
+    check(all(path == str(run_dir / 'live' / 'hud.txt') for path, _ in written), 'only ever that one file')
+    code, run_dir, argv = run('hud-run-off', hud='off')
+    check(argv[argv.index('--hud') + 1] == 'off' and not written and not (run_dir / 'live' / 'hud.txt').exists(),
+          '--hud off: hsap is told off, and nothing is written, not even an empty file')
+    code, run_dir, argv = run('hud-run-env', env={'HSAP_HUD': '0'})
+    check(argv[argv.index('--hud') + 1] == 'off' and not written and not (run_dir / 'live' / 'hud.txt').exists(), 'HSAP_HUD=0: the same')
+    code, run_dir, argv = run('hud-run-env-on', env={'HSAP_HUD': '0'}, hud='on')
+    check(argv[argv.index('--hud') + 1] == 'off' and not written, 'HSAP_HUD=0 wins over --hud on')
+    # attached to a game side somebody else started: the panel goes into that live folder, no hsap is started
+    live = tmp / 'hud-attach-live'
+    pilot.Channel(live)
+    attached = FakeGame(live)
+    attached.start()
+    with mock.patch.dict(os.environ):
+        os.environ.pop('HSAP_HUD', None)
+        code, run_dir, argv = run('hud-run-attach', attach=str(live))
+    summary = json.loads((run_dir / 'summary.json').read_text())
+    check(argv is None and 'runner' not in summary and (live / 'hud.txt').exists() and any(t for _, t in written) and
+          all(path == str(live / 'hud.txt') for path, _ in written), '--attach: the panel text goes into the attached live folder')
+    # check-route (no decisions: nothing to show) tells hsap --hud off
+    fake2 = tmp / 'fake_hsap_check.py'
+    fake2.write_text("import json, sys\nfrom pathlib import Path\na = sys.argv[1:]\nlive = Path(a[a.index('--live') + 1])\n"
+                     "(live / 'argv.json').write_text(json.dumps(a))\n")
+    route = tmp / 'hud-route.txt'
+    route.write_text('wait 1\n')
+    saved = pilot.HSAP
+    pilot.HSAP = fake2
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            pilot.cmd_check_route(argparse.Namespace(route=str(route), segment=str(seg_path), runs=1, copy=str(tmp / 'copy'), tag='hud-check', wall=10))
+    finally:
+        pilot.HSAP = saved
+    argv = json.loads((pilot.HERE / 'runs' / 'checks' / 'hud-check-1' / 'argv.json').read_text())
+    check(argv[argv.index('--hud') + 1] == 'off', 'check-route: hsap is started with --hud off (a route has no decisions to show)')
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='pilot-test-') as t:
         tmp = Path(t)
@@ -1608,6 +1875,7 @@ def main():
         led = openai_api.summary('test-run', standin=True)
         check(led['decision']['requests'] == len(dec) and led['planner']['requests'] == len(plans) and
               not openai_api.LEDGER.exists(), 'stand-in requests in the stand-in ledger only')
+        hud_model_checks(tmp, base)
         del os.environ['OPENAI_API_KEY']
 
         openai_api.CAPS.write_text(json.dumps({'per_run_usd': 0.001, 'per_night_usd': 50, 'total_usd': 400,
@@ -1704,9 +1972,15 @@ def main():
         check(again.info.get('fallback', '').startswith('stopped'), 'no request after the stop')
         follow_checks(tmp)
         duel_checks(tmp)
+        hud_checks(tmp)
+        hud_recover_checks(tmp)
+        hud_eyes_checks(tmp)
+        hud_cmd_checks(tmp)
+        hud_wire_checks(tmp)
         lessons_checks(tmp)
         os.environ.pop('PILOT_TACTICS_DIR', None)
     test_recover.run()
+    test_hud_text.run()
     test_interact.run()
     if test_interact.FAILS:
         raise SystemExit(f'FAILED: test_interact: {len(test_interact.FAILS)} checks failed')

@@ -38,8 +38,8 @@ def _key_file():
     return Path(base) / 'ls-pilot' / 'openai.key'   # (read only; never inside a repository)
 
 
-CAPS = HERE / 'caps.json'
-LEDGER = HERE / 'ledger.jsonl'
+CAPS = Path(os.environ.get('PILOT_CAPS') or HERE / 'caps.json')   # (the environment may name other files: a test's subprocess must not touch the real ledger)
+LEDGER = Path(os.environ.get('PILOT_LEDGER') or HERE / 'ledger.jsonl')
 LEDGER_STANDIN = HERE / 'ledger-standin.jsonl'   # requests to a stand-in server: kept apart from the real ledger
 OPENAI = 'https://api.openai.com/v1'
 DECISION_MODEL = 'gpt-6-luna'      # "Send requests to POST /v1/decisions using gpt-6-luna, the only currently supported model."
@@ -70,7 +70,10 @@ class CapReached(Exception):
 
 
 class ApiError(Exception):
-    pass
+    """A request that failed. status: the HTTP status when a reply came; timeout: the request timed out (the driver layer
+    sorts a failure by these two, drivers/base.py); the message is as it always was."""
+    status = None
+    timeout = False
 
 
 def caps():
@@ -206,7 +209,9 @@ class Client:
         except requests.RequestException as e:
             msg = f'{type(e).__name__}: {e}'.replace(key, '<key>')
             del key
-            raise ApiError(msg) from None
+            err = ApiError(msg)
+            err.timeout = isinstance(e, requests.Timeout)
+            raise err from None
         del key
         self.requests += 1
         try:
@@ -222,7 +227,9 @@ class Client:
             row['cost_usd'] = 0.0   # a stand-in costs nothing; its token counts are its own guess
         _append(row, LEDGER if self.real else LEDGER_STANDIN)
         if r.status_code != 200 or answer is None:
-            raise ApiError(f'HTTP {r.status_code}: {text[:400]}')
+            err = ApiError(f'HTTP {r.status_code}: {text[:400]}')
+            err.status = r.status_code
+            raise err
         return answer, ms, row
 
     def get_json(self, path, timeout=30.0):

@@ -73,6 +73,8 @@ def score_cell(rec, cell, arm_name, arm, night, pilot_commit, metrics_mod=None, 
     if rec.get('cut') and not res['success']:
         why.append(f"cut short: {rec['cut']}")
     valid = res['success'] and res['start_ok'] is not False or not why
+    if res.get('tainted') and not res['success'] and res['start_ok'] is not False and res['valid_samples']:
+        valid = True   # (a forbidden way was taken: the failure is certain, however the run ended)
     m, merr = None, None
     if metrics_mod is not None:
         try:
@@ -87,6 +89,8 @@ def score_cell(rec, cell, arm_name, arm, night, pilot_commit, metrics_mod=None, 
     cost = ((m or {}).get('cost') or {}).get('total_usd')
     game_s = round(res['last_t'] - res['first_t'], 1) if res['last_t'] is not None and res['first_t'] is not None else None
     outcome = summary.get('outcome') or ('no summary' if not summary else None)
+    if res.get('tainted') and not res['success']:
+        why.insert(0, 'went a way the task forbids (the proof can no longer be met)')
     if not why and not res['success']:
         why.append(f'the proof was not shown in {game_s} s of play' + (f' (the pilot said: {outcome})' if outcome else ''))
     row = {
@@ -94,7 +98,7 @@ def score_cell(rec, cell, arm_name, arm, night, pilot_commit, metrics_mod=None, 
         'success': int(bool(res['success'])), 'time_to_goal_s': res['time_to_goal_s'], 'stuck_s': sess.get('stuck_s_total'), 'decisions': sess.get('decisions'),
         'cost_usd': cost, 'progress': res['progress'], 'start_ok': None if res['start_ok'] is None else int(res['start_ok']), 'valid': int(bool(valid)),
         'why': '; '.join(why), 'pilot_outcome': outcome, 'play_s': game_s, 'build': build_of(run_dir), 'pilot_commit': pilot_commit,
-        'fingerprint': board.fingerprint(cell, local), 'arm_hash': arm_hash(arm),
+        'fingerprint': board.fingerprint(cell, local), 'arm_hash': arm_hash(arm), 'blocker': None if res['success'] else cell.blocker,
         'referee': res, 'metrics_error': merr,
         'extra': {'stuck_steps': sess.get('stuck_steps'), 'streak_max': sess.get('streak_max'), 'distance_m': sess.get('distance_m'),
                   'recover': (m or {}).get('recover'), 'goals': (m or {}).get('goals'), 'rc': rec.get('rc'), 'stopped_after_proof': rec.get('stopped_after_proof'),
@@ -158,3 +162,35 @@ def merge_ledger(snapshot_pilot, dev_pilot):
         with open(dev, 'a') as f:
             f.write('\n'.join(new) + '\n')
     return len(new)
+
+
+def rejudge_row(old, cell, journal_rows, transcript, local=None, ended_by_old_proof=False):
+    """The stored row `old` (a dict, as in row_json) judged again by `cell`'s CURRENT proof and start on the stored journal (rows of state.jsonl): the same sample,
+    a corrected reading. `ended_by_old_proof`: the run met the earlier proof, so the runner ended it a few seconds later: if the corrected proof is not met in
+    what is left, the run is invalid (too short), not a failure. Returns the new row (every field but the judgement is the old one's). Rejudgement never un-cuts a run: a cut reason in `why` stays."""
+    t_ref = referee.first_decision_t(transcript, journal_rows)
+    res = referee.judge(cell.proof, journal_rows, cell.start, t_ref)
+    why = []
+    if res['valid_samples'] == 0:
+        why.append('no sample showed a place (the game never reached play)')
+    if res['start_ok'] is False:
+        why.append(f"the first sample was not at the cell's start ({res['start']} on {res['maps'][:1]})")
+    if res.get('tainted') and not res['success']:
+        why.append('went a way the task forbids (the proof can no longer be met)')   # (a failure that is already certain: how long the run lasted does not matter)
+    elif ended_by_old_proof and not res['success']:   # (the runner ends a cell a few seconds after the proof was seen: a run that the OLD proof ended is too short to count as a failure of the new one)
+        why.append('ended early by the earlier proof (the runner stops a cell a few seconds after a proof was seen), so too short to count as a failure of the corrected one: play it again')
+    cut = re.search(r'cut short: \w+', old.get('why') or '')
+    if cut and not res['success']:
+        why.append(cut.group(0))
+    if old.get('why', '').startswith('the runner failed'):
+        why.insert(0, old['why'].split('; ')[0])
+    valid = res['success'] and res['start_ok'] is not False or not why
+    if res.get('tainted') and not res['success'] and res['start_ok'] is not False and res['valid_samples']:
+        valid = True
+    if not why and not res['success']:
+        why.append(f"the proof was not shown in {old.get('play_s')} s of play" + (f" (the pilot said: {old['pilot_outcome']})" if old.get('pilot_outcome') else ''))
+    new = dict(old)
+    new.update({'success': int(bool(res['success'])), 'time_to_goal_s': res['time_to_goal_s'], 'progress': res['progress'],
+                'start_ok': None if res['start_ok'] is None else int(res['start_ok']), 'valid': int(bool(valid)), 'why': '; '.join(why),
+                'fingerprint': board.fingerprint(cell, local), 'referee': res})
+    return new

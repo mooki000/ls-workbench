@@ -138,6 +138,78 @@ def explorer_checks():
     check(all(valid_line(s) for s in io.sent) and len(res['trail']) >= 2, f'every probe is an hsap run line ({io.sent[:2]})')
 
 
+class HurtWorld(tr.WalledWorld):
+    """WalledWorld whose Link loses `per_step` quarter hearts at every step he spends at or past z = `from_z` (a boulder), life reported in the state."""
+
+    def __init__(self, *a, life=24, per_step=4, from_z=0.0, **k):
+        super().__init__(*a, **k)
+        self.life, self.per_step, self.from_z = life, per_step, from_z
+
+    def send(self, line):
+        ev = super().send(line)
+        if self.pos[2] >= self.from_z:
+            self.life = max(0, self.life - self.per_step)
+        return ev
+
+    def state(self):
+        st = super().state()
+        st['life'] = self.life
+        return st
+
+
+def life_checks(tmp):
+    # a hazard cluster starts with a retreat and a wait
+    lib = routelib.RouteLib(tmp / 'libH')
+    r = tr.FakeRun(tmp / 'libH-run', 'libH-run', start=(0, 100, 0))
+    r.leg('run 0 50 radius 2.5 timeout 30', [(0, 100, 49.5)], 'reached')
+    r.leg('run 0 200 radius 2.5 timeout 30', [(0, 100, 50.2)], 'stuck', detail='149.80 m from the point; moved under 0.3 m in 2.5 s at 0.0 100.0 50.2', hurt=8)
+    lib.import_run(r.write(), build='old')
+    lib.add_target('place', 'Testland_Child', 0.0, 200.0, age='child', radius=3.0)
+    w = tr.FakeWorld()
+    w.plan_result = {'ok': False, 'why': 'not-connected', 'detail': 'no link', 'near': None, 'steps': [], 'waypoints': []}
+    io = tr.WalledWorld([(-6, 52, 6, 54)], pos=(0.3, 100.0, 0.2))
+    res = frontier.Push(lib, io, target='place', map='Testland_Child', world=w, build='new', run='push-h', deadline=time.monotonic() + 60, log=lambda *_: None, expected=(0.3, 100.0, 0.2)).run()
+    check(res['attempts'] and res['attempts'][0]['label'] == 'retreat-wait', f'a place that cost hearts is approached again only after a retreat and a wait ({[a["label"] for a in res["attempts"][:3]]})')
+    ra = frontier.attempt_by_label('retreat-wait', {'at': [0.0, 100.0, 50.0], 'want': [0.0, 200.0], 'target': [0.0, 200.0], 'doors': [], 'tried': set()})
+    lines = ra.build({}, {'at': [0.0, 100.0, 50.0], 'want': [0.0, 200.0], 'target': [0.0, 200.0]})
+    check(all(valid_line(x) for x in lines) and float(lines[0].split()[2]) < 40.0 and any(x.startswith('wait ') for x in lines), f'retreat-wait goes back 12 m, waits, comes on ({lines})')
+    # the explorer stops at a heart rather than die, and says dead at none
+    io = HurtWorld([], pos=(0.0, 100.0, 0.0), life=12, per_step=4, from_z=5.0)
+    res = frontier.Explorer(io, target=(0.0, 100.0), radius=3.0, deadline=time.monotonic() + 30).run(max_probes=40)
+    check(res['stopped'] == 'life' and io.life <= 4 and io.life > 0, f'one heart left: the explorer stops (stopped {res["stopped"]}, life {io.life})')
+    io = HurtWorld([], pos=(0.0, 100.0, 0.0), life=4, per_step=4, from_z=5.0)
+    res = frontier.Explorer(io, target=(0.0, 100.0), radius=3.0, deadline=time.monotonic() + 30).run(max_probes=40)
+    check(res['stopped'] == 'life', f'(at a heart to begin with it does not start) ({res["stopped"]})')
+    # attempts at a block are given up once hearts are being lost there
+    lib2 = routelib.RouteLib(tmp / 'libH2')
+    r = tr.FakeRun(tmp / 'libH2-run', 'libH2-run', start=(0, 100, 0))
+    r.leg('run 0 50 radius 2.5 timeout 30', [(0, 100, 49.5)], 'reached')
+    r.leg('run 0 200 radius 2.5 timeout 30', [(0, 100, 50.2)], 'stuck', detail='149.80 m from the point; moved under 0.3 m in 2.5 s at 0.0 100.0 50.2')
+    lib2.import_run(r.write(), build='old')
+    lib2.add_target('place', 'Testland_Child', 0.0, 200.0, age='child', radius=3.0)
+    io = HurtWorld([(-300, 52, 300, 54)], pos=(0.3, 100.0, 0.2), life=40, per_step=2, from_z=45.0)
+    res = frontier.Push(lib2, io, target='place', map='Testland_Child', world=w, build='new', run='push-h2', deadline=time.monotonic() + 60, log=lambda *_: None, expected=(0.3, 100.0, 0.2), max_probes=30).run()
+    check(0 < len(res['attempts']) < 8, f'hearts lost at the block end its attempts early ({len(res["attempts"])} made)')
+
+
+def start_checks(tmp):
+    # a frontier save is not made next to a person, a door or a sign: the boot presses A until the game is calm, and A at a prompt talks
+    lib = library_with_frontier(tmp, 'libS')
+    w = tr.FakeWorld()
+    w.people = [('Testland_Child', 0.5, 50.5)]
+    copy = tmp / 'copy-s'
+    (copy / 'runs').mkdir(parents=True)
+    sess = frontier.make_session(lib, 'place', name='s', wall=300, budget_s=200, tag='pl-s', save_name='f-s', base_save='kid-save', copy=str(copy), world=w)
+    p = sess['start']['pos']
+    check(math.hypot(p[0] - 0.5, p[2] - 50.5) >= 3.0 and abs(p[2] - 50.0) < 12.0 and sess['start'].get('moved_m', 0) > 0.5, f'the save is made at the nearest library point with no person within 3 m ({p}, moved {sess["start"].get("moved_m")} m)')
+    sess0 = frontier.make_session(lib, 'place', name='s', wall=300, budget_s=200, tag='pl-s', save_name='f-s', base_save='kid-save', copy=str(copy))
+    check(abs(sess0['start']['pos'][2] - 50.2) < 1.0 and sess0['start'].get('moved_m', 0) == 0, 'with no world model the point is the frontier itself')
+    w.people = []
+    w.door_list = [('Testland_Child', 1.0, 50.0, 'Door_Y')]
+    sess1 = frontier.make_session(lib, 'place', name='s', wall=300, budget_s=200, tag='pl-s', save_name='f-s', base_save='kid-save', copy=str(copy), world=w)
+    check(math.hypot(sess1['start']['pos'][0] - 1.0, sess1['start']['pos'][2] - 50.0) >= 2.5, f'nor within 2.5 m of a door ({sess1["start"]["pos"]})')
+
+
 def library_with_frontier(tmp, name='lib'):
     """A library that knows a walk (0,0) -> (0,50) and a stuck at (0,50) wanting (0,200)."""
     lib = routelib.RouteLib(tmp / name)
@@ -225,10 +297,13 @@ def cover_checks(tmp):
     w = tr.FakeWorld()
     # a wall at z 41..43 stops the first cluster; the second (10, 30) wants (60, 10): a wall at x 12..14
     io = tr.WalledWorld([(-5, 41, 5, 43), (12, 25, 14, 35)], pos=(0.2, 100.0, 0.1))
-    res = frontier.Push(lib, io, target='legs', map='Testland_Child', world=w, build='new', run='cov-push', deadline=time.monotonic() + 60, log=lambda *_: None, max_attempts=10).run()
+    res = frontier.Push(lib, io, target='legs', map='Testland_Child', world=w, build='new', run='cov-push', deadline=time.monotonic() + 60, log=lambda *_: None, max_attempts=10, max_total_attempts=40).run()
     check(res['mode'] == 'clusters' and len(res['clusters']) == 2, f'a cover target visits its open stuck clusters ({res.get("mode")}, {len(res.get("clusters", []))})')
     check(sum(1 for c in res['clusters'] if c['worked']) >= 1, f'at least one cluster gave way ({[(c["at"], c["worked"]) for c in res["clusters"]]})')
     check(all(c['attempts'] for c in res['clusters']), 'each cluster was attempted')
+    legs = res.get('legs') or []
+    check(legs and all(l['stopped'] in ('reached', 'frontier', 'blocked') for l in legs) and any(l['stopped'] == 'reached' and l['leg'] == [60.0, 30.0] for l in legs), f'then the legs the library had not walked are tried, nearest first, closed loop ({[(l["leg"], l["stopped"]) for l in legs]})')
+    check(res['legs_reached'] >= 1 and res['legs_tried'] == len(legs), f'and counted ({res.get("legs_reached")} of {res.get("legs_tried")})')
 
 
 # ------------------------------------------------------------------------------------------------------------------------ the live side
@@ -459,6 +534,8 @@ def run():
         explorer_checks()
         push_checks(tmp)
         cover_checks(tmp)
+        life_checks(tmp)
+        start_checks(tmp)
         live_checks(tmp)
         hold_checks(tmp)
 

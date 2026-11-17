@@ -39,8 +39,11 @@ def ctx_for(**kw):
 class FakeWorld:
     """What routelib.PrivateWorld answers: persons, doors, props near a point, and the walkable ground height there."""
 
-    def __init__(self, persons=(), doors=(), props=(), ground=None):
-        self.p, self.d, self.pr, self.g = list(persons), list(doors), list(props), ground or (lambda m, x, z, y: y)
+    def __init__(self, persons=(), doors=(), props=(), ground=None, climbs=()):
+        self.p, self.d, self.pr, self.g, self.cl = list(persons), list(doors), list(props), ground or (lambda m, x, z, y: y), list(climbs)
+
+    def climbables(self, mp, x, z, r):
+        return self._near(self.cl, mp, x, z, r)
 
     def _near(self, objs, mp, x, z, r):
         return [(mp, o[0], o[1], o[2] if len(o) > 2 else 'obj') for o in objs if math.hypot(o[0] - x, o[1] - z) <= r]
@@ -112,6 +115,7 @@ def catalogue_checks():
     ja = tactics.build('jump-a', ctx)
     check(ja[0].startswith('faceat') and ja[1].startswith('raw 0:LX=0+LY=32767/1400,0.35:A/100,0.7:A/100') and 'X/' not in ja[1], 'jump-a: the stick toward it, A twice, never X')
     check(tactics.build('climb', ctx)[:2] == ['faceat 0.00 30.00 20', 'climb timeout 10'], 'climb: face it and hold up')
+    check(tactics.build('climb', dict(ctx, climb_at=(1.0, 2.0)))[:2] == ['faceat 1.00 2.00 20', 'climb timeout 10'], 'climb: face the climbable surface the world model knows, not the target')
     check(tactics.build('wait', ctx)[0] == 'wait 4' and tactics.build('wait-long', ctx)[0] == 'wait 10', 'wait 4 s, wait 10 s')
     check(tactics.build('talk-through', ctx)[0] == 'advance timeout 20', 'talk-through: advance the text')
     check(tactics.build('press-a', ctx)[:2] == ['faceat 0.00 30.00 20', 'interact force timeout 4'], 'press-a: face it, A at whatever prompt there is')
@@ -277,6 +281,13 @@ def sensor_checks():
     boom = type('Boom', (), {'persons': lambda *a: 1 / 0, 'doors': lambda *a: [], 'props': lambda *a: [], 'ground': lambda *a: None})()
     s = sense(boom)
     check(s['cause'] in tactics.CAUSES, 'a world model that raises is no reason to stop: the sensor falls back')
+    # a climbable surface (ivy, a vine, a ladder) by a wall: a ledge from below, and climb is ranked first (the Deku Tree wall that five other tactics did not pass in the game)
+    s = sense(FakeWorld(climbs=[(10.5, 11.4, 'Vine')]))
+    check(s['cause'] == 'ledge-up' and s['geom'].get('climb') == 'yes' and 'climbable' in s['why'], f'a climbable surface 1.4 m from the stuck point: ledge-up, climb in the geometry ({s["cause"]}: {s["why"]})')
+    check(tactics.Book(Path(tempfile.gettempdir()) / 'tactics-no-such-book', readonly=True).rank(s['cause'], geom=s['geom'])[0]['tactic'] == 'climb', 'and the library ranks climb first for it')
+    far = sense(FakeWorld(climbs=[(10.0, 15.0, 'Vine')]))
+    check(far['cause'] == 'wall' and far['geom'].get('climb') == 'no', f'a climbable 5 m away is not what stops him ({far["cause"]})')
+    check(sense(FakeWorld(doors=[(10.0, 11.5, 'Door_A')], climbs=[(10.5, 11.4, 'Vine')]))['cause'] == 'door-side' and sense(FakeWorld(), event=1)['cause'] == 'held', 'a door or a held text is not turned into a ledge by a vine')
 
 
 # ------------------------------------------------------------------------------------------------------ demonstrations and inference

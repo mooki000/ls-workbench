@@ -150,6 +150,11 @@ def _ring(state, ctx):
     return [run_line(q, 1.5, 6) for q in pts] + [run_line((S[0] + 6 * u[0], S[1] + 6 * u[1]), 2.0, 8)]
 
 
+def _retreat_wait(state, ctx):
+    S, _w, u, _p_ = _geo(ctx)
+    return [run_line((S[0] - 12 * u[0], S[1] - 12 * u[1]), 2.0, 10), 'wait 15', run_line((S[0] + 8 * u[0], S[1] + 8 * u[1]), 2.5, 12)]
+
+
 def _advance(state, ctx):
     S, _w, u, _p_ = _geo(ctx)
     return ['advance timeout 20', run_line((S[0] + 8 * u[0], S[1] + 8 * u[1]), 2.5, 10)]
@@ -184,7 +189,7 @@ def _catalogue(ctx):
     for a in (_simple('roll-at', 'face it and roll into it', _roll), _simple('press-a', 'face it and press A at whatever prompt there is', _press_a),
               _simple('jump-a', 'run at it with A tapped (a jump, a grab)', _jump), _simple('climb', 'face it and hold up (a ladder, ivy, a ledge)', _climb),
               _simple('drop-run', 'run at the edge from 4 m back at full push', _drop_run), _simple('ring-4', 'walk a ring of 4 m round the place (a crowd moves)', _ring),
-              _simple('advance', 'advance the text that holds Link', _advance), _simple('continue', 'carry on to the point (the step only ran out of time)', _continue)):
+              _simple('retreat-wait', 'go back 12 m, wait 15 s (a boulder, a moving hazard), come on', _retreat_wait), _simple('advance', 'advance the text that holds Link', _advance), _simple('continue', 'carry on to the point (the step only ran out of time)', _continue)):
         cat[a.label] = a
     if ctx.get('doors'):
         cat['door-enter'] = _simple('door-enter', 'enter the nearest door the world model knows, and go through', _door_enter)
@@ -202,6 +207,7 @@ ORDER = {
     'slow': ['continue', 'angle-L-25', 'angle-R-25'],
 }
 ORDER['unknown'] = ORDER['wall']
+HURT_QUARTERS = 4      # a heart (4 quarter hearts) lost at a place makes it a hazard; a heart left is a stop
 
 
 def alternatives(cause, ctx):
@@ -273,6 +279,9 @@ class Explorer:
                 return done('map-changed')
             if not pos:
                 return done('no-state')
+            life = st.get('life')
+            if life is not None and life <= HURT_QUARTERS:   # (a heart left: the run is worth more alive; no life at all is a game over)
+                return done('dead' if life == 0 else 'life')
             rem = self._rem(pos[0], pos[2])
             if rem < best[0]:
                 best = [rem, list(pos)]
@@ -405,6 +414,9 @@ class Push:
             if lab in cat and lab not in order:
                 order.append(lab)
         order += [a.label for a in alternatives(cluster.get('cause') or 'unknown', ctx) if a.label not in order]
+        if cluster.get('hazard') and 'retreat-wait' not in (cluster.get('tried') or ()):   # (hearts were lost here before: back off and wait before coming at it again)
+            order.insert(0, 'retreat-wait')
+        life0 = (self.io.state() or {}).get('life')
         out = []
         for lab in order[:limit or self.max_attempts]:
             if self.left() < 25.0 or len(self.attempts) >= self.max_total_attempts:
@@ -434,6 +446,10 @@ class Push:
             if ev.get('result') in ('cut', 'lost') or (st.get('map') not in (None, self.map)):
                 break
             if worked:
+                break
+            life = st.get('life')
+            if life is not None and life0 is not None and (life0 - life >= HURT_QUARTERS or life <= HURT_QUARTERS):
+                self.log(f'push: hearts are being lost at {at} (life {life0} -> {life}): no more attempts there')
                 break
         return out
 
@@ -526,8 +542,34 @@ class Push:
             row['worked'] = [a['label'] for a in out if a['result'] == 'worked']
             self._return_to(c['at'])
         res['ok'] = any(c['worked'] for c in res['clusters'])
+        self._legs(t, res)
         res['stopped'] = res['stopped'] or ('done' if res['clusters'] else 'no-open-clusters')
         return res
+
+    def _legs(self, t, res):
+        """The legs the library had not walked, nearest first from where Link is: the library's way and the world model's plan, closed loop; each leg's end is recorded."""
+        res['legs'], res['legs_tried'], res['legs_reached'] = [], 0, 0
+        left = [list(p) for p in (self.lib.frontier(self.name).get('unreached') or [])]
+        while left and self.left() >= 30.0 and res['stopped'] in (None, 'done'):
+            pos = (self.io.state() or {}).get('pos')
+            if not pos:
+                break
+            leg = min(left, key=lambda p: math.hypot(p[0] - pos[0], p[1] - pos[2]))
+            left.remove(leg)
+            r = self._walker(t, True).go((leg[0], leg[1]), goal_radius=t['radius'])
+            tried = []
+            if r['stopped'] == 'blocked' and self.left() >= 30.0:   # (a new block on the way to a leg: the alternatives its cause suggests, then the leg again)
+                tried = self._attempts(self._cluster_for(r.get('blocked_at') or r.get('pos'), leg), (leg[0], leg[1]), limit=self.max_attempts)
+                if any(a['result'] == 'worked' for a in tried):
+                    r = self._walker(t, True).go((leg[0], leg[1]), goal_radius=t['radius'])
+            res['legs'].append({'leg': leg, 'stopped': r['stopped'], 'pos': r.get('pos'), 'attempts': tried})
+            res['legs_tried'] += 1
+            res['legs_reached'] += r['stopped'] == 'reached'
+            if r['stopped'] in ('map-changed', 'cut', 'no-state'):
+                res['stopped'] = r['stopped']
+            life = (self.io.state() or {}).get('life')
+            if life is not None and life <= HURT_QUARTERS:
+                res['stopped'] = 'dead' if life == 0 else 'life'
 
 
 # ------------------------------------------------------------------------------------------------------------------------ the live side
@@ -756,7 +798,26 @@ def run_session(sess, lib, *, copy, hsap, out, world=None, env=None, deadline=No
 
 # ------------------------------------------------------------------------------------------------------------------------ the plan and the hold
 
-def make_session(lib, target, *, name, wall, budget_s, tag, save_name, base_save, copy, shots=120, max_attempts=8, time_of_day='day'):
+def calm_start(lib, map, pos, world, within=12.0):
+    """The library point nearest `pos` (reachable from an anchor, within `within` m) with no person within 3 m, no door or placed object within 2.5 m: the boot presses A every 2 s
+    until the game is calm, and A at a prompt starts a talk that holds Link (the Castle Town save made beside a person never reached play in 240 s)."""
+    m = lib.map(map)
+    g, _srcs, reach = lib._anchored_nodes(m)
+
+    def calm(n):
+        if world.persons(map, n.x, n.z, 3.0) or world.doors(map, n.x, n.z, 2.5):
+            return False
+        return not (hasattr(world, 'props') and world.props(map, n.x, n.z, 1.5))
+    cands = sorted((math.hypot(g.nodes[i].x - pos[0], g.nodes[i].z - pos[2]), i) for i in reach if abs(g.nodes[i].y - pos[1]) <= 2.0)
+    for d, i in cands:
+        if d > within:
+            break
+        if calm(g.nodes[i]):
+            return g.nodes[i].pos
+    return list(pos)
+
+
+def make_session(lib, target, *, name, wall, budget_s, tag, save_name, base_save, copy, shots=120, max_attempts=8, time_of_day='day', world=None):
     """A session dict that starts at the library's frontier for the target: the point, a yaw toward what the nearest stuck place wanted, the save to make."""
     t = lib.targets()[target]
     f = lib.frontier(target)
@@ -764,17 +825,21 @@ def make_session(lib, target, *, name, wall, budget_s, tag, save_name, base_save
         raise routelib.LibError(f'target {target}: the library has no anchored track on {t["map"]} yet: nothing to start from')
     pos = f['pos']
     m = lib.map(t['map'])
+    first_pos = list(pos)
     cl = min(((math.hypot(c['at'][0] - pos[0], c['at'][2] - pos[2]), c) for c in m.clusters() if not c['resolved']), key=lambda x: x[0], default=(None, None))[1]
     if t['kind'] == 'cover':
         cl = max((c for c in m.clusters() if not c['resolved']), key=lambda c: c['n'], default=cl)   # (the place that stopped most runs: the push visits it first)
         if cl:
             pos = cl['at']
+            first_pos = list(pos)
+    if world is not None:
+        pos = calm_start(lib, t['map'], pos, world)
     want = (cl.get('want') if cl and cl.get('want') else None) or ([t['x'], t['z']] if t['kind'] == 'point' else f.get('nearest_leg') or [pos[0], pos[2] + 1])
     yaw = math.atan2(want[0] - pos[0], want[1] - pos[2])
     return {'name': name, 'target': target, 'map': t['map'], 'age': t.get('age') or routelib.age_of_map(t['map']) or 'child', 'wall': wall, 'budget_s': budget_s, 'tag': tag, 'shots': shots,
             'max_attempts': max_attempts, 'save_name': save_name, 'base_save': base_save, 'retry_save': str(H / 'saves' / base_save), 'hour': 12, 'copy': str(copy), 'time': time_of_day,
             'expected': [round(c, 2) for c in pos],
-            'start': {'pos': [round(c, 2) for c in pos], 'yaw': round(yaw, 3), 'want': want}}
+            'start': {'pos': [round(c, 2) for c in pos], 'yaw': round(yaw, 3), 'want': want, 'moved_m': round(math.hypot(pos[0] - first_pos[0], pos[2] - first_pos[2]), 2)}}
 
 
 def save_command(sess, saves_dir, game):

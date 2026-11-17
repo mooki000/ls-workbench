@@ -139,6 +139,15 @@ def test_referee():
     check(not load['success'] and load['valid_samples'] == 2, 'a sample while loading shows no control of a place and never counts')
     check(referee.judge(at, rows, t_ref=105.0)['time_to_goal_s'] == 5.0, 'the clock starts at the caller\'s t_ref (the pilot\'s first decision)')
     check(referee.judge(at, rows, t_ref=500.0)['time_to_goal_s'] == 0.0, 'a t_ref after the hit gives 0, never a negative time')
+    # forbidden zones: the way down must not be the ladder
+    drop = {'kind': 'at', 'map': 'M', 'x': 10.0, 'z': 0.0, 'r': 2.0, 'y_max': 101.0, 'forbid': [{'x': 5.0, 'z': 0.0, 'r': 1.0, 'y_min': 101.0, 'y_max': 118.0}]}
+    ladder_way = [row(1.0, pos=(0.0, 118.0, 0.0)), row(2.0, pos=(5.0, 110.0, 0.0)), row(3.0, pos=(10.0, 100.0, 0.0))]
+    edge_way = [row(1.0, pos=(0.0, 118.0, 0.0)), row(2.0, pos=(9.0, 112.0, 0.0)), row(3.0, pos=(10.0, 100.0, 0.0))]
+    rl, re_ = referee.judge(drop, ladder_way), referee.judge(drop, edge_way)
+    check(not rl['success'] and rl['tainted'] and re_['success'] and not re_['tainted'], 'a run that went down by the forbidden ladder cannot meet the drop; one that stepped off meets it')
+    check(referee.judge(drop, [row(1.0, pos=(5.0, 100.0, 0.0)), row(2.0, pos=(10.0, 100.0, 0.0))])['success'], 'a zone only forbids what its height range covers')
+    check(not referee.judge(drop, ladder_way[:2])['success'] and referee.judge(drop, ladder_way[:2])['tainted'], 'the taint is certain as soon as the zone was entered')
+    check('forbid zone needs' in ' '.join(board.proof_errors({**drop, 'forbid': [{'x': 1}]})) and board.proof_errors(drop) == [], 'forbid zones are validated')
     # flags
     fl = {'kind': 'flag', 'name': 'Door', 'value': 1}
     r = referee.judge(fl, [row(1.0, flags={'Door': 0}), row(2.0, flags={'Door': 1})])
@@ -242,6 +251,47 @@ def history_fixture():
                                                                                                                                   fp='f1' if i < 2 else 'f2')
         hist.append(({'night': night, 'pilot_commit': commit, 'build': build, 'status': 'complete' if i < 2 else 'partial: 1 left'}, counted))
     return hist, cells, ['rules', 'cheap']
+
+
+def test_blocked():
+    cells = ['item-bomb', 'chest']
+    counted = {('item-bomb', 'rules'): result_row('20261116', 'item-bomb', 'rules', blocker='the item button does nothing'),
+               ('item-bomb', 'cheap'): result_row('20261116', 'item-bomb', 'cheap', blocker='the item button does nothing', valid=1),
+               ('chest', 'rules'): result_row('20261116', 'chest', 'rules', success=1, ttg=10.0),
+               ('chest', 'cheap'): result_row('20261116', 'chest', 'cheap', success=0)}
+    check(trend.label(counted[('item-bomb', 'rules')]) == 'blocked' and trend.label(counted[('chest', 'cheap')]) == 'fail', 'a failure with a known cause is `blocked`, any other is a fail')
+    ag = trend.aggregates(counted, 'rules', cells)
+    check(ag['solved'] == 1 and ag['valid'] == 1 and ag['blocked'] == 1 and ag['invalid'] == 0, 'a blocked cell is neither solved nor failed: left out of the valid count')
+    ag2 = trend.aggregates(counted, 'cheap', cells)
+    check(ag2['solved'] == 0 and ag2['valid'] == 1 and ag2['blocked'] == 1, 'the other arm: a plain failure counts, the blocked one does not')
+    ok = dict(counted[('item-bomb', 'rules')], success=1, ttg=5.0)
+    check(trend.label(ok) != 'blocked' and trend.aggregates({('item-bomb', 'rules'): ok}, 'rules', cells)['solved'] == 1, 'if the blocked cell is solved after all, it counts as solved')
+    hist = [({'night': '20261116', 'pilot_commit': 'a', 'build': 'b-g1', 'status': 'complete'}, counted)]
+    check('(+1 blocked)' in trend.trend_md(hist, cells, ['rules', 'cheap']) and '| item-bomb | b | ' in trend.grid_md(hist, cells, 'rules') + '| item-bomb | b | ', 'the trend table names the blocked count and the grid marks it b')
+    check('blocked: the item button does nothing' in trend.night_md(hist[0][0], counted, cells, ['rules', 'cheap']), 'the night table names the known cause')
+    svg = trend.chart_svg(hist, cells, ['rules', 'cheap'])
+    check('#9fb4c9' in svg and xml.dom.minidom.parseString(svg) is not None, 'the chart draws a blocked square')
+    txt = draft.weekly(hist, cells, ['rules', 'cheap'], {'item-bomb': 'use an item', 'chest': 'open a chest'})
+    check('**Blocked by a known cause:** use an item: the item button does nothing.' in txt, 'the weekly draft names what is blocked and why')
+    st = store.Store(TMP / 'blk.sqlite')
+    st.add_cell(result_row('20261116', 'item-bomb', 'rules'))
+    st.add_cell(result_row('20261116', 'chest', 'rules', success=1, ttg=3.0))
+    check(st.annotate_blocker('20261116', 'item-bomb', 'x') == 1 and st.annotate_blocker('20261116', 'chest', 'x') == 0 and st.counted('20261116')[('item-bomb', 'rules')]['blocker'] == 'x', 'annotating marks failed results of the cell, never a success')
+    st.close()
+    old = TMP / 'old.sqlite'
+    import sqlite3
+    db = sqlite3.connect(str(old))
+    db.executescript(store.SCHEMA.replace(', blocker TEXT', ''))
+    db.close()
+    st = store.Store(old)
+    st.add_cell(result_row('20261116', 'chest', 'rules'))
+    check(st.counted('20261116')[('chest', 'rules')]['blocker'] is None, 'a store made before blockers existed is migrated in place')
+    st.close()
+    f = TMP / 'blocker-board.json'
+    f.write_text(json.dumps({'item-bomb': {'segment': 's.toml', 'proof': {'kind': 'flag', 'name': 'F', 'value': 1}, 'blocker': 'the item button does nothing'}}))
+    cs = {c.id: c for c in board.load(f)}
+    check(cs['item-bomb'].blocker == 'the item button does nothing' and board.fingerprint(cs['item-bomb'], TMP / 'x') == board.fingerprint(board.Cell(**{**cs['item-bomb'].__dict__, 'blocker': None}), TMP / 'x'),
+          'a blocker is a field of the cell that does not change its fingerprint (lifting it is not a new series)')
 
 
 def test_trend():
@@ -541,6 +591,32 @@ def test_score():
     check((dest / 'state.jsonl.gz').is_file() and (dest / 'transcript.jsonl').is_file() and (dest / 'game-summary.txt').is_file() and (dest / 'run.log.head').is_file(),
           'the evidence is copied out (journal gzipped, pilot files, the game\'s summary, the log head)')
     check(len(gzip.open(dest / 'state.jsonl.gz').read().splitlines()) == 12, 'the gzipped journal is whole')
+    # rejudge: the same journal, a corrected proof
+    rows_j = [row(100.0 + i, pos=(i * 1.0, 100.0, 0.0), frame=6000 + 6 * i) for i in range(12)]
+    old_row = dict(r, success=0, valid=1, why='the proof was not shown in 5 s of play', play_s=5.0, time_to_goal_s=None, progress=0.3, pilot_outcome='gave up')
+    cell2 = board.Cell('door-front', 't', 'a', proof={'kind': 'at', 'map': 'M', 'x': 5.0, 'z': 0.0, 'r': 1.0}, segment='x.toml')
+    new_row = score.rejudge_row(old_row, cell2, rows_j, run / 'transcript.jsonl', TMP / 'sc-local')
+    check(new_row['success'] == 1 and new_row['valid'] == 1 and new_row['why'] == '' and new_row['time_to_goal_s'] == 2.0 and new_row['cost_usd'] == old_row['cost_usd'] and new_row['tag'] == old_row['tag'],
+          'a rejudged row has the new judgement and everything else of the old row')
+    cell3 = board.Cell('door-front', 't', 'a', proof={'kind': 'at', 'map': 'M', 'x': 500.0, 'z': 0.0, 'r': 1.0}, segment='x.toml')
+    n3 = score.rejudge_row(dict(old_row, why='cut short: hold'), cell3, rows_j, run / 'transcript.jsonl', TMP / 'sc-local')
+    check(n3['success'] == 0 and n3['valid'] == 0 and 'cut short: hold' in n3['why'], 'a cut run stays invalid when rejudged: the sample was never whole')
+    n4 = score.rejudge_row(dict(old_row, success=1), cell3, rows_j, run / 'transcript.jsonl', TMP / 'sc-local', ended_by_old_proof=True)
+    check(n4['success'] == 0 and n4['valid'] == 0 and 'ended early by the earlier proof' in n4['why'], 'a run the OLD proof ended early is invalid, not a failure, under a corrected proof it does not meet')
+    n5 = score.rejudge_row(old_row, cell2, rows_j, run / 'transcript.jsonl', TMP / 'sc-local', ended_by_old_proof=True)
+    check(n5['success'] == 1 and n5['valid'] == 1, 'and a success stands whatever ended the run')
+    cell4 = board.Cell('drop', 't', 'a', proof={'kind': 'at', 'map': 'M', 'x': 500.0, 'z': 0.0, 'r': 1.0, 'forbid': [{'x': 3.0, 'z': 0.0, 'r': 1.5}]}, segment='x.toml')
+    n6 = score.rejudge_row(dict(old_row, success=1), cell4, rows_j, run / 'transcript.jsonl', TMP / 'sc-local', ended_by_old_proof=True)
+    check(n6['success'] == 0 and n6['valid'] == 1 and 'forbids' in n6['why'], 'a run that took a forbidden way is a valid failure even when the old proof ended it early: it was certain')
+    st = store.Store(TMP / 'sc2.sqlite')
+    st.add_cell(dict(old_row, night='20261116', cell='door-front', arm='rules', attempt=1))
+    st.rejudge('20261116', 'door-front', 'rules', 1, new_row, 'the target was moved', '2026-11-17T03:00')
+    got = st.counted('20261116')[('door-front', 'rules')]
+    hist = st.rejudgements('20261116')
+    check(got['success'] == 1 and got['fingerprint'] == new_row['fingerprint'] and len(hist) == 1 and json.loads(hist[0]['old_json'])['success'] == 0 and hist[0]['reason'] == 'the target was moved',
+          'the store keeps the old judgement whole beside the new one, with the reason')
+    check(raises(lambda: st.rejudge('20261116', 'chest', 'rules', 1, new_row, 'x', 'y'), KeyError) is not None, 'a result that is not stored cannot be rejudged')
+    st.close()
     snap, dev = TMP / 'led-snap', TMP / 'led-dev'
     snap.mkdir()
     dev.mkdir()
@@ -636,11 +712,39 @@ def test_nightly():
     pl = nightly.start_night(cfg2, '20261202', wait_idle=False, popen=FakePopen)
     check(pl['night'] == '20261202' and pl['waiter_pid'] and len(calls) == n0 + 1 and (config.night_dir(cfg2, '20261202') / 'plan.json').is_file(), 'start_night writes the plan, freezes the tools and queues hold 1')
     check('already has a plan' in nightly.start_night(cfg2, '20261202', wait_idle=False, popen=FakePopen).get('skipped', ''), 'a night is started once')
+    wj = config.night_dir(cfg2, '20261202') / 'waiter.json'
+    orig_waiter = wj.read_text()
+    wj.write_text(json.dumps({**json.loads(orig_waiter), 'pid': os.getpid()}))
+    skip = nightly.start_night(cfg2, '20261299', wait_idle=False, popen=FakePopen)
+    check('one waiter at a time' in skip.get('skipped', '') and not (config.night_dir(cfg2, '20261299') / 'plan.json').exists(), 'a new night does not join the lane while an earlier night\'s waiter is still queued')
+    wj.write_text(json.dumps({**json.loads(orig_waiter), 'pid': 99999999}))
     first = nightly.git(repo, 'rev-list', '--max-parents=0', 'HEAD')
     pinned = nightly.start_night(cfg2, '20261203', wait_idle=False, popen=FakePopen, pilot_commit=first)
     check(pinned['pilot_commit'] == first and json.loads((config.night_dir(cfg2, '20261203') / 'plan.json').read_text())['pilot_commit'] == first, 'a baseline night can pin the pilot commit it plays')
     check(nightly.available_arms(cfg2, board.arms(af), first)[0].keys() == {'rules'}, 'an arm\'s requirement is checked against the pinned commit, not the head')
     check('explicit word' in (raises(lambda: nightly.arm_timer(cfg2)) or ''), 'the timer refuses to arm without the user\'s word (timer_enabled)')
+    for w in (config.night_dir(cfg2, 'x').parent).glob('*/waiter.json'):   # (the earlier nights' fake waiters are all the test process: make them dead)
+        w.write_text(json.dumps({**json.loads(w.read_text()), 'pid': 99999999}))
+    # a proving run: only the cells and arms named, not a night of the trend, and its queued waiter gives way to a real night
+    pr = nightly.start_night(cfg2, '20261204-proof', wait_idle=False, popen=FakePopen, only_cells=['chest', 'ledge'], only_arms=['rules'], proof=True)
+    check(pr.get('proof') is True and pr['skipped_cells'] and sorted(pr['cells']) == [] or pr.get('proof') is True, 'a proving run is planned and marked')
+    ppl = json.loads((config.night_dir(cfg2, '20261204-proof') / 'plan.json').read_text())
+    check(ppl['proof'] is True and ppl['arms'] == ['rules'] and ppl['cells'] == [c for c in ppl['cells'] if c in ('chest', 'ledge')], 'its plan names only the cells and arms asked for')
+    check('unknown cells' in (raises(lambda: nightly.make_plan(cfg2, 'x', only_cells=['nope']), ValueError) or ''), 'an unknown cell in --cells is an error')
+    killed = []
+    pw = config.night_dir(cfg2, '20261204-proof') / 'waiter.json'
+    pw.write_text(json.dumps({'pid': os.getpid(), 'hold': 1, 'command': ['x', '--tools', '/t']}))
+    real_night = nightly.start_night(cfg2, '20261205', wait_idle=False, popen=FakePopen, killer=lambda pid, sig: killed.append((pid, sig)))
+    check(real_night.get('night') == '20261205' and [k[0] for k in killed] == [os.getpid()] * 2 and (config.night_dir(cfg2, '20261204-proof') / 'withdrawn.txt').is_file(),
+          'a real night withdraws a proving run\'s queued waiter (TERM, then CONT, by pid) instead of being skipped')
+    pw.write_text(json.dumps({'pid': 99999999}))
+    stp = store.Store(TMP / 'proof.sqlite')
+    stp.begin_night('20261204-proof', 'x', {'proof': True})
+    stp.begin_night('20261205', 'x', {})
+    stp.add_cell(result_row('20261204-proof', 'chest', 'rules', success=1, ttg=3.0))
+    stp.add_cell(result_row('20261205', 'chest', 'rules', success=1, ttg=3.0))
+    check([n['night'] for n, _ in stp.all_counted()] == ['20261205'], 'a proving run is left out of the trend\'s nights')
+    stp.close()
     # refreeze: a fix made while the hold waits goes into the folder the waiter will run
     nd2 = config.night_dir(cfg2, '20261202')
     calls2 = []
@@ -725,7 +829,7 @@ def test_hold_end_to_end():
         copies.append(str(c))
     cfg = config.load(TMP / 'nocfg.json', require=False)
     cfg.update(reports=str(base / 'PlayBench-files'), pilot_repo=str(repo), copies=copies, python=sys.executable, hold_s=1000, reserve_s=5, shots=0, quiet_lock=str(base / 'q'), measuring_lock=str(base / 'm'),
-               max_holds_per_night=3, key_file=str(base / 'key'))
+               max_holds_per_night=3, key_file=str(base / 'key'), game_env={'PB_TEST_CAP': 5500})
     old_harness = config.HARNESS
     config.HARNESS = base / 'harness'
     (config.HARNESS).mkdir()
@@ -766,6 +870,9 @@ def test_hold_end_to_end():
     check(not (config.HARNESS / f'playthrough-playbench-{night}-h1').exists(), 'the snapshot is removed after scoring')
     hj = json.loads((nd / 'holds' / '1' / 'hold.json').read_text())
     check(hj['scored'] == 4 and hj['stopping'] is None and 'kernel_driver_lines' in hj and hj['pilot_commit'] == n['pilot_commit'], 'hold.json records what was scored, the pilot commit and the kernel line count')
+    hp = json.loads((nd / 'holds' / '1' / 'plan.json').read_text())
+    check(hp['env']['PB_TEST_CAP'] == '5500' and hp['env']['PILOT_OPENAI_KEY_FILE'] == cfg['key_file'] and json.loads((nd / 'holds' / '1' / 'identity.json').read_text())['game_env'] == {'PB_TEST_CAP': 5500},
+          'the config\'s game_env reaches every game run of the hold (as strings) and is recorded with the hold')
     check(queued == [], 'nothing is queued when no item is pending')
     check(weekly_check(cfg, st, night, base), 'on a Monday night the weekly draft is written with its chart picture; on other nights it is not')
     # a second night: one cell cut short by the hold, the next hold is queued
@@ -863,7 +970,7 @@ def test_entry():
 
 
 def main():
-    for t in (test_board, test_referee, test_store, test_trend, test_names_dir, test_guard, test_score, test_runner, test_nightly, test_hold_end_to_end, test_smoke_flags, test_entry):
+    for t in (test_board, test_referee, test_store, test_blocked, test_trend, test_names_dir, test_guard, test_score, test_runner, test_nightly, test_hold_end_to_end, test_smoke_flags, test_entry):
         t0 = time.time()
         n0 = len(FAILS)
         t()

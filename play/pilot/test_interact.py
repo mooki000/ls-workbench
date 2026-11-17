@@ -882,6 +882,20 @@ def sidelane_checks():
         use = next(c for c in ce if c.label == 'try-item-use')
         check(use.lines == ['wait 1.5', 'item'], f'try-item-use waits 1.5 s, then presses the item button ({use.lines})')
 
+    # P4b (PlayBench's door-front cell, bisected to 8ad852f): an enter goal whose door names the side it opens from goes to that front (go-near) before the planner's
+    # open-door-on-way, whose near point is on the wrong side of the door; a door with no front keeps open-door-on-way first, and after one enter-door it is allowed
+    lab = lambda *names: [SimpleNamespace(label=n, lines=[], text='') for n in names]  # noqa: E731
+    fd = Target('door', -6.0, 0.0, kind='door', front=(-8.0, 0.0))
+    nd = Target('door', -6.0, 0.0, kind='door')
+    gf, gn = Goal('enter', [fd]), Goal('enter', [nd])
+    near = interact.with_near('Test_Area', state(pos=[-20.0, 0.0, 0.0]))
+    c4 = lab('go-near', 'open-door-on-way', 'enter-door', 'side-left', 'next-target')
+    check(interact.pick(ctx_of(gf, fd, near, {}, c4, [])) == 'go-near', 'a door with a front: go-near the front first, not the planner\'s near point')
+    check(interact.pick(ctx_of(gf, fd, near, {}, lab('open-door-on-way', 'enter-door', 'next-target'), [])) == 'enter-door', 'at the front (no go-near offered): enter-door, not open-door-on-way')
+    check(interact.pick(ctx_of(gf, fd, near, {'history': [('enter-door', 'blocked', 0.0, None)]}, lab('open-door-on-way', 'enter-door', 'next-target'), [])) == 'open-door-on-way',
+          'after enter-door was tried and blocked, the planner\'s way round the door may be tried')
+    check(interact.pick(ctx_of(gn, nd, near, {}, c4, [])) == 'open-door-on-way', 'a door with no front: open-door-on-way first, as before')
+
     # P5: a door that answers blocked is reached from another side before the same press is made again (three tries, not three alike)
     with WithWorld():
         d = Target('door', -6.0, 0.0, kind='door', approach=-90)
@@ -966,24 +980,49 @@ def pisolo3_checks():
         timed = Goal('play_song', [Target('windmill', 0.0, 0.0)], notes='L R X L R X', flag='Song.Heard=1', hold_ms=250, gap_ms=300)
         c2 = next(c for c in interact.candidates('Test_Area', timed, timed.targets[0], near, {}) if c.label == 'ocarina-play')
         check(c2.lines == ['ocarina L R X L R X hold 250 gap 300'], f'a goal that names its timing plays it ({c2.lines})')
-        check('ocarina-play-slow' not in labels(interact.candidates('Test_Area', song, song.targets[0], near, {})),
-              'the slow play is not offered before the notes were played once')
-        mem = {'history': [('ocarina-play', 'played', 0.0, None), ('wait-song', 'done', 0.0, None)]}
+        check(not any(c.label == 'ocarina-play-slow' for c in interact.candidates('Test_Area', song, song.targets[0], near, {'history': [('ocarina-play', 'played', 0.0, None), ('wait-song', 'done', 0.0, None)]})),
+              'no slower play is offered (PadInput2 measured: the timing was never the problem; 400/450 ms notes never worked)')
+        check('ocarina-play-slow' not in interact.INTERACT_LABELS, 'and the label is gone')
+        # `played` is the game's own word that it took the song (it closed its note window): wait for the effect once, then leave
+        mem = {'history': [('ocarina-play', 'played', 0.0, None)]}
         cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
-        slow = next((c for c in cs if c.label == 'ocarina-play-slow'), None)
-        check(slow is not None and slow.lines == ['ocarina L R X L R X hold 400 gap 450'], f'after a play the game did not answer, the notes are offered slowly ({slow.lines if slow else None})')
-        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'ocarina-play-slow', 'the picker plays them slowly once')
-        mem['history'] += [('ocarina-play-slow', 'played', 0.0, None)]
-        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
-        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'wait-song', 'then it waits for the song\'s effect')
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'wait-song', 'played: wait for the song\'s effect')
         mem['history'] += [('wait-song', 'done', 0.0, None)]
         cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
-        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'next-target', 'and then leaves the song')
-        loose = Goal('play_song', [Target('windmill', 0.0, 0.0)], notes='L R X', hold_ms=500)
-        mem2 = {'history': [('ocarina-play', 'played', 0.0, None), ('wait-song', 'done', 0.0, None)]}
-        check('ocarina-play-slow' not in labels(interact.candidates('Test_Area', loose, loose.targets[0], near, mem2)),
-              'a goal whose own notes are already long has no slower play to offer')
-        check(interact.INTERACT_LABELS.get('ocarina-play-slow') == 'ocarina', 'the slow play counts as an ocarina attempt in the metrics')
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'next-target', 'and then leave the song (no slower retry of a song the game took)')
+        # `no-song`: the game did not take it: once more, the same notes unchanged (the notes' order is what to suspect, not the timing), then leave
+        mem = {'history': [('ocarina-play', 'no-song', 0.0, None)]}
+        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
+        again = interact.pick(ctx_of(song, song.targets[0], near, mem, cs, []))
+        check(again == 'ocarina-play' and next(c for c in cs if c.label == again).lines == ['ocarina L R X L R X'], f'no-song: once more, unchanged ({again})')
+        mem['history'] += [('ocarina-play', 'no-song', 0.0, None)]
+        cs = interact.candidates('Test_Area', song, song.targets[0], near, mem)
+        check(interact.pick(ctx_of(song, song.targets[0], near, mem, cs, [])) == 'next-target', 'a second no-song: the song is left')
+        # the step's time allowance: a warp song takes the warm-up, the notes, the game's question and the map change (42 s in the game)
+        check(interact.step_seconds('ocarina L X Y A Y A') == 50.0 and interact.step_seconds('ocarina L R X L R X hold 100 gap 150') == 50.0
+              and interact.step_seconds('ocarina out') < 30.0 and interact.step_seconds('ocarina away') < 30.0, 'ocarina <notes>: 50 s; out and away as before')
+    # the songbook (pilot/songs.json, private: game data): two songs proven in the game, the rest inferred from the pitches and not played
+    import tempfile
+    with tempfile.TemporaryDirectory() as sd:
+        f = Path(sd) / 'songs.json'
+        f.write_text(json.dumps({'proven': {'storms': 'L R X L R X'}, 'inferred': {'zelda': 'Y X A Y X A'}}))
+        saved = os.environ.get('PILOT_SONGS')
+        os.environ['PILOT_SONGS'] = str(f)
+        try:
+            check(interact.InteractCond.song_notes('storms') == 'L R X L R X'.split() and interact.InteractCond.song_notes('zelda') == 'Y X A Y X A'.split() and interact.InteractCond.song_notes('nothing') == [],
+                  'songs.json: the notes of a proven and of an inferred song; an unknown song has none')
+            check(interact.InteractCond.song_status('storms') == 'proven' and interact.InteractCond.song_status('zelda') == 'inferred' and interact.InteractCond.song_status('nothing') is None, 'and what is known of each: proven, inferred, nothing')
+            f.write_text(json.dumps({'storms': 'L R X L R X'}))
+            check(interact.InteractCond.song_notes('storms') == 'L R X L R X'.split() and interact.InteractCond.song_status('storms') is None, 'the older flat file still gives the notes (and says nothing of proof)')
+        finally:
+            os.environ.pop('PILOT_SONGS', None)
+            if saved is not None:
+                os.environ['PILOT_SONGS'] = saved
+    shipped = HERE / 'songs.json'
+    if shipped.is_file():
+        sj = json.loads(shipped.read_text())
+        check(sj['proven'] == {'storms': 'L R X L R X', 'minuet': 'L X Y A Y A'} and {'zelda', 'epona', 'saria', 'sun', 'time', 'bolero', 'serenade', 'requiem', 'prelude'} <= set(sj['inferred']) and not set(sj['proven']) & set(sj['inferred']),
+              'pilot/songs.json: Storms and the Minuet proven in the game, the other nine inferred from the pitches')
     # the segments that carry the song: the game's songbook reads L R X L R X (the pilot's published tree has no game segments: skipped there)
     seg_dir = HERE / 'segments'
     if (seg_dir / 'interact-song-kakariko.toml').is_file():

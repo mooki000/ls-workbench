@@ -42,13 +42,14 @@ def main():
     ap.add_argument('cells')
     ap.add_argument('--keep', action='store_true')
     ap.add_argument('--arm', default='rules')
+    ap.add_argument('--commit', default='HEAD', help='the pilot commit to rehearse with (a game-free bisect: the first decisions of the run are printed)')
     a = ap.parse_args()
     cfg = config.load()
     root = Path(tempfile.mkdtemp(prefix='pb-rehearse-', dir='/tmp'))
     snap = config.HARNESS / 'playthrough-playbench-rehearsal'
     if snap.exists():
         shutil.rmtree(snap)
-    commit = subprocess.check_output(['git', '-C', cfg['pilot_repo'], 'rev-parse', 'HEAD'], text=True).strip()
+    commit = subprocess.check_output(['git', '-C', cfg['pilot_repo'], 'rev-parse', a.commit], text=True).strip()
     hold.make_snapshot(cfg['pilot_repo'], commit, snap)
     copy = root / 'rehearsal-copy'
     (copy / 'runs').mkdir(parents=True)
@@ -64,7 +65,8 @@ def main():
         scen = root / f'{cid}.json'
         scen.write_text(json.dumps(scens[cid]))
         env = {'REHEARSE_TREE': str(snap), 'REHEARSE_HSAP': str(snap / 'hsap.py'), 'REHEARSE_HS_RUN': str(HERE / 'fake_hs_run.sh'),
-               'REHEARSE_WRAP': str(HERE / 'hsap_wrap.py'), 'REHEARSE_SCENARIO': str(scen), 'HSAP_ANALOG': '1'}
+               'REHEARSE_WRAP': str(HERE / 'hsap_wrap.py'), 'REHEARSE_SCENARIO': str(scen), 'HSAP_ANALOG': '1',
+               **{str(k): str(v) for k, v in (cfg.get('game_env') or {}).items()}}   # (what a hold passes to every run: the config's game_env)
         night = time.strftime('%Y%m%d')
         plan = {'night': night, 'hold': 1, 'out': str(root / f'hold-{cid}'), 'pilot_dir': str(snap / 'pilot'), 'python': sys.executable, 'copies': [str(copy)], 'local': str(config.LOCAL),
                 'items': [{'cell': cid, 'arm': a.arm, 'attempt': 1}], 'hold_s': 1000.0, 'reserve_s': 5, 'shots': 0, 'env': env, 'allowance_usd': None,
@@ -76,6 +78,17 @@ def main():
         row = score.score_cell(rec, cells[cid], a.arm, arms[a.arm], night, commit[:9], score.load_metrics(snap / 'pilot'), config.LOCAL)
         print(f'--- {cid} ({time.time() - t0:.0f} s): success {row["success"]} valid {row["valid"]} ttg {row["time_to_goal_s"]} progress {row["progress"]} decisions {row["decisions"]} '
               f'stuck {row["stuck_s"]} cost {row["cost_usd"]} outcome {row["pilot_outcome"]}\n    why: {row["why"]}\n    referee: {json.dumps(row["referee"])[:400]}', flush=True)
+        try:
+            labels = [json.loads(x).get('choice') for x in (snap / 'pilot' / 'runs' / rec['tag'] / 'transcript.jsonl').read_text().splitlines() if '"decision"' in x][:6]
+        except OSError:
+            labels = []
+        print(f'    first decisions at {commit[:9]}: {labels}', flush=True)
+        try:
+            steps = [x for x in (snap / 'pilot' / 'runs' / rec['tag'] / 'steps.txt').read_text().splitlines() if x.startswith(('ocarina', 'use'))][:6]
+        except OSError:
+            steps = []
+        if steps:
+            print(f'    first ocarina/use steps sent: {steps}', flush=True)
         if not row['success']:
             code = 1
             log = Path(plan['out']) / 'cells' / f"{rec['tag']}.log"

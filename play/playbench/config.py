@@ -44,6 +44,7 @@ DEFAULTS = {
     'issue_url': None,         # PRIVATE (required): the tracker thread the weekly draft is an update for
     'timer_enabled': False,    # the nightly timer stays off until the user's word (the nightly skill's rule); `arm --user-authorized` needs it true
     'timer_time': '02:30:00',
+    'game_env': {},            # extra environment for every game run of a hold (e.g. a texture budget so two games on one card fit): recorded with the hold
     'idle_s': 120,             # the player must have been away this long before a night starts
     'idle_timeout_s': 1800,
 }

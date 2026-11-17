@@ -44,6 +44,7 @@ PRIOR_POOL = 50.0              # the cause's pooled success rate counts as this 
 W_BASE, W_AGE, W_GEOM, W_MAP, W_CLUSTER = 0.6, 0.2, 0.2, 0.4, 2.0   # an attempt's weight: anywhere 0.6 (up to 1.0 with the same age and geometry), same map +0.4, same place +2.0
 CLUSTER_M = 3.0                 # "the same place": within this many metres on the same map (and 3 m of height)
 UCB_C = 0.5                     # the exploration bonus of the nightly self-play
+CLIMB_NEAR_M = 2.5              # a climbable surface (ivy, a vine, a ladder) this near the stuck point is what the stuck step walked into
 
 CAUSES = ('wall', 'ledge-up', 'drop-not-taken', 'door-side', 'npc-in-way', 'npc-crowd', 'held', 'water-edge', 'other-floor', 'slow', 'unknown')
 LEGACY = ('sidestep', 'angle', 'roll', 'hop', 'next-point', 'replan')   # recover.LADDER
@@ -205,6 +206,7 @@ class Frame:
         self.tref = yaw_to(self.tx - self.rx, self.tz - self.rz) if self.dref > 1e-3 else self.theta
         self.go = list(ctx.get('go_lines') or [move_line('run', self.tx, self.tz, self.radius, run_timeout(self.d))])
         self.side = ctx.get('side', 1)
+        self.climb_at = ctx.get('climb_at') or (self.tx, self.tz)   # the climbable surface the world model knows near the block, else the target
         self.camera, self.sign = ctx.get('camera'), ctx.get('sign', 1.0)
 
     def along(self, a, b=0.0, yaw=None):
@@ -287,7 +289,8 @@ def make(tid, ctx, cfg=None, book=None):
         return ([f'faceat {f.tx:.2f} {f.tz:.2f} 20', f'raw 0:LX={lx}+LY={ly}/1400,0.35:A/100,0.7:A/100 1.6'] + f.go,
                 'face the target and run at it with A tapped twice (a jump, a grab), then on to it')
     if tid == 'climb':
-        return [f'faceat {f.tx:.2f} {f.tz:.2f} 20', 'climb timeout 10'] + f.go, 'face the block and hold up (a ladder, ivy, a ledge), then on to the target'
+        return ([f'faceat {f.climb_at[0]:.2f} {f.climb_at[1]:.2f} 20', 'climb timeout 10'] + f.go,
+                'face the climbable surface (a ladder, ivy, a vine, a ledge) and hold up, then on to the target')
     if tid in ('wait', 'wait-long'):
         s = 4 if tid == 'wait' else 10
         return [f'wait {s}'] + f.go, f'wait {s} s (a person moves, a scene ends), then on to the target'
@@ -504,7 +507,8 @@ class Sensor:
             for key, fn in (('persons', lambda: self._bucket_persons(len(w.persons(map, x, z, 5.0)))),
                             ('door', lambda: 'yes' if w.doors(map, x, z, 2.6) else 'no'),
                             ('prop', lambda: 'yes' if w.props(map, x, z, 1.8) else 'no'),
-                            ('ahead', lambda: self._ahead(w, map, at, want))):
+                            ('ahead', lambda: self._ahead(w, map, at, want)),
+                            ('climb', lambda: 'yes' if w.climbables(map, x, z, CLIMB_NEAR_M) else 'no')):
                 try:
                     val = fn()
                 except Exception:   # noqa: BLE001
@@ -522,6 +526,9 @@ class Sensor:
             cause, why = 'other-floor', f'the target is {abs(float(target_y) - y):.1f} m {"above" if target_y > y else "below"} Link: a way to another floor is needed ({why})'
         if cause == 'wall' and 'mesh ends' in why and prompt and re.search(r'dive|swim|water', str(prompt), re.I):
             cause, why = 'water-edge', f'the mesh ends and the prompt reads {prompt!r}: the edge of the water'
+        if cause in ('wall', 'ledge-up', 'other-floor') and geom.get('climb') == 'yes':
+            near = min(w.climbables(map, x, z, CLIMB_NEAR_M), key=lambda o: math.hypot(o[1] - x, o[2] - z))
+            cause, why = 'ledge-up', f'a climbable surface lies {math.hypot(near[1] - x, near[2] - z):.1f} m from the stuck point: climb it ({why})'
         return {'cause': cause, 'why': why, 'geom': geom, 'map': map, 'age': age_of_map(map), 'at': at}
 
     @staticmethod

@@ -13,6 +13,7 @@ import datetime
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -107,10 +108,15 @@ def pair_items(cells, arm_names):
     return [{'cell': c, 'arm': a} for c in cells for a in arm_names]
 
 
-def make_plan(cfg, night, cell_list=None, arms=None, spend_note=None, tools_commit=None, pilot_commit=None):
+def make_plan(cfg, night, cell_list=None, arms=None, spend_note=None, tools_commit=None, pilot_commit=None, only_cells=None, proof=False):
     """The plan dict of a night over the cells that can be played and the arms the pilot can play. `skipped`: what was left out and why. `pilot_commit`: play
     this commit of the dev repo (a baseline night) instead of its head at admission."""
     cells = cell_list if cell_list is not None else board.load()
+    if only_cells:
+        unknown = sorted(set(only_cells) - {c.id for c in cells})
+        if unknown:
+            raise ValueError(f'unknown cells {unknown}')
+        cells = [c for c in cells if c.id in only_cells]
     ready, skipped = [], {}
     for c in cells:
         why = board.missing(c)
@@ -120,7 +126,7 @@ def make_plan(cfg, night, cell_list=None, arms=None, spend_note=None, tools_comm
             ready.append(c.id)
     ok, no = available_arms(cfg, arms, pilot_commit or 'HEAD')
     return {'night': night, 'created': now_iso(), 'cells': ready, 'arms': list(ok), 'items': pair_items(ready, list(ok)), 'skipped_cells': skipped, 'skipped_arms': no,
-            'spend': spend_note, 'tools_commit': tools_commit, 'pilot_commit': pilot_commit, 'hold_s': cfg['hold_s']}
+            'spend': spend_note, 'tools_commit': tools_commit, 'pilot_commit': pilot_commit, 'hold_s': cfg['hold_s'], 'proof': bool(proof)}
 
 
 def freeze_tools(cfg, dest_root=None):
@@ -254,22 +260,40 @@ def arm_timer(cfg, at=None):
     return info
 
 
-def start_night(cfg, night=None, *, wait_idle=True, popen=subprocess.Popen, probe=None, rearm=False, pilot_commit=None):
+def start_night(cfg, night=None, *, wait_idle=True, popen=subprocess.Popen, probe=None, rearm=False, pilot_commit=None, only_cells=None, only_arms=None, proof=False, killer=os.kill):
     """What the timer runs: wait for two quiet player minutes, write the night's plan, freeze the tools and queue hold 1. Returns the plan (or {'skipped': why})."""
     night = night or datetime.date.today().strftime('%Y%m%d')
     nd = config.night_dir(cfg, night)
     if (nd / 'plan.json').is_file():
         return {'skipped': f'night {night} already has a plan (resume it with `hold`)'}
+    for other in sorted((nd.parent).glob('*')) if nd.parent.is_dir() else []:
+        pid = live_waiter(other)
+        if other.name != night and pid:   # (one waiter at a time: an earlier night still waiting for the lane is not joined by a second)
+            try:
+                other_proof = bool(json.loads((other / 'plan.json').read_text()).get('proof'))
+            except (OSError, ValueError):
+                other_proof = False
+            if other_proof and not proof:   # a proving run waiting for the lane gives way to a real night: its waiter is withdrawn (by pid: TERM, then CONT so a stopped flock gets it)
+                killer(pid, signal.SIGTERM)
+                killer(pid, signal.SIGCONT)
+                (other / 'withdrawn.txt').write_text(f'withdrawn {now_iso()} for night {night}\n')
+                continue
+            return {'skipped': f'night {other.name} still has a waiter ({pid}) queued: one waiter at a time, no night {night}'}
     if wait_idle and not guard.wait_idle(cfg['idle_s'], cfg['idle_timeout_s'], **({'probe': probe} if probe else {})):
         return {'skipped': 'the user is playing: the player wins, no night tonight'}
     arms = selected_arms(cfg)
+    if only_arms:
+        unknown = sorted(set(only_arms) - set(arms) - set(board.arms()))
+        if unknown:
+            raise ValueError(f'unknown arms {unknown}')
+        arms = {a: board.arms()[a] for a in only_arms}
     model = [a for a, d in arms.items() if d.get('planner') or d['decider'] != 'rules']
     ok, note = spend_ok(cfg, model)
     if not ok:
         arms = {a: d for a, d in arms.items() if a not in model}
         note = 'model arms dropped: ' + note
     tools_dir, tools_commit = freeze_tools(cfg)
-    plan = make_plan(cfg, night, arms=arms, spend_note=note, tools_commit=tools_commit, pilot_commit=pilot_commit)
+    plan = make_plan(cfg, night, arms=arms, spend_note=note, tools_commit=tools_commit, pilot_commit=pilot_commit, only_cells=only_cells, proof=proof)
     nd.mkdir(parents=True, exist_ok=True)
     (nd / 'plan.json').write_text(json.dumps(plan, indent=1))
     if not plan['items']:

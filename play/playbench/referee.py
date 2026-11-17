@@ -5,7 +5,8 @@ word (the pilot has marked a goal solved that the game never showed). A proof is
   flag_drop    a watched count fell by `drop` (default 1) from its first value: the bomb that was thrown
   rupees_gain  the rupee count rose by `gain` from its first value
   at           Link stands within `r` metres (x/z) of (x, z) on `map`, between `y_min` and `y_max` when given: a ledge top, a ladder top, the bottom of a drop,
-               the lake shore
+               the lake shore. `forbid`: a list of zones {x, z, r, y_min, y_max} on the same map: a run that was in one BEFORE the proof was met did not take the way
+               the task asks for (a drop that went down by the ladder beside it) and can no longer meet it: the result says `tainted`
   map          Link is on map `to` (not loading) after starting on another: a warp song, a door that loads
   any / all    a list of proofs (`all`: each met at some sample; `any`: the first one)
 
@@ -55,6 +56,7 @@ class Node:
         self.base = None            # flag_drop, rupees_gain: the first value
         self.best = None            # at: the smallest x/z distance seen (while the map was right and the y fit or not)
         self.first = None           # at: the distance at the first valid sample
+        self.tainted = False        # at: a forbidden zone was entered before the proof was met
         self.children = [Node(s) for s in spec.get('of', ())]
 
     def feed(self, row):
@@ -104,6 +106,11 @@ class Node:
             if self.first is None:
                 self.first = d
             self.best = d if self.best is None else min(self.best, d)
+            for z in s.get('forbid') or ():
+                if math.hypot(pos[0] - z['x'], pos[2] - z['z']) <= z['r'] and (z.get('y_min') is None or pos[1] >= z['y_min']) and (z.get('y_max') is None or pos[1] <= z['y_max']):
+                    self.tainted = True
+            if self.tainted:
+                return
             if d <= s['r'] and (s.get('y_min') is None or pos[1] >= s['y_min']) and (s.get('y_max') is None or pos[1] <= s['y_max']):
                 self.met_t = t
         elif k == 'map':
@@ -111,6 +118,9 @@ class Node:
                 self.base = map_of(row)
             if map_of(row) == s['to'] and self.base != s['to']:
                 self.met_t = t
+
+    def is_tainted(self):
+        return self.tainted or any(c.is_tainted() for c in self.children)
 
     def progress(self):
         """For position proofs: the share of the first distance closed (1.0 when met), the best over an any/all list; None for the others."""
@@ -183,7 +193,7 @@ class Referee:
             ttg = 0.0
         return {'success': self.met, 'time_to_goal_s': ttg, 'progress': 1.0 if self.met and self.root.progress() is not None else self.root.progress(),
                 'start_ok': self.start_ok, 'samples': self.samples, 'valid_samples': self.valid_samples,
-                'first_t': (self.first or {}).get('t'), 'last_t': (self.last or {}).get('t'), 'maps': self.maps[:6], 'life_min': self.life_min, 'deaths': self.deaths,
+                'tainted': self.root.is_tainted() and not self.met, 'first_t': (self.first or {}).get('t'), 'last_t': (self.last or {}).get('t'), 'maps': self.maps[:6], 'life_min': self.life_min, 'deaths': self.deaths,
                 'start': (self.first or {}).get('pos'), 'end': (self.last or {}).get('pos'),
                 'hit': {'t': hit, 'pos': self.hit_row.get('pos'), 'map': map_of(self.hit_row)} if self.hit_row else None}
 

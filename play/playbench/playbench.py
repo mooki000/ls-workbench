@@ -4,7 +4,7 @@ model arms, scored by a referee that reads the game's state, stored, and drawn a
 
   playbench.py check                      the board, the frozen files, the arms and the committed pilot, game-free (what a night would play)
   playbench.py plan [--night ID]          print the night's plan (nothing is written, nothing queued)
-  playbench.py queue [--night ID] [--pilot-commit C]   a manual night: write the plan, freeze the tools, queue hold 1 (ONE waiter) and stop
+  playbench.py queue [--night ID] [--pilot-commit C] [--cells a,b] [--arms x,y] [--proof]   a manual night: write the plan, freeze the tools, queue hold 1 (ONE waiter) and stop
   playbench.py nightly [--rearm]          what the timer runs: wait for the player to be away, then as `queue`; --rearm arms the next night
   playbench.py hold --night ID --hold K --tools DIR     inside the waiter's locks: play, score, store, trend, queue the next hold
   playbench.py score --night ID --hold K  score the cell records of a hold that died before it scored (needs its snapshot)
@@ -12,6 +12,8 @@ model arms, scored by a referee that reads the game's state, stored, and drawn a
   playbench.py draft [--out FILE]         the weekly draft for issue 1198 from the trend (nothing is posted)
   playbench.py status                     nights, the queued waiter, the last hold
   playbench.py copies --from COPY         make the lane copies by reflink from a warm game copy (and check they match)
+  playbench.py rejudge --night ID --cells a,b --reason TEXT   judge stored runs again by the cells' current proofs (the old judgement is kept)
+  playbench.py annotate --night ID --cells a,b --blocker TEXT   mark stored failed results as blocked by a known cause outside the pilot
   playbench.py refreeze --night ID        put the tools' committed head into the folder a QUEUED waiter will run (refused once its hold has started)
   playbench.py arm --user-authorized      arm tomorrow's night (the transient user timer); needs timer_enabled in playbench-local/config.json
 
@@ -32,6 +34,7 @@ import config  # noqa: E402
 import draft  # noqa: E402
 import hold  # noqa: E402
 import nightly  # noqa: E402
+import score  # noqa: E402
 import store  # noqa: E402
 import trend  # noqa: E402
 
@@ -105,7 +108,8 @@ def cmd_plan(a, cfg):
 
 
 def cmd_queue(a, cfg):
-    plan = nightly.start_night(cfg, a.night, wait_idle=not a.no_wait_idle, pilot_commit=a.pilot_commit)
+    plan = nightly.start_night(cfg, a.night, wait_idle=not a.no_wait_idle, pilot_commit=a.pilot_commit, only_cells=a.cells.split(',') if a.cells else None,
+                               only_arms=a.arms.split(',') if a.arms else None, proof=a.proof)
     print(json.dumps({k: plan.get(k) for k in ('night', 'skipped', 'waiter_pid', 'cells', 'arms', 'skipped_cells', 'skipped_arms', 'spend', 'tools_commit', 'pilot_commit')}, indent=1))
     return 1 if 'skipped' in plan else 0
 
@@ -194,6 +198,41 @@ def cmd_copies(a, cfg):
     return 0 if len(usable) == len(cfg['copies']) else 1
 
 
+def cmd_rejudge(a, cfg):
+    """Judge stored runs again by the cells' current proofs, on the evidence kept for them (a proof that was wrong, not a sample that was): the old judgement is kept in
+    the store's `rejudged` table with the reason."""
+    import gzip
+    st = store.Store(config.results_db())
+    cells = {c.id: c for c in board.load()}
+    nd = config.night_dir(cfg, a.night)
+    n = 0
+    for old in st.attempts(a.night):
+        if old['cell'] not in a.cells.split(','):
+            continue
+        ev = nd / 'runs' / old['tag']
+        try:
+            rows = [json.loads(x) for x in gzip.open(ev / 'state.jsonl.gz', 'rt')]
+        except OSError:
+            print(f"{old['tag']}: no kept journal, left alone")
+            continue
+        earlier = [r for r in st.rejudgements(a.night) if (r['cell'], r['arm'], r['attempt']) == (old['cell'], old['arm'], old['attempt'])]
+        was_met = bool(old['success']) or any(json.loads(r['old_json'])['success'] for r in earlier)
+        new = score.rejudge_row(json.loads(old['row_json']), cells[old['cell']], rows, ev / 'transcript.jsonl', ended_by_old_proof=was_met)
+        st.rejudge(a.night, old['cell'], old['arm'], old['attempt'], new, a.reason, nightly.now_iso())
+        print(f"{old['tag']}: success {old['success']} -> {new['success']}, time {old['time_to_goal_s']} -> {new['time_to_goal_s']}, progress {old['progress']} -> {new['progress']}")
+        n += 1
+    print(f'{n} result(s) rejudged')
+    return 0
+
+
+def cmd_annotate(a, cfg):
+    """Mark the stored failed results of cells on a night as blocked by a known cause (the cell's own `blocker` in board-local.json does the same for later nights)."""
+    st = store.Store(config.results_db())
+    for cell in a.cells.split(','):
+        print(f'{cell}: {st.annotate_blocker(a.night, cell, a.blocker)} failed result(s) marked blocked')
+    return 0
+
+
 def cmd_refreeze(a, cfg):
     old, commit = nightly.refreeze(cfg, a.night)
     print(f'tools {commit} are in {old}')
@@ -216,6 +255,9 @@ def main(argv=None):
     p.add_argument('--night')
     p.add_argument('--no-wait-idle', action='store_true', help='do not wait for two quiet player minutes first (a manual night the user knows about)')
     p.add_argument('--pilot-commit', help='play this commit of the dev repo (a baseline night) instead of its head at admission')
+    p.add_argument('--cells', help='only these cells (comma-separated ids)')
+    p.add_argument('--arms', help='only these arms (comma-separated names)')
+    p.add_argument('--proof', action='store_true', help='a PROVING run (a few cells before a night to see that a fix works): not a night of the trend, its queued waiter gives way to a real night; name it with --night, e.g. 20261117-proof')
     p = sub.add_parser('nightly')
     p.add_argument('--night')
     p.add_argument('--rearm', action='store_true')
@@ -235,6 +277,14 @@ def main(argv=None):
     p.add_argument('--last', type=int, default=10)
     p = sub.add_parser('copies')
     p.add_argument('--from', dest='src', required=True)
+    p = sub.add_parser('rejudge')
+    p.add_argument('--night', required=True)
+    p.add_argument('--cells', required=True, help='comma-separated cell ids')
+    p.add_argument('--reason', required=True)
+    p = sub.add_parser('annotate')
+    p.add_argument('--night', required=True)
+    p.add_argument('--cells', required=True)
+    p.add_argument('--blocker', required=True)
     p = sub.add_parser('refreeze')
     p.add_argument('--night', required=True)
     p = sub.add_parser('arm')
@@ -244,7 +294,7 @@ def main(argv=None):
         os.environ.pop(k, None)
     cfg = config.load()
     return {'check': cmd_check, 'plan': cmd_plan, 'queue': cmd_queue, 'nightly': cmd_nightly, 'hold': cmd_hold, 'score': cmd_score, 'trend': cmd_trend,
-            'draft': cmd_draft, 'status': cmd_status, 'copies': cmd_copies, 'arm': cmd_arm, 'refreeze': cmd_refreeze}[a.cmd](a, cfg)
+            'draft': cmd_draft, 'status': cmd_status, 'copies': cmd_copies, 'arm': cmd_arm, 'refreeze': cmd_refreeze, 'rejudge': cmd_rejudge, 'annotate': cmd_annotate}[a.cmd](a, cfg)
 
 
 if __name__ == '__main__':

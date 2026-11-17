@@ -273,6 +273,7 @@ class ChapterSegment:
     def __init__(self, ch, markers):
         self.chapter, self.path = ch, ch.path
         self.name, self.what, self.area, self.save, self.prefix, self.boot = ch.name, ch.aim, ch.area, ch.save, None, ch.boot
+        self.place, self.scripted = None, False   # (no placement and no scripted play: a chapter's own save is the start, its objectives are decided)
         self.humanize, self.wall, self.budget, self.max_decisions, self.save_after = ch.humanize, ch.wall, ch.budget_s, 100000, ch.save_after
         self.goals = [P.Goal(m.name, MarkerCond(m), 'marker', [], m.what) for m in markers]
         watch = standard_watch() + list(ch.watch) + [w for m in markers for w in m.watch] + [w for s in ch.seeds for w in seed_watch(s)]
@@ -408,7 +409,7 @@ def digest_entry(o, pos, kind, k, area):
 
 def world_digest(area, st, plan=None, limit_nav=36, radius=170.0):
     """What the planner is given of the world around Link: per kind the nearest objects (exits all), each with its ref, place, distance and,
-    for the nearest few, what the offline planner says about the way there. `plan` is world.plan.plan (or None: no nav column)."""
+    for the nearest few, what the offline planner says about the way there. `plan` is worldmodel.plan.plan (or None: no nav column)."""
     pos = st.get('pos')
     objs = interact.objects_for(area)
     seen, groups = set(), {}

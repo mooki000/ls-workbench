@@ -423,9 +423,11 @@ def stuck_candidates(rd, tracks, build, world=None, ts=None):
         if s['result'] == 'timeout' and d_want is not None and s.get('radius') is not None and d_want <= s['radius']:
             continue
         mp = map_at(rd, s['t1'])
+        lives = [(r['t'] - rd.t0, r['life']) for r in rd.rows if r.get('life') is not None and s['t0'] - 0.3 <= r['t'] - rd.t0 <= s['t1'] + 0.3]
+        life_lost = max(0, lives[0][1] - min(l for _t, l in lives)) if lives else 0
         at = [r1(c) for c in s['pos']]
         rec = {'run': rd.run_id, 'build': build, 'ts': ts or rd.ts, 'step': s['in'], 'verb': s['verb'], 'src': s['src'], 'at': at, 'want': s['want'], 'd_want': d_want,
-               'result': s['result'], 'detail': (s.get('detail') or '')[:160], 'moved': s.get('moved'), 'map': mp, 't': s['t1']}
+               'result': s['result'], 'detail': (s.get('detail') or '')[:160], 'moved': s.get('moved'), 'map': mp, 't': s['t1'], 'life_lost': life_lost}
         rec['cause'], rec['why'] = classify_stuck(rec, world)
         out.append(rec)
     return out
@@ -683,7 +685,7 @@ class MapData:
             c = next((c for c in cl if d2(c['at'], s['at']) <= CLUSTER_R and abs(c['at'][1] - s['at'][1]) <= 3.0), None)
             if c is None:
                 c = {'id': f'c{len(cl) + 1}', 'map': self.name, 'at': list(s['at']), 'n': 0, 'runs': [], 'builds': [], 'causes': {}, 'want': s.get('want'), 'wants': [],
-                     'verbs': {}, 'last_ts': '', 'why': '', 'cause': 'wall', 'tried': [], 'worked': [], 'resolved': False, 'resolved_by': None, '_rec': []}
+                     'verbs': {}, 'last_ts': '', 'why': '', 'cause': 'wall', 'tried': [], 'worked': [], 'resolved': False, 'resolved_by': None, 'life_lost': 0, 'hazard': False, '_rec': []}
                 cl.append(c)
             c['n'] += 1
             c['at'] = [r1((c['at'][i] * (c['n'] - 1) + s['at'][i]) / c['n']) for i in range(3)]
@@ -699,16 +701,22 @@ class MapData:
             if s['ts'] >= c['last_ts']:
                 c['last_ts'] = s['ts']
             c['_rec'].append(s)
+            c['life_lost'] = max(c['life_lost'], int(s.get('life_lost') or 0))
+            c['hazard'] = c['life_lost'] >= 4   # (a quarter-heart is 1: a heart or more lost while stopped here: something hurts him there)
+        owned = {}   # (an attempt belongs to the nearest cluster within 3 m, not to every one: a way round that worked at one place says nothing of the place beside it)
+        for a in self.attempts:
+            near = min(((math.hypot(a['at'][0] - c['at'][0], a['at'][2] - c['at'][2]), c) for c in cl), key=lambda x: x[0], default=None)
+            if near and near[0] <= CLUSTER_R + 1.0:
+                owned.setdefault(near[1]['id'], []).append(a)
         for c in cl:
             order = {k: i for i, k in enumerate(CAUSES)}
             c['cause'] = sorted(c['causes'].items(), key=lambda kv: (-kv[1], order.get(kv[0], 99)))[0][0]
             c['why'] = next((r['why'] for r in reversed(c['_rec']) if r['cause'] == c['cause']), '')
-            for a in self.attempts:
-                if math.hypot(a['at'][0] - c['at'][0], a['at'][2] - c['at'][2]) <= CLUSTER_R + 1.0:
-                    if a['attempt'] not in c['tried']:
-                        c['tried'].append(a['attempt'])
-                    if a['result'] == 'worked':
-                        c['worked'].append(a['attempt'])
+            for a in owned.get(c['id'], ()):
+                if a['attempt'] not in c['tried']:
+                    c['tried'].append(a['attempt'])
+                if a['result'] == 'worked':
+                    c['worked'].append(a['attempt'])
             if c['worked']:
                 c['resolved'], c['resolved_by'] = True, 'attempt ' + c['worked'][-1]
             else:
@@ -1011,6 +1019,36 @@ class RouteLib:
             m.attempts.append({'at': [r1(c) for c in at], 'attempt': attempt, 'result': result, 'progress_m': round(float(progress_m), 1), 'build': build, 'run': run, 'ts': ts or now_iso()})
             self._save_map(m)
 
+    def backfill_life(self):
+        """Stuck records imported before hearts were counted get `life_lost` from their run's journal (the ledger names the folder); returns how many were filled."""
+        runs = {r['run']: r for r in self.runs()['runs']}
+        filled = 0
+        for name in self.maps():
+            with self.locked():
+                m = self.map(name)
+                todo = [s for s in m.stuck if 'life_lost' not in s]
+                if not todo:
+                    continue
+                cache = {}
+                for s in todo:
+                    row = runs.get(s['run'])
+                    if row is None:
+                        continue
+                    try:
+                        if s['run'] not in cache:
+                            cache[s['run']] = RunData(row['folder'], label=row.get('tag'))
+                        rd = cache[s['run']]
+                    except LibError:
+                        continue
+                    step = next((x for x in rd.steps if x['in'] == s.get('step')), None)
+                    if step is None:
+                        continue
+                    lives = [r['life'] for r in rd.rows if r.get('life') is not None and step['t0'] - 0.3 <= r['t'] - rd.t0 <= step['t1'] + 0.3]
+                    s['life_lost'] = max(0, lives[0] - min(lives)) if lives else 0
+                    filled += 1
+                self._save_map(m)
+        return filled
+
     def record_stuck(self, map, rec):
         """A stuck point written as it happens (the walker's record callback)."""
         with self.locked():
@@ -1296,13 +1334,14 @@ class Walker:
 # ------------------------------------------------------------------------------------------------------------------------ a private world model
 
 class PrivateWorld:
-    """What routelib asks of a world model, over the private `world/` folder (objects.json, the nav meshes and its planner). Reads data; names no place."""
+    """What routelib asks of a world model: the private `world/` data folder (objects.json, the nav meshes) read with the planner of `worldmodel/`. Reads data; names no place."""
 
     def __init__(self, world_dir):
         import sys
         self.dir = Path(world_dir)
-        sys.path.insert(0, str(self.dir.parent))
-        from world import plan as wplan   # noqa: E402
+        sys.path.insert(0, str(HERE.parent))
+        from worldmodel import plan as wplan   # noqa: E402  (the code; the folder given is the data it reads)
+        wplan.use(self.dir)
         self._plan = wplan
         try:
             self.objects = json.loads((self.dir / 'objects.json').read_text())
@@ -1323,6 +1362,10 @@ class PrivateWorld:
 
     def doors(self, map, x, z, r):
         return self._objs(map, 'door', x, z, r)
+
+    def climbables(self, map, x, z, r):
+        """Ivy, vines and ladders (the objects the climb step grabs) within r metres: (map, x, z, name)."""
+        return self._objs(map, 'climbable', x, z, r)
 
     def props(self, map, x, z, r):
         out = []
@@ -1368,7 +1411,7 @@ def describe(lib, maps=None):
                    f'({s["both_ways"]} both ways, {s["once"]} once; {s["metres"]} m of ground; kinds {s["kinds"]}), {s["joins"]} joins, {s["contested"]} contested, '
                    f'{len(cl)} stuck clusters ({len(openc)} open), {len(m.anchors())} anchors, builds {sorted({t["build"] for t in m.tracks})}')
         for c in sorted(openc, key=lambda c: -c['n'])[:8]:
-            out.append(f'    stuck {c["at"]} x{c["n"]} {c["cause"]}: {c["why"]} (wanted {c["want"]}; tried {c["tried"] or "nothing"})')
+            out.append(f'    stuck {c["at"]} x{c["n"]} {c["cause"]}: {c["why"]} (wanted {c["want"]}; tried {c["tried"] or "nothing"})' + (f' HAZARD: {c["life_lost"]} quarter hearts lost there' if c.get('hazard') else ''))
     for l in lib.links():
         if maps and l['from_map'] not in maps and l['to_map'] not in maps:
             continue

@@ -36,7 +36,7 @@ class FakeRun:
         self.live = Path(folder) / 'pilot' / 'live'
         self.live.mkdir(parents=True, exist_ok=True)
         self.tag, self.map, self.pos, self.child = tag, map, list(start), child
-        self.mono, self.frame, self.n_step, self.steps_txt = t0, 7000, 0, []
+        self.mono, self.frame, self.n_step, self.steps_txt, self.life = t0, 7000, 0, [], 16
         self.rows, self.out = [], []
         note = f'hs-run: /h/hs-run.sh {copy or "/g/.copy-a"} {tag} 250 --user /h/saves/{save} HOS_CONTROL=/tmp/x/control.sock'
         self.out.append({'ev': 'note', 'text': note, 'boot': 'continue'})
@@ -50,7 +50,7 @@ class FakeRun:
         self.mono += dt
         self.frame += max(1, round(dt * 60))
         self.rows.append({'t': round(self.mono, 3), 'frame': self.frame, 'map': self.map, 'pos': [round(c, 2) for c in self.pos], 'facing': 0.0, 'camera': 180.0,
-                          'event': event, 'loading': loading, 'life': 16, 'max_life': 16, 'rupees': 1, 'prompt': 'Empty', 'music': '', 'changed': {}, 'child': self.child})
+                          'event': event, 'loading': loading, 'life': self.life, 'max_life': 16, 'rupees': 1, 'prompt': 'Empty', 'music': '', 'changed': {}, 'child': self.child})
 
     def gt(self):
         return round(self.mono - self.t_game0, 2)
@@ -69,12 +69,17 @@ class FakeRun:
             total += d
         return total
 
-    def leg(self, src, pts, result='reached', detail='', verb_moved=None, event=0):
+    def leg(self, src, pts, result='reached', detail='', verb_moved=None, event=0, hurt=0):
         """One hsap step that walks pts and ends with result; the step event is written with the game seconds at its end."""
         self.n_step += 1
         self.steps_txt.append(src)
         t_in = self.mono
         walked = self.walk(pts)
+        if hurt:   # (a boulder: hearts lost while Link stands there)
+            for _ in range(hurt // 4):
+                self.sample(1.0)
+                self.life -= 4
+                self.sample(0.2)
         if event:
             self.sample(0.7, event=1)
         secs = round(self.mono - t_in, 2)
@@ -373,18 +378,48 @@ def stuck_checks(tmp):
     c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 95.0) < 1.0]
     check(c and c[0]['cause'] == 'slow', f'a timeout that was still moving is slow ({c and c[0]["cause"]})')
 
+    # hearts lost while stopped: the record and the cluster say so (the cause stays: the cause words are the tactics' vocabulary)
+    r = FakeRun(tmp / 's11', 's11', start=(300, 100, 0))
+    r.leg('run 300 60 radius 2.5 timeout 30', [(300, 100, 10)], 'stuck', detail='50.00 m from the point; moved under 0.3 m in 2.5 s at 300.0 100.0 10.0', hurt=8)
+    r.leg('run 300 60 radius 2.5 timeout 30', [(300, 100, 10.2)], 'stuck', detail='50.00 m from the point; moved under 0.3 m in 2.5 s at 300.0 100.0 10.2')
+    lib.import_run(r.write(), build='b1')
+    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][0] - 300) < 1.0]
+    check(c and c[0]['life_lost'] == 8 and c[0]['hazard'] and c[0]['cause'] == 'wall', f'a stuck place where 8 quarter hearts were lost is a hazard, its cause words unchanged ({c and (c[0]["life_lost"], c[0]["hazard"], c[0]["cause"])})')
+    check(not any(k['hazard'] for k in lib.map('Testland_Child').clusters() if abs(k['at'][0] - 300) > 1.0), 'no other cluster is a hazard')
+    # records imported before hearts were counted get them from the run's own journal
+    data = json.loads((tmp / 'lib3' / 'maps' / 'Testland_Child.json').read_text())
+    for rec in data['stuck']:
+        rec.pop('life_lost', None)
+    (tmp / 'lib3' / 'maps' / 'Testland_Child.json').write_text(json.dumps(data))
+    n = lib.backfill_life()
+    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][0] - 300) < 1.0]
+    check(n >= 2 and c and c[0]['life_lost'] == 8 and c[0]['hazard'], f'backfill_life reads the hearts lost from the runs\' journals ({n} records; {c and c[0]["life_lost"]})')
+    check(lib.backfill_life() == 0, 'and finds nothing more to do')
+    lib_hz = routelib.RouteLib(tmp / 'lib-hz')
+    r = FakeRun(tmp / 'hz1', 'hz1', start=(0, 100, 0))
+    r.leg('run 0 60 radius 2.5 timeout 30', [(0, 100, 10)], 'stuck', detail='50.00 m from the point; moved under 0.3 m in 2.5 s at 0.0 100.0 10.0', hurt=8)
+    lib_hz.import_run(r.write(), build='b1')
+    check('HAZARD: 8 quarter hearts' in routelib.describe(lib_hz), 'the listing of a place that cost hearts says hazard')
+    # an attempt belongs to the nearest cluster only: two places 2.8 m apart, one attempt at the first
+    r = FakeRun(tmp / 's12', 's12', start=(400, 100, 0))
+    r.leg('run 400 60 radius 2.5 timeout 30', [(400, 100, 10)], 'stuck', detail='50.00 m from the point; moved under 0.3 m in 2.5 s at 400.0 100.0 10.0')
+    r.leg('run 400 60 radius 2.5 timeout 30', [(400, 100, 12.8)], 'stuck', detail='47.20 m from the point; moved under 0.3 m in 2.5 s at 400.0 100.0 12.8')
+    lib.import_run(r.write(), build='b1')
+    lib.record_attempt('Testland_Child', [400.0, 100.0, 10.0], 'shift-L-3', 'worked', 8.0, 'b1', 'x')
+    c = sorted([k for k in lib.map('Testland_Child').clusters() if abs(k['at'][0] - 400) < 1.0], key=lambda k: k['at'][2])
+    check(len(c) == 2 and c[0]['resolved'] and c[0]['worked'] == ['shift-L-3'] and not c[1]['resolved'] and c[1]['tried'] == [], f'an attempt at one place does not resolve the place 2.8 m away ({[(k["at"][2], k["resolved"], k["tried"]) for k in c]})')
     # clusters merge: two runs stuck at the same spot, in two builds, one cause
     r = FakeRun(tmp / 's10', 's10', start=(0, 100, 0))
     r.leg('run 0 60 radius 2.5 timeout 30', [(0, 100, 10.6)], 'stuck', detail='49.40 m from the point; moved under 0.3 m in 2.5 s at 0.0 100.0 10.6')
     lib.import_run(r.write(), build='b2')
-    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5]
+    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5 and abs(k['at'][0]) < 1.0]
     check(len(c) == 1 and c[0]['n'] == 2 and sorted(c[0]['builds']) == ['b1', 'b2'], f'the same spot in two runs and two builds is one cluster ({c and (c[0]["n"], c[0]["builds"])})')
     # attempts: a failed one is remembered, a worked one resolves
     lib.record_attempt('Testland_Child', c[0]['at'], 'side-left-25', 'failed', 0.2, 'b2', 'x')
-    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5]
+    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5 and abs(k['at'][0]) < 1.0]
     check(c[0]['tried'] == ['side-left-25'] and not c[0]['resolved'], f'a failed attempt is listed and resolves nothing ({c[0]["tried"]}, {c[0]["resolved"]})')
     lib.record_attempt('Testland_Child', c[0]['at'], 'side-right-25', 'worked', 6.0, 'b2', 'x')
-    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5]
+    c = [k for k in lib.map('Testland_Child').clusters() if abs(k['at'][2] - 10.3) < 1.5 and abs(k['at'][0]) < 1.0]
     check(c[0]['resolved'] and 'side-right-25' in c[0]['worked'], f'a worked attempt resolves the cluster ({c[0]["resolved"]}, {c[0]["worked"]})')
     # resolved by a later run that walks past it
     lib2 = routelib.RouteLib(tmp / 'lib3b')

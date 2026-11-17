@@ -241,7 +241,7 @@ class Env:
         fl.cluster(M, (250.0, 100.0, 30.0), (250.0, 60.0), 'wall', runs=1,                                              # c6: a gap in the samples 4 m before it
                    pts=[[0.0, 250.0, 100.0, 5.0, 1]] + [[float(k), 250.0, 100.0, 25.0 + k, 1] for k in range(1, 6)])
         fl.cluster(M, (300.0, 100.0, 30.0), (300.0, 60.0), 'door-side', runs=1)                                         # c7: a second door-side cluster
-        fl.cluster(M, (350.0, 100.0, 30.0), (370.0, 30.0), 'held', runs=1)                                              # c8: held, the want to the side
+        fl.cluster(M, (350.0, 100.0, 30.0), (351.0, 31.0), 'held', runs=1)                                              # c8: held, the want a little to the side (the straight run still meets it)
         fl.cluster(D, (20.0, 50.0, 20.0), (20.0, 40.0), 'ledge-up', runs=5, age='adult')                                # a map without an age in its name
         fl.write()
         (d / 'copy').mkdir(parents=True)
@@ -301,6 +301,15 @@ def geometry_checks(env):
     lib = routelib.RouteLib(env.lib)
     m = lib.map(M)
     cl = {c['id']: c for c in m.clusters()}
+    # a visit runs straight at the want: a stuck point the straight line from the approach misses by more than 1.5 m cannot be visited (hold 1 walked round every block)
+    lib2 = routelib.RouteLib(env.lib)
+    for s in lib2.map(M).stuck:
+        if s['at'][0] == 350.0 and s['at'][2] == 30.0:
+            s['want'] = [370.0, 30.0]
+    lib2.map(M).touch()
+    got = {(c['map'], c['cluster']): c for c in selfplay.candidates(lib2, tactics.Book(env.dir / 'nobook', readonly=True), selfplay.Ledger(env.dir / 'l.jsonl'), '2026-12-21')[0]}
+    check(got[(M, 'c8')]['approach'] is None and 'passes' in got[(M, 'c8')]['no_approach'] and got[(M, 'c1')]['approach'] is not None,
+          f'a want to the side that the straight run misses: no visit ({got[(M, "c8")]["no_approach"]})')
     check(sorted(cl) == ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'], f'the made-up library has its eight clusters ({sorted(cl)})')
     check(cl['c3']['resolved'] and not cl['c1']['resolved'] and cl['c4']['want'] is None, 'one is resolved, one has no want')
     ap, why = selfplay.approach_point(m, cl['c1'])
@@ -425,6 +434,7 @@ def segment_checks(env, plan):
         seg = pilot.Segment(s['segment'])
         t = seg.goals[0].targets[0]
         check(seg.name == s['tag'] and seg.area == s['map'] and seg.humanize == 0 and seg.save == s['save'] and seg.boot == 'continue', f'{s["name"]}: the segment parses: area, humanize 0, the save ({seg.area}, {seg.humanize})')
+        check(seg.straight is True, f'{s["name"]}: the visit runs straight at the want (no offline planner routes round the block)')
         check(len(seg.goals) == 1 and seg.goals[0].kind == 'reach' and [t.x, t.z] == s['target']['want'] and t.kind == 'reach' and t.radius == s['target']['radius'], f'{s["name"]}: one reach goal at the cluster\'s want')
         check(seg.wall == s['wall'] and seg.budget == s['budget_s'] and not seg.goals[0].cond.met({'PlayerStatus.MaxLife': 20}) and not seg.goals[0].cond.met({}) and seg.watch == ['PlayerStatus.MaxLife'], 'a small budget; the flag condition never comes true')
     text = Path(plan['sessions'][0]['segment']).read_text()
@@ -438,7 +448,7 @@ def saves_checks(env, plan):
     check(cmd == want, f'the save command: base save, out, start map:x,y,z,yaw, age, time, game ({cmd})')
     p8 = env.plan('--only', f'{M}:c8', '--max-sessions', '1', night='2026-12-20', name='sideways')
     c8 = selfplay.save_command(p8, p8['sessions'][0])
-    check(c8[c8.index('--start') + 1] == f'{M}:350.00,100.00,21.00,1.148', f'a want to the side gives its yaw in radians ({c8[c8.index("--start") + 1]})')
+    check(c8[c8.index('--start') + 1] == f'{M}:350.00,100.00,21.00,0.100', f'a want a little to the side gives its yaw in radians ({c8[c8.index("--start") + 1]})')
     check(all(not Path(x['save']).exists() for x in plan['sessions']), 'nothing is made before `saves`')
     rc, out = cli(['saves', str(Path(plan['dir']) / 'plan.json')])
     check(rc == 0 and all(Path(x['save']).is_dir() for x in plan['sessions']), f'`saves` makes every save ({rc})')
@@ -889,11 +899,52 @@ def waiter_checks(env, tmp):
         tactics_seed.seed = real_seed
 
 
+def timer_checks(tmp):
+    """The nightly user timer: a transient systemd-run unit at 03:30 that fires `timer fire`, which re-arms the next night first, replaces the frozen code, and runs one
+    `nightly`; a night whose earlier waiter is still queued is skipped with the reason printed. Nothing is armed without the user's word."""
+    import datetime
+    from types import SimpleNamespace as NS
+    check(selfplay.next_calendar('03:30', datetime.datetime(2026, 11, 17, 4, 0)) == '2026-11-18 03:30:00' and selfplay.next_calendar('03:30', datetime.datetime(2026, 11, 17, 2, 0)) == '2026-11-17 03:30:00'
+          and selfplay.next_calendar('03:30', datetime.datetime(2026, 11, 17, 3, 30)) == '2026-11-18 03:30:00', 'the next 03:30 strictly after now')
+    a = NS(at='03:30', copy='/c/copy', code='/c/code', max_sessions=3, name='PilotLearn', refreeze='/c/refreeze.sh', root=str(tmp / 'root'), user_authorized=True, authority='the user\'s word, relayed by Main')
+    argv = selfplay.timer_argv(a, '2026-11-18 03:30:00', quiet='/l/q', measuring='/l/m', python='/usr/bin/python3')
+    check(argv[:7] == ['systemd-run', '--user', '--unit=pilot-selfplay-2026-11-18-033000', '--on-calendar=2026-11-18 03:30:00', '--timer-property=AccuracySec=60s', '--collect', '--setenv=PILOT_QUIET_LOCK=/l/q']
+          and '--setenv=PILOT_MEASURING_LOCK=/l/m' in argv and argv[argv.index('/usr/bin/python3') + 1:argv.index('/usr/bin/python3') + 4] == ['-I', '-B', '/c/code/pilot/selfplay.py'] and 'timer' in argv and 'fire' in argv
+          and '--refreeze' in argv and '--max-sessions' in argv and '--name' in argv, f'the transient unit: calendar, the two locks, the frozen code\'s timer fire ({argv})')
+    ran = []
+    fake = lambda cmd, **k: (ran.append(cmd), NS(returncode=0, stdout='Running timer as unit: x.timer\n', stderr=''))[1]  # noqa: E731
+    refused = lambda **kw: selfplay.arm_timer(NS(**{**vars(a), **kw}), now=datetime.datetime(2026, 11, 17, 4, 0), run=fake, quiet='/l/q', measuring='/l/m')
+    try:
+        refused(user_authorized=False)
+        check(False, 'arming needs the user\'s word')
+    except selfplay.PlanError as e:
+        check('user' in str(e) and not ran, f'arming without the user\'s word is refused ({e})')
+    info = refused()
+    saved = json.loads((tmp / 'root' / 'timer.json').read_text())
+    check(info['unit'] == 'pilot-selfplay-2026-11-18-033000' and saved['unit'] == info['unit'] and saved['authority'] == a.authority and saved['calendar'] == '2026-11-18 03:30:00' and len(ran) == 1,
+          f'armed once, the unit and the authority recorded ({saved["unit"]})')
+    # fire: re-arm first, then the frozen code, then one nightly; a skipped night is no failure and still leaves the next night armed
+    order = []
+    arm = lambda args, **k: (order.append('arm'), {'unit': 'next'})[1]  # noqa: E731
+    run_ok = lambda cmd, **k: (order.append('refreeze' if 'bash' in cmd[0] else cmd[0]), NS(returncode=0, stdout='frozen: x', stderr=''))[1]  # noqa: E731
+    rc = selfplay.fire_timer(a, arm=arm, run=run_ok, nightly=lambda b: (order.append('nightly'), 2)[1])
+    check(rc == 0 and order == ['arm', 'refreeze', 'nightly'], f'fire: the next night armed first, the code replaced, then the night ({order})')
+    order.clear()
+    busy = lambda cmd, **k: (order.append('refreeze'), NS(returncode=3, stdout='', stderr='a hold is running: not replacing its code'))[1]  # noqa: E731
+    rc = selfplay.fire_timer(a, arm=arm, run=busy, nightly=lambda b: (order.append('nightly'), 0)[1])
+    check(rc == 0 and order == ['arm', 'refreeze', 'nightly'], 'a hold of the old code is running: the code is left, the night goes on')
+    order.clear()
+    broke = lambda cmd, **k: (order.append('refreeze'), NS(returncode=1, stdout='', stderr='git failed'))[1]  # noqa: E731
+    rc = selfplay.fire_timer(a, arm=arm, run=broke, nightly=lambda b: (order.append('nightly'), 0)[1])
+    check(rc == 0 and order == ['arm', 'refreeze'], 'the code could not be frozen: no night on stale code, the next one is armed')
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='test-selfplay-') as t:
         tmp = Path(t)
         env = Env(tmp, 'a')
         geometry_checks(env)
+        timer_checks(tmp / 'timer')
         plan = plan_checks(env)
         segment_checks(env, plan)
         saves_checks(env, plan)

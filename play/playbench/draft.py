@@ -55,7 +55,10 @@ def weekly(history, cells, arms, titles, chart_name='pilot-1198-scoreboard.png',
     for c in cells:
         out.append(f'| {titles.get(c, c)} | ' + ' | '.join(trend.label(c_last.get((c, a))) for a in arms) + ' |')
     out += ['', '"ok 34 s" is solved after 34 game seconds; "fail 40%" is not solved and the best moment closed 40% of the way to the place that proves it (position tasks only); '
-            '"? invalid" is a run that does not count (the save did not put Link at the start, or the hold ended it).', '']
+            '"? invalid" is a run that does not count (the save did not put Link at the start, or the hold ended it); "blocked" is a failure with a known cause outside the player (named below), left out of the count.', '']
+    blocks = sorted({(c, r['blocker']) for c in cells for a in arms for r in [c_last.get((c, a))] if r and r.get('blocker') and not r['success']})
+    if blocks:
+        out += ['**Blocked by a known cause:** ' + '; '.join(f'{titles.get(c, c)}: {b}' for c, b in blocks) + '.', '']
     flips = []
     if before:
         for c, a, t in trend.changes(before[1], c_last, cells, arms):

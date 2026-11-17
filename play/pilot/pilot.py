@@ -6,11 +6,15 @@ as a route file. (the harness, 2026-11-10: the game side is ../hsap.py, which ru
 hs-run.sh with live input and the state tap, in place of the earlier test autopilot; the rest is as it was.)
 
   pilot.py run <segment.toml> [--decider rules|replay|openai-decisions] [--replay <transcript>] [--planner]
+               [--driver <want>[,<fallback>...]] [--fallbacks <a,b>|none] [--recording <file>] [--playback-mode raw|push]
+               [--openrouter-model <m>]
+               [--chat-base <url>] [--chat-model <m>] [--chat-mode tool|json_schema|json] [--mcp-dir <dir>] [--mcp-wait <s>]
+               [--mcp-agent loop|omp] [--mcp-agent-model <m>]
                [--max-decisions <n>] [--api-base <url>] [--follow NAME=<file>] [--end-hold <s>] [--shots <presents>]
                [--matches <n>] [--humanize 0..3] [--humanize-seed <n>] [--no-recover] [--bad-points <dir>] [--no-bad-points]
                [--tactics ranked|fixed|explore|off] [--tactics-dir <dir>] [--tactics-source <name>] [--tactics-readonly] [--lessons on|off]
                [--vision off|on] [--vision-every <s>] [--vision-model <m>] [--vision-backend decisions|responses]
-               [--vision-sock <path>]
+               [--vision-sock <path>] [--hud on|off]
   pilot.py check-route <route.txt> --segment <segment.toml> [--runs 3] [--copy <game copy>] [--tag <prefix>]
   pilot.py ledger [--run <id>] [--since YYYY-MM-DDTHH:MM] [--standin]
 
@@ -20,7 +24,8 @@ A segment (segments/*.toml): name, what, area, save (a library entry of the harn
 folder, or kept:<tag> for the user folder a run of this copy kept), boot (newgame, continue, none;
 default continue with a save, newgame without), wall, budget_seconds, max_decisions, prefix (a route file sent before
 the live steps), save_after, humanize (0..3: this segment's default level), watch
-(more flags), and [[goal]] tables in order: name, what, flag (<name><op><value>, as the autopilot's until takes it),
+(more flags), a [place] table (to = a destination the game lists, age, hour: Link is put there through hsdebug before the first
+decision, placement.py), and [[goal]] tables in order: name, what, flag (<name><op><value>, as the autopilot's until takes it),
 kind (reach, door, talk, chest, wait, crawl, climb, item, fight), targets: [{name, actor = "<Name>#<n>" of the area's
 placement, or at = [x, z], or follow = "<name>" (another player: a --follow file); kind, radius, y}]. Game-derived: segments,
 transcripts and routes stay in this folder. A fight target (PlayExplore17) holds a place and fights what comes (strike,
@@ -73,12 +78,49 @@ N over the segment's own N. Candidates: practice-swing, ready, approach, face, s
 left/right, wait (duel_candidates); `rules` have a fixed policy (deciders.Rules.pick_duel); openai-decisions gets its own prompt
 and is asked at most once in 1.5 s of game time (the pilot waits out the rest of the gap), never for a single candidate.
 
-What leaves the machine: only with --decider openai-decisions (and --planner): the request bodies in each run's
-transcript.jsonl (the state line as JSON, the goal and target names, what was tried, the candidate steps), sent to
-api.openai.com. With --vision on (vision.py; default off) the game's own frame, downscaled, goes too, with one fixed instruction
-text and fixed questions and no path, log line, flag or coordinate; the pictures sent are kept in the run's vision/ folder. With lessons on (--lessons,
+Drivers (drivers/; PilotDrivers, 2026-11-16): who chooses the next step, behind one interface, each falling back to the next.
+A driver is given the observation (the state line, the goal and target, what was tried) and the allowed actions (the candidates) and
+returns one step, or a short plan, with its provenance (driver, model, cost, latency): decisions (OpenAI's Decisions API, as it was),
+openrouter (OpenRouter's chat completions, a forced tool call checked against the allowed labels, default model openai/gpt-6-luna, the decisions model's own),
+chat (any OpenAI-compatible base URL, a local llama.cpp or Ollama server needs no key; $PILOT_CHAT_BASE / --chat-base), mcp (an outside
+agent through MCP tools: `mcp_server.py --session <dir>` over stdio, with `run --driver mcp --mcp-dir <dir>`), playback (an
+ls-input-recording/1 file replayed through the same input path, with the map and place checked at the recording's marks: a replay that
+left the road stops and says where) and scripted (the rules policy and fixed input scripts: no model, the same inputs give the same
+steps). A scenario names the driver it wants and the fallbacks it accepts, in its TOML: `[driver] want = "decisions"`,
+`fallbacks = ["openrouter", "scripted"]` (also recording, setup, script, tolerance_m and the models); the command line says the same:
+`--driver decisions,openrouter,scripted`, `--fallbacks none`. With none named the wanted driver gets the rest of the default chain from
+itself on: decisions -> openrouter -> chat (only when a base URL is configured) -> scripted; a scenario that wants playback or scripted
+never falls back to a model unless it says so. A run that names no driver (and no $PILOT_DRIVER) plays on the rules as it always did, and
+--decider (rules, replay, openai-decisions) is unchanged. A driver that cannot be asked (no key, no endpoint, a cap reached) is benched
+before any request; one that fails (timeout, refused, bad answer, over budget, diverged) falls back to the next: every fallback is a
+`driver-fallback` row of the transcript (driver, failure kind, reason, next driver, cost), every decision row says which driver made it
+(`decider`, `driver`, `fallbacks`), and summary.json `drivers` has the chain, who was benched and why, the decisions and the cost by
+driver and the run-length account of who decided what. Every paid request, whichever driver, goes through the same caps (caps.json) and
+the same ledger. Every run writes recording.jsonl (hsap's input journal and a mark after each step; `pilot.py record <run>` makes one
+afterwards) that `--driver playback --recording <file>` replays. `pilot.py drivers [--ask NAME]` says which drivers can be asked now and
+why not, and with --ask makes one tiny request through a paid one.
+
+What leaves the machine: only with --decider openai-decisions or a driver that is a model (decisions, openrouter, and chat when its base
+URL is not on this machine) (and --planner): the request bodies in each run's transcript.jsonl (the state line as JSON, the goal and
+target names, what was tried, the candidate steps), sent to api.openai.com, openrouter.ai or the chat endpoint named. With the mcp driver
+the same observation goes to the agent that is connected, and its screenshot tool sends the game's picture to that agent. With --vision on
+(vision.py; default off) the game's own frame, downscaled, goes too, with one fixed instruction text and fixed questions and no path,
+log line, flag or coordinate; the pictures sent are kept in the run's vision/ folder. With lessons on (--lessons,
 lessons.py) a planner request also carries up to three short sentences about past blocks (a map name, rounded x and z, a target name, what stopped Link and
-what finally got him past), under 350 tokens. The key is never printed or stored (openai_api.py).
+what finally got him past), under 350 tokens. The keys (OpenAI: openai_api.py; OpenRouter:
+$PILOT_OPENROUTER_KEY_FILE, default ~/.config/ls-pilot/openrouter.key, mode 600; a chat endpoint: $PILOT_CHAT_KEY_FILE or
+$PILOT_CHAT_API_KEY, optional) are never printed or stored.
+
+The panel (hud_text.py, --hud on|off, default on; HSAP_HUD=0 in the environment turns it off): the pilot's decisions on the game's own
+screen. After each decision and each step result the pilot writes the panel text to <live>/hud.txt (GOAL and its target, the decision
+and its game time, the candidates with the chosen one and the model's percentages, STEP, LAST, MODEL, COST so far, STATE, VISION; at
+most 14 lines of 56 ASCII characters; no path, key, request body or position) and hsap, told --hud on, sends it to the game with the
+control bridge's `overlay` command (hsap.py: at most four a second, again every 25 s, cleared at the end; a game that cannot, or an
+older one, is noted once and the run goes on exactly as without). With --hud off nothing is written and hsap is told --hud off; either
+way the decisions, steps, timing and pictures are the same. The panel is in the game's periodic pictures (--shots) only when the
+game was started with RX_VK_SHOT_MENU=1, which hsap does for a game it starts with the panel on; the pictures the pilot's eyes
+(--vision) look at come from the bridge's `shot` and never carry it. check-route and probe.py run with the panel off. The panel
+is cleared (an empty file) before the pilot's `end` step; a panel that cannot be written is noted once in the transcript (kind `hud`).
 """
 import argparse
 import copy
@@ -91,6 +133,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -99,6 +142,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import deciders  # noqa: E402
+import drivers  # noqa: E402
+import hud_text  # noqa: E402
 import humanize  # noqa: E402
 import interact  # noqa: E402
 import openai_api  # noqa: E402
@@ -244,13 +289,24 @@ class Segment:
         self.path = Path(path)
         self.name, self.what, self.area = d['name'], d.get('what', ''), d['area']
         self.save, self.prefix = d.get('save'), d.get('prefix')
+        self.place = None
+        if 'place' in d:   # Link put at a place, an age and an hour before the first decision (placement.py, through hsdebug)
+            import placement
+            self.place = placement.check_spec(d['place'])
         self.boot = d.get('boot')
+        self.driver = drivers.parse_table(d.get('driver'), self.path.parent)   # who decides: {want, fallbacks, ...} (drivers/)
         self.humanize = d.get('humanize')   # this segment's own level (0..3) unless --humanize says; none: the run's default
         self.wall, self.budget = int(d.get('wall', 600)), float(d.get('budget_seconds', 400))
         self.max_decisions, self.save_after = int(d.get('max_decisions', 80)), bool(d.get('save_after', False))
+        self.straight = bool(d.get('straight', False))   # no offline planner: the way to a target is the straight run (the self-play's visits walk into the block earlier straight runs met)
         placed = None
         self.goals = []
-        for g in d['goal']:
+        self.scripted = bool(d.get('scripted'))   # a scripted segment (scenario.py): the prefix is the whole play, no goals, no decider
+        if not d.get('goal') and not self.scripted:
+            raise ValueError('a segment has goals (or is scripted = true with a prefix)')
+        if self.scripted and not self.prefix:
+            raise ValueError('a scripted segment has a prefix: the steps to play')
+        for g in d.get('goal', []):
             ts = []
             for t in g['targets']:
                 if 'actor' in t:
@@ -400,11 +456,11 @@ def edge_kind(r):
 
 
 def world_plan():
-    """RouteData's planner (playthrough/world/plan.py): plan(area, from_xz, to_xz, from_y=, to_y=, radius=, doors=). With $ROUTELIB_DIR set it is wrapped by the
+    """The world model's planner (worldmodel/plan.py, over the data folder $PILOT_WORLD or world/): plan(area, from_xz, to_xz, from_y=, to_y=, radius=, doors=). With $ROUTELIB_DIR set it is wrapped by the
     route library (routelib.planner): the known way first, the world model's plan beyond the farthest known point."""
     try:
         sys.path.insert(0, str(PLAYTHROUGH))
-        from world.plan import plan
+        from worldmodel.plan import plan
     except Exception:   # noqa: BLE001  without it the pilot goes in straight lines
         return None
     if os.environ.get('ROUTELIB_DIR'):
@@ -775,11 +831,11 @@ def make_candidates(area, goal, target, st, mem, plan=None, bad=None):
 
 class Pilot:
     def __init__(self, seg, decider, ch, run_dir, run_id, alive, planner=None, max_decisions=None, follows=None,
-                 follow_wait=900.0, recovery=None, human=None, bad=None, eyes=None, cross_map_wait=120.0, tactics=None, lessons=None):
+                 follow_wait=900.0, recovery=None, human=None, bad=None, eyes=None, cross_map_wait=120.0, tactics=None, lessons=None, hud=None):
         """recovery: a recover.Config (or True) turns the stuck recovery and the decision guard on, None leaves the pilot as it
         was; human: a humanize.Human (None: level 0, every line goes out as made); bad: the recover.BadPoints memory (None: none
         is read or written); eyes: vision.make()'s object (None: no pictures); tactics: {book, sensor, mode, source} (make_tactics: the recovery ladder takes the
-        library's order for the cause of a block and writes every attempt back; None: the old ladder); lessons: lessons.Lessons (None: the planner is asked as before)."""
+        library's order for the cause of a block and writes every attempt back; None: the old ladder); lessons: lessons.Lessons (None: the planner is asked as before); hud: a hud_text.Hud (None: no panel)."""
         self.seg, self.decider, self.ch, self.dir, self.run_id = seg, decider, ch, run_dir, run_id
         self.alive, self.planner = alive, planner
         self.goals = list(seg.goals)
@@ -787,7 +843,7 @@ class Pilot:
         self.tr = open(run_dir / 'transcript.jsonl', 'a')
         self.tried, self.mem, self.ti, self.decisions = [], {}, {g.name: 0 for g in self.goals}, []
         self.met_at, self.target_start, self.frags, self.plans = {}, {}, [], []
-        self.plan = world_plan()
+        self.plan = None if getattr(seg, 'straight', False) else world_plan()
         self.fails = {}   # failures per goal (a target left as failed, the goal given up): the planner every third
         self.follows = dict(follows or {})   # name -> a JSON file {x, y, z, map, w} the runner keeps with another player's place
         self.follow_wait, self.cross_map_wait = follow_wait, cross_map_wait
@@ -803,7 +859,10 @@ class Pilot:
         self.rstates = {}     # (goal, target) -> recover.RecState
         self.human, self.eyes = human or humanize.Human(0), eyes
         self.skipped = {}     # why a decision needed no question -> how many
+        self.who = []         # who made each decision, in order: a driver's name, `gate` or `recover` (the summary's per-driver account)
         self.stuck_plans, self.sign_seen, self.sign_value = 0, 0, 1.0
+        self.hud = hud if hud is not None else hud_text.Hud(None)   # what the pilot says on the game's own screen
+        self.hud.configure(total=self.max_decisions, eyes=eyes is not None, on_error=lambda text: self.log(kind='hud', error=text))
 
     def read_follow(self, target):
         """The other player's place from the runner's file (replaced whole by rename, so a read is never torn), or None."""
@@ -1030,7 +1089,16 @@ class Pilot:
             r = plan(area, (x, z), (target.x, target.z), from_y=pos[1], to_y=target.y, radius=target.radius, doors='stop')
             return list(r.get('steps') or []) if r.get('ok') else None
 
-        return {'doors': doors, 'event': st.get('event'), 'plan_from': plan_from,
+        climb_at = None
+        if world is not None and hasattr(world, 'climbables'):
+            try:
+                near = world.climbables(area, pos[0], pos[2], 4.0)
+                if near:
+                    o = min(near, key=lambda o: math.hypot(o[1] - pos[0], o[2] - pos[2]))
+                    climb_at = (o[1], o[2])
+            except Exception:   # noqa: BLE001  the world model is an aid
+                climb_at = None
+        return {'doors': doors, 'event': st.get('event'), 'plan_from': plan_from, 'climb_at': climb_at,
                 'alt_lines': next((list(c.lines) for c in cands if str(c.label).endswith('-on-way') and c.lines), None)}
 
     @staticmethod
@@ -1087,6 +1155,7 @@ class Pilot:
         except Exception as e:   # noqa: BLE001  the planner is optional: its failure is recorded, the run goes on
             self.log(kind='planner', why=why, error=f'{type(e).__name__}: {e}')
             return
+        self.hud.spend(info.get('cost_usd'))
         before = [(g.name, [t.name for t in g.targets]) for g in self.goals]
         order = [n for n in out.get('order', []) if any(g.name == n and g.status != 'met' for g in self.goals)]
         rest = [g for g in self.goals if g.name not in order]
@@ -1155,6 +1224,7 @@ class Pilot:
         except Exception as e:   # noqa: BLE001  a measurement, never a reason to stop
             self.log(kind='counterfactual', n=n, with_vision=choice.label, error=f'{type(e).__name__}: {e}')
             return
+        self.hud.spend(other.info.get('cost_usd'))
         self.log(kind='counterfactual', n=n, with_vision=choice.label, without_vision=other.label,
                  cost_usd=other.info.get('cost_usd'), asked='request' in other.info)
 
@@ -1253,7 +1323,7 @@ class Pilot:
             mem['last'] = target is goal.targets[-1]
             if any(g.kind == 'door' and g.status == 'met' for g in self.seg.goals):
                 mem.setdefault('doors', 'through')   # the segment's own door is open: plan through it
-            if self.plan is None:   # the planner's module may be mid-rewrite by its owner: tried again each time
+            if self.plan is None and not getattr(self.seg, 'straight', False):   # the planner's module may be mid-rewrite by its owner: tried again each time
                 self.plan = world_plan()
             if target.follow:
                 mem['cross_map'] = not self.refresh_follow(target, st)
@@ -1267,6 +1337,8 @@ class Pilot:
                                                  n=len(self.decisions) + 1)
                 if look is not None:
                     st = dict(st, vision=look.hint)
+                    if getattr(look, 'fresh', False) and getattr(look, 'row', None):
+                        self.hud.look(look.row)   # (a look reused from before costs nothing again)
             if interaction_goal(goal.kind, cond=goal.cond):   # what is near Link, from the offline world model
                 st = interact.with_near(self.seg.area, st)
             cands = make_candidates(self.seg.area, goal, target, st, mem, self.plan, bad=self.bad if rs is not None else None)
@@ -1279,14 +1351,24 @@ class Pilot:
             ctx = deciders.Context(st, goal, target, cands, mem, self.tried, self.seg)
             asked, who = False, self.decider.name
             t0 = time.perf_counter()
+            self.hud.deciding(len(self.decisions) + 1, goal, target, st.get('t'), self.decider.name, [c.label for c in cands],
+                              model=getattr(self.decider, 'model', None) if forced is None else None, recover=mem.get('recover'))
             if forced is None:
                 choice = self.decider.choose(ctx)
+                for ev in getattr(self.decider, 'drain_events', lambda: [])():   # a driver that failed and the chain went on
+                    self.log(n=len(self.decisions) + 1, **ev)
+                    print(f"  {len(self.decisions) + 1:3d} driver {ev['driver']} {ev['failure']}: {ev['reason'][:100]}"
+                          f"{' -> ' + ev['to'] if ev.get('to') else ' (no driver left)'}", flush=True)
+                who = getattr(choice, 'driver', None) or who
                 if getattr(self.decider, 'stop_reason', None):   # the model was stopped (cost, refusals, a cap): no more
                     self.log(kind='stop', why=self.decider.stop_reason, **choice.info)
                     outcome = f'stopped: {self.decider.stop_reason}'
                     print(f'  STOP: {self.decider.stop_reason}', flush=True)
                     break
                 cand = next((c for c in cands if c.label == choice.label), None)
+                if cand is None and getattr(choice, 'candidate', None):   # a step the driver brought: a script, a recorded chunk, an agent's own
+                    cand = Candidate(*choice.candidate)
+                    cands = cands + [cand]
                 if cand is None:   # a label not offered: rules, and their first offered step if theirs is not either
                     choice = deciders.Rules().choose(ctx)
                     cand = next((c for c in cands if c.label == choice.label), cands[0])
@@ -1298,6 +1380,7 @@ class Pilot:
             ms = (time.perf_counter() - t0) * 1000
             n = len(self.decisions) + 1
             self.decisions.append(choice.label)
+            self.who.append(who)
             if rs is not None:
                 self.rec.note_answer(rs, cand.label, cand.lines, st, cands, asked)
                 mem['recover'] = self.rec_dict(rs)
@@ -1307,6 +1390,7 @@ class Pilot:
                      candidates=[c.__dict__ for c in cands], choice=choice.label, predicates=choice.predicates,
                      plan=mem.get('plan') if self.plan else 'no planner',
                      decide_ms=round(ms, 1), **({'recover': mem['recover']} if rs is not None else {}), **choice.info)
+            self.hud.decided(cand.label, who, [c.label for c in cands], choice.info, recover=mem.get('recover'))
             if look is not None and getattr(look, 'fresh', False) and asked and goal.kind != 'duel':
                 self.counterfactual(n, st, goal, target, cands, mem, choice)
             if cand.label in ('next-target', 'give-up-goal'):
@@ -1320,6 +1404,7 @@ class Pilot:
                         self.keep_fragment(goal, target, mem)
                 h.append((cand.label, 'done', 0.0, None))
                 print(f'  {n:3d} {goal.name}/{target.name}: {cand.label} ({target.status})', flush=True)
+                self.hud.result('failed' if goal.status == 'failed' else target.status, goal, st.get('t'), mem.get('recover'))
                 if rs is not None and rs.blocked is not None:   # left while blocked: the block ends here
                     self.rec.close_episode(rs, st.get('t'), 'left', area=self.seg.area, run=self.run_id)
                     rs.blocked = None
@@ -1338,6 +1423,7 @@ class Pilot:
                 target.status = 'failed'
                 self.fails[goal.name] = self.fails.get(goal.name, 0) + 1
                 print(f'  {n:3d} {goal.name}/{target.name}: recover:replan (marked bad at {ev["at"]}, target left)', flush=True)
+                self.hud.result('marked-bad', goal, st.get('t'), mem.get('recover'))
                 self.maybe_plan(f'stuck at {ev["at"]} on {target.name}', force=True)
                 continue
             lines, notes = list(cand.lines), {}
@@ -1383,6 +1469,8 @@ class Pilot:
                     if ev['status'] == 'blocked' and cand.label in recover.NO_REPEAT:
                         mem.setdefault('blocked_lines', []).append((tuple(ev['at']), list(cand.lines)))
                 mem['recover'] = self.rec_dict(rs)
+            self.hud.result(result, goal, st.get('t'), mem.get('recover'))
+        self.hud.finish(outcome)
         return outcome
 
     def keep_fragment(self, goal, target, mem):
@@ -1512,6 +1600,17 @@ def make_lessons(args, learn=None):
     return lessons.make(getattr(args, 'lessons', None), book)
 
 
+def who_runs(who):
+    """The decisions' makers in order as runs: [[first n, last n, who], ...] (n counts from 1)."""
+    out = []
+    for i, w in enumerate(who, 1):
+        if out and out[-1][2] == w and out[-1][1] == i - 1:
+            out[-1][1] = i
+        else:
+            out.append([i, i, w])
+    return out
+
+
 def make_planner(client, args):
     """The planner (a model asked for route help) when it was asked for and can be had: a key (or a stand-in) and a caps file."""
     if not args.planner or not (args.api_base or openai_api.key_state() in ('file', 'env')):
@@ -1539,17 +1638,30 @@ def runner_env():
     env = dict(os.environ)
     for k in SLOT_VARS:
         env.pop(k, None)
-    env.pop('OPENAI_API_KEY', None)   # the game and the sandbox never see it
+    for k in ('OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'PILOT_CHAT_API_KEY'):   # the game and the sandbox never see a key
+        env.pop(k, None)
     return env
 
 
-def humanize_level(args, seg):
-    """The humanize level of a run: --humanize, else the segment's own `humanize`, else 2 (exploration) and 0 for a duel (its
-    moves are timed to the game: no delays, no curves)."""
+def panel_note(run_dir, text):
+    """One line for the live panel (live_panel.py reads <run folder>/panel-notes.txt): the placement's result and any fallback."""
+    try:
+        with open(run_dir / 'panel-notes.txt', 'a') as f:
+            f.write(time.strftime('%H:%M:%S ') + text.replace('\n', ' ')[:300] + '\n')
+    except OSError:
+        pass
+
+
+def humanize_level(args, seg, chain_default=None):
+    """The humanize level of a run: --humanize, else the segment's own `humanize`, else the chain's own (a scripted or replayed run:
+    0, so that it gives the same result every time), else 2 (exploration) and 0 for a duel (its moves are timed to the game: no
+    delays, no curves)."""
     if getattr(args, 'humanize', None) is not None:
         return args.humanize
     if seg.humanize is not None:
         return int(seg.humanize)
+    if chain_default is not None:
+        return chain_default
     return 0 if any(g.kind == 'duel' for g in seg.goals) else 2
 
 
@@ -1564,20 +1676,49 @@ def cmd_run(args):
         seg.set_matches(args.matches)   # (a duel series: every duel goal asks for that many matches; budgets scale with it)
     copy = Path(args.copy or COPY)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    run_id = args.tag or f'{seg.name}-{args.decider}-{stamp}'
+    if getattr(args, 'driver', None) and getattr(args, 'decider', None):
+        print('--driver and --decider both say who decides: use one (--decider is the older way: rules, replay, openai-decisions)',
+              file=sys.stderr)
+        return 2
+    try:
+        want, fallbacks, table = drivers.resolve(args, seg)
+    except ValueError as e:
+        print(f'driver: {e}', file=sys.stderr)
+        return 2
+    use_chain = want is not None and not getattr(args, 'decider', None)   # (an explicit --decider is the older way and wins over a scenario)
+    if not use_chain:
+        args.decider = getattr(args, 'decider', None) or 'rules'
+    run_id = args.tag or f'{seg.name}-{(want or "default") if use_chain else args.decider}-{stamp}'
     run_dir = HERE / 'runs' / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     allowance = (datetime.datetime.fromisoformat(args.allowance_since).timestamp(), args.allowance_usd) \
         if args.allowance_usd is not None else None
     client = openai_api.Client(run_id, seg.name, args.api_base, allowance)
-    decider, note = make_decider(args, client)
+    chain, settings = None, {'recovery': True, 'humanize': None}
+    if use_chain:
+        try:
+            chain = drivers.build_chain(want, fallbacks, args=args, table=table, client=client, run_id=run_id, segment=seg.name,
+                                        run_dir=run_dir, copy=copy)
+        except ValueError as e:
+            print(f'driver: {e}', file=sys.stderr)
+            shutil.rmtree(run_dir, ignore_errors=True)
+            return 2
+        decider, note = chain, None
+        availability = chain.probe()
+        settings = drivers.run_settings(chain)
+        for line in drivers.start(chain, run_id=run_id, segment=seg.name, copy=copy, briefing=deciders.DEVELOPER):
+            print('  ' + line, flush=True)
+        print('  driver chain: ' + ' -> '.join(n + ('' if ok else f' [{why}]') for n, (ok, why) in availability.items())
+              + (f'  ({"; ".join(chain.notes)})' if chain.notes else ''), flush=True)
+    else:
+        decider, note = make_decider(args, client)
     planner = make_planner(client, args)
-    level = humanize_level(args, seg)
+    level = humanize_level(args, seg, settings['humanize'])
     seed = getattr(args, 'humanize_seed', None)
     if seed is None:
         seed = int(hashlib.sha256(run_id.encode()).hexdigest()[:8], 16)
     human = humanize.Human(level, seed)
-    recovery = bool(getattr(args, 'recover', True)) and args.decider != 'replay'   # (a replay must meet exactly the questions it recorded)
+    recovery = bool(getattr(args, 'recover', True)) and args.decider != 'replay' and settings['recovery']   # (a replay must meet exactly the questions it recorded)
     bad = recover.BadPoints(getattr(args, 'bad_points', None)) if recovery and not getattr(args, 'no_bad_points', False) else None
     learn = make_tactics(args) if recovery else None
     less = make_lessons(args, learn)
@@ -1587,10 +1728,17 @@ def cmd_run(args):
     eyes = vision.make(args, client=client, run_dir=run_dir, run_id=run_id, copy=Path(args.copy or COPY), segment=seg)
     live = Path(args.attach) if args.attach else run_dir / 'live'
     ch = Channel(live)
+    hud_on = hsap.hud_wanted(getattr(args, 'hud', None))   # --hud on|off (default on); HSAP_HUD=0 turns it off
+    hud = hud_text.Hud(live / 'hud.txt' if hud_on else None)
+    if hud_on:
+        (live / 'hud.txt').unlink(missing_ok=True)   # (a panel an earlier pilot left in this folder is gone)
     ch.send(watch_lines(seg.watch))
-    if seg.prefix:   # a route sent before the live steps (hsap plays it once Link is in control)
-        ch.send([ln for ln in (seg.path.parent / seg.prefix).read_text().splitlines()
-                 if ln.split('#', 1)[0].strip() and not ln.startswith('expect')])
+    setup = drivers.setup_of(chain) if chain else {}
+    prefix_lines = [ln for ln in (seg.path.parent / seg.prefix).read_text().splitlines()
+                    if ln.split('#', 1)[0].strip() and not ln.startswith('expect')] if seg.prefix else []
+    prefix_lines += list(setup.get('steps') or [])   # a playback's own start (the scenario's `setup.steps`) follows the segment's route
+    if prefix_lines and not seg.place:   # a route sent before the live steps (hsap plays it once Link is in control); after the placement when there is one
+        ch.send(prefix_lines)
     runner = None
     follows = dict(item.split('=', 1) for item in args.follow)   # NAME=PATH: the files with the other players' places
     summary = {'run': run_id, 'segment': seg.name, 'decider': decider.name, 'decider_note': note,
@@ -1598,22 +1746,23 @@ def cmd_run(args):
                'load_start': open('/proc/loadavg').read().split()[:3], 'humanize': {'level': level, 'seed': seed},
                'recovery': recovery, 'vision': bool(eyes), 'tactics': {'mode': learn['mode'] if learn else 'off', 'dir': str(learn['book'].dir) if learn else None,
                                                                         'readonly': learn['book'].readonly if learn else None},
-               'lessons': bool(less)}
+               'lessons': bool(less), 'hud': hud_on}
     print(f'{run_id}: segment {seg.name}, decider {decider.name}{" (" + note + ")" if note else ""}, '
           f'planner {"on" if planner else "off"}, live {live}', flush=True)
     try:
         if not args.attach:
-            save = save_dir(args.save or seg.save, copy)
+            save = save_dir(args.save or seg.save or setup.get('save'), copy)
             cmd = [sys.executable, '-I', str(HSAP), str(copy), run_id, str(args.wall or seg.wall), '--live', str(live)]
             if save:
                 cmd += ['--save', str(save)]
-            if seg.boot:
-                cmd += ['--boot', seg.boot]
+            if seg.boot or setup.get('boot'):
+                cmd += ['--boot', seg.boot or setup['boot']]
             duel = next((t for g in seg.goals if g.kind == 'duel' for t in g.targets if t.follow in follows), None)
             if duel:   # the game side aims the duel steps at that file and puts his distance and bearing in the state lines
                 cmd += ['--opponent', follows[duel.follow], '--analog']
             if args.shots:
                 cmd += ['--shots', str(args.shots)]
+            cmd += ['--hud', 'on' if hud_on else 'off']
             summary['runner'] = cmd
             runner = subprocess.Popen(cmd, stdout=open(run_dir / 'runner.out', 'w'), stderr=subprocess.STDOUT,
                                       stdin=subprocess.DEVNULL, env=runner_env(), start_new_session=True)
@@ -1622,13 +1771,34 @@ def cmd_run(args):
         # the runner may wait long for one of the machine's null-run slots; its own wall starts when the game does
         gp = ch.wait(lambda e: e['ev'] == 'gameplay', 6 * 3600 if runner else float(args.wall or seg.wall), alive)
         summary['gameplay_after_s'] = round(time.time() - t0, 1) if gp else None
-        st = ch.wait(lambda e: e['ev'] == 'state' and e['why'] == 'wait', 600, alive) if gp else None
+        placed = None
+        if gp and seg.place:   # the game's own teleport, age and clock, then the first state the pilot decides from
+            import placement
+            st, placed = placement.start_placed(seg.place, ch, copy / 'runs' / run_id, alive)
+            summary['place'] = placed
+            print(f'  placement: {"ok" if placed.get("ok") else "FAILED"} in {placed.get("seconds")} s' + (f' ({placed.get("error")})' if placed.get('error') else ''), flush=True)
+            where = ', '.join(str(seg.place[k]) for k in ('to', 'age', 'hour') if seg.place.get(k) is not None)
+            panel_note(run_dir, f'placement ok: {where} ({placed.get("seconds")} s)' if placed.get('ok') else
+                       f'placement FAILED: {placed.get("error")} ({where})')
+            fallback = os.environ.get('PILOT_PLACE_FALLBACK')
+            if st is None and fallback:   # (the live watch: the save already starts near the place; play on from where the game stands)
+                panel_note(run_dir, 'fallback: ' + fallback)
+                summary['place_fallback'] = fallback
+                n = ch.send(['wait 0.5'])[0]
+                ch.wait(lambda e: e.get('ev') == 'step' and e.get('in') == n, 30, alive)
+                st = ch.wait(lambda e: e.get('ev') == 'state' and e.get('why') == 'wait', 30, alive)
+        else:
+            st = ch.wait(lambda e: e['ev'] == 'state' and e['why'] == 'wait', 600, alive) if gp else None
+        if st and prefix_lines and seg.place:   # the route after the placement (a failed placement sends nothing)
+            ch.send(prefix_lines)
         if not st:
-            outcome = 'no gameplay' if not gp else 'no first state line'
+            outcome = 'no gameplay' if not gp else ('placement failed' if placed is not None else 'no first state line')
             pilot = None
+        elif seg.scripted:   # no decisions: the prefix is the play; `end` queues behind it
+            outcome, pilot = 'scripted', None
         else:
             print(f'  gameplay after {summary["gameplay_after_s"]} s of wall time', flush=True)
-            kw = dict(follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=learn, lessons=less)
+            kw = dict(follows=follows, recovery=True if recovery else None, human=human, bad=bad, eyes=eyes, tactics=learn, lessons=less, hud=hud)
             pilot = sections.make_pilot(seg, decider, ch, run_dir, run_id, alive, None, args.max_decisions, copy=copy, client=client, args=args, **kw) \
                 if chapter else Pilot(seg, decider, ch, run_dir, run_id, alive, planner, args.max_decisions, **kw)
             t1 = time.time()
@@ -1642,9 +1812,12 @@ def cmd_run(args):
             while time.time() < hold_end and alive():
                 time.sleep(0.5)
             summary['end_hold_s'] = args.end_hold
+        hud.clear()   # (nothing to show any more; hsap clears the panel itself when it ends, too)
         ch.send(['end'])
-        done = ch.wait(lambda e: e['ev'] == 'done', 120, alive)
+        done = ch.wait(lambda e: e['ev'] == 'done', float(args.wall or seg.wall) if seg.scripted else 120, alive)
         summary.update({'outcome': outcome, 'done': done})
+        if chain:
+            chain.finish(outcome)
         if runner:
             try:
                 runner.wait(timeout=60)
@@ -1664,6 +1837,17 @@ def cmd_run(args):
         if source is not None and source.exists():
             shutil.copy(source, run_dir / target)
     summary['load_end'] = open('/proc/loadavg').read().split()[:3]
+    if chain:   # which driver made each decision, what failed first, what each cost
+        summary['drivers'] = dict(chain.report(), spec={'want': want, 'fallbacks': fallbacks, 'chain': [d.name for d in chain.drivers]},
+                                  per_decision=who_runs(pilot.who) if pilot else [])
+    try:   # the run as an ls-input-recording/1 file (hsap's input journal and a mark after each step): the playback driver replays it
+        from drivers import recording as recording_io
+        rec = recording_io.write_run(live, run_dir / 'recording.jsonl', segment=seg.name, area=seg.area, save=args.save or seg.save,
+                                     boot=seg.boot, tag=run_id, driver=decider.name)
+        summary['recording'] = {'file': str(rec[0]), 'inputs': rec[1], 'marks': rec[2]} if rec else None
+    except Exception as e:   # noqa: BLE001  a recording is a by-product, never a reason for the run to fail
+        summary['recording'] = None
+        print(f'recording: {type(e).__name__}: {e}', flush=True)
     if pilot:
         summary['decisions'] = len(pilot.decisions)
         summary['goals'] = {g.name: g.status for g in seg.goals}
@@ -1705,6 +1889,8 @@ def cmd_run(args):
     summary['ledger'] = openai_api.summary(run_id, standin=bool(args.api_base))
     if eyes:
         eyes.close()   # (writes its oddity summary)
+    if chain:
+        chain.close()
     (run_dir / 'summary.json').write_text(json.dumps(summary, indent=1))
     if os.environ.get('ROUTELIB_DIR'):   # the run leaves its tracks, stuck points and links in the route library
         try:
@@ -1719,8 +1905,12 @@ def cmd_run(args):
     except Exception as e:   # noqa: BLE001  the numbers are a report, never a reason for the run to fail
         print(f'metrics: {type(e).__name__}: {e}', flush=True)
     print(json.dumps({k: summary.get(k) for k in ('run', 'outcome', 'decisions', 'goals', 'decisions_per_minute',
-                                                  'route', 'ledger')}, indent=1), flush=True)
-    return 0 if summary.get('outcome') == 'solved' else 1
+                                                  'route', 'ledger', 'recording')}, indent=1), flush=True)
+    if chain:
+        d = summary['drivers']
+        print(json.dumps({'decisions_by_driver': d['decisions_by_driver'], 'fallbacks': len(d['fallbacks']),
+                          'cost_usd_by_driver': d['cost_usd_by_driver'], 'benched': d['benched']}), flush=True)
+    return 0 if summary.get('outcome') in ('solved', 'scripted') else 1
 
 
 def route_steps(route):
@@ -1747,7 +1937,7 @@ def cmd_check_route(args):
         live = HERE / 'runs' / 'checks' / tag
         ch = Channel(live)
         ch.send(watch_lines(seg.watch) + steps + ['end'])
-        cmd = [sys.executable, '-I', str(HSAP), str(copy), tag, str(args.wall or seg.wall), '--live', str(live)]
+        cmd = [sys.executable, '-I', str(HSAP), str(copy), tag, str(args.wall or seg.wall), '--live', str(live), '--hud', 'off']
         save = save_dir(seg.save, copy)
         if save:
             cmd += ['--save', str(save)]
@@ -1773,6 +1963,64 @@ def cmd_ledger(args):
     return 0
 
 
+def cmd_record(args):
+    """The ls-input-recording/1 file of a finished run (cmd_run writes it for every run; this is for a run that did not, or an
+    attached game's live folder): hsap's inputs.jsonl from control on, a mark after each step."""
+    from drivers import recording as recording_io
+    run = Path(args.run)
+    live = run / 'live' if (run / 'live').is_dir() else run
+    try:
+        info = json.loads((run / 'summary.json').read_text())
+    except (OSError, ValueError):
+        info = {}
+    out = Path(args.out) if args.out else run / 'recording.jsonl'
+    made = recording_io.write_run(live, out, segment=info.get('segment'), tag=run.name, driver=info.get('decider'))
+    if made is None:
+        print(f'no inputs.jsonl in {live}: that run left no input journal (hsap writes it)', file=sys.stderr)
+        return 2
+    print(json.dumps({'recording': str(made[0]), 'inputs': made[1], 'marks': made[2]}))
+    return 0
+
+
+def cmd_drivers(args):
+    """Which drivers can be asked now and why not (no request is made), as JSON. `--ask NAME` also makes ONE tiny request through that
+    driver with a made-up decision point (no game fact in it; about 0.0002 USD on a paid one, written to the ledger like any other)."""
+    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    run_id = f'drivers-smoke-{stamp}'
+    client = openai_api.Client(run_id, 'smoke', args.api_base)
+    try:
+        chain = drivers.build_chain('decisions', ['openrouter', 'chat', 'scripted'], args=args, table={}, client=client, run_id=run_id,
+                                    segment='smoke', run_dir=Path(tempfile.gettempdir()))
+    except ValueError as e:
+        print(f'driver: {e}', file=sys.stderr)
+        return 2
+    out = {'drivers': {}}
+    for d in chain.drivers:
+        av = d.available()
+        out['drivers'][d.name] = dict(d.describe(), available=av.ok, why_not=None if av.ok else av.reason,
+                                       why_not_kind=None if av.ok else av.kind)
+    out['mcp'] = 'always available: it waits for an agent (pilot.py run --driver mcp, then mcp_server.py --session <dir>)'
+    out['playback'] = 'needs --recording FILE (an ls-input-recording/1 file)'
+    code = 0
+    if args.ask:
+        d = chain.by_name.get(args.ask)
+        if d is None or args.ask == 'scripted':
+            print(f'--ask: one of {", ".join(n for n in chain.by_name if n != "scripted")}', file=sys.stderr)
+            return 2
+        g = Goal('smoke', Cond('X=1'), 'reach', [Target('spot', 5, 5)])
+        st = {'pos': [0, 0, 0], 'facing': 0}
+        ctx = deciders.Context(st, g, g.targets[0], make_candidates('Smoke_Area', g, g.targets[0], st, {}), {}, [])
+        try:
+            dec = d.decide(ctx)
+            out['ask'] = {'driver': d.name, 'step': dec.label, 'offered': [c.label for c in ctx.candidates], 'provenance': dec.provenance.as_dict()}
+        except drivers.base.DriverFailure as f:
+            out['ask'] = {'driver': d.name, 'failed': f.kind, 'reason': f.reason[:300], 'cost_usd': f.cost_usd}
+            code = 1
+        out['ledger'] = openai_api.summary(run_id)
+    print(json.dumps(out, indent=1, default=str))
+    return code
+
+
 def cmd_story(args):
     """A segment TOML whose goals come from the story data (story.py); written to --out or printed. story.py and the world
     model it reads are private (game data): a tree without them says so."""
@@ -1793,7 +2041,25 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('run')
     r.add_argument('segment')
-    r.add_argument('--decider', default='rules', choices=['rules', 'replay', 'openai-decisions'])
+    r.add_argument('--decider', default=None, choices=['rules', 'replay', 'openai-decisions'],
+                   help='the older way to say who decides (default rules when no --driver and no scenario `driver` names one)')
+    r.add_argument('--driver', metavar='WANT[,FALLBACK...]',
+                   help='who decides, behind one interface with fallbacks: decisions, openrouter, chat, mcp, playback, scripted, or '
+                        'default (decisions, openrouter, chat if configured, scripted); a scenario\'s `driver` table says the same')
+    r.add_argument('--fallbacks', metavar='A,B|none', help='the fallbacks the run accepts (default: the wanted driver\'s own tail of the '
+                   'default chain; playback and scripted have none)')
+    r.add_argument('--recording', metavar='FILE', help='playback: the ls-input-recording/1 file to replay')
+    r.add_argument('--playback-mode', dest='playback_mode', default=None, choices=('raw', 'push'),
+                   help='playback: raw (inputs scheduled in the game\'s frame clock, default) or push (one hsap step per recorded input)')
+    r.add_argument('--openrouter-model', default=None, help='the OpenRouter model (default openai/gpt-6-luna, or $PILOT_OPENROUTER_MODEL)')
+    r.add_argument('--chat-base', default=None, help='an OpenAI-compatible base URL for the chat driver, e.g. http://127.0.0.1:8080/v1 ($PILOT_CHAT_BASE)')
+    r.add_argument('--chat-model', default=None, help='the model name the chat endpoint wants ($PILOT_CHAT_MODEL; default `local`)')
+    r.add_argument('--chat-mode', default=None, choices=('tool', 'json_schema', 'json'), help='how the chat drivers ask for a structured answer')
+    r.add_argument('--mcp-dir', default=None, help='the session folder an MCP agent\'s server watches ($PILOT_MCP_DIR; default <run>/mcp)')
+    r.add_argument('--mcp-agent', dest='mcp_agent', default=None, choices=('loop', 'omp'),
+                   help='mcp driver: start an agent when the first decision point is open: loop (our own OpenRouter tool-calling agent) or omp (the omp coding agent)')
+    r.add_argument('--mcp-agent-model', dest='mcp_agent_model', default=None, help='the model of that agent (loop: an OpenRouter model; omp: omp\'s model pattern)')
+    r.add_argument('--mcp-wait', dest='mcp_wait_s', type=float, default=None, help='how long to wait for the agent at each decision (default 180 s)')
     r.add_argument('--replay')
     r.add_argument('--planner', action='store_true')
     r.add_argument('--copy')
@@ -1809,6 +2075,9 @@ def main():
                    help='keep the game running this long after the last decision, before the end step')
     r.add_argument('--shots', type=int, default=0, metavar='PRESENTS',
                    help='a picture every this many presents (hsap --shots; the game side defaults to 600)')
+    r.add_argument('--hud', choices=('on', 'off'), default=None,
+                   help='the pilot\'s decisions on the game\'s own screen (hud_text.py; hsap sends <live>/hud.txt with the bridge\'s `overlay` '
+                        'command): default on unless HSAP_HUD=0; off writes nothing and tells hsap --hud off')
     r.add_argument('--matches', type=int, metavar='N',
                    help='a duel series: N different matches must end (sets `matches` of every duel goal; budget_seconds and '
                         'max_decisions scale by N over the segment\'s own matches)')
@@ -1845,6 +2114,16 @@ def main():
     c.add_argument('--copy')
     c.add_argument('--tag')
     c.add_argument('--wall', type=int)
+    rc = sub.add_parser('record', help='write the ls-input-recording/1 file of a finished run (cmd_run does it for every run)')
+    rc.add_argument('run', help='a run folder (pilot/runs/<tag>) or an hsap live folder')
+    rc.add_argument('--out')
+    dr = sub.add_parser('drivers', help='which drivers can be asked now (no request); --ask NAME makes one tiny request through it')
+    dr.add_argument('--ask', metavar='NAME', help='decisions, openrouter or chat: one tiny request with a made-up decision point')
+    dr.add_argument('--openrouter-model', default=None)
+    dr.add_argument('--chat-base', default=None)
+    dr.add_argument('--chat-model', default=None)
+    dr.add_argument('--chat-mode', default=None, choices=('tool', 'json_schema', 'json'))
+    dr.add_argument('--api-base', help='a stand-in server for the Decisions API; the real key is never sent there')
     lg = sub.add_parser('ledger')
     lg.add_argument('--run')
     lg.add_argument('--since')
@@ -1857,7 +2136,8 @@ def main():
     s.add_argument('--name', required=True)
     s.add_argument('--out')
     a = ap.parse_args()
-    return {'run': cmd_run, 'check-route': cmd_check_route, 'ledger': cmd_ledger, 'story': cmd_story}[a.cmd](a)
+    return {'run': cmd_run, 'check-route': cmd_check_route, 'ledger': cmd_ledger, 'story': cmd_story, 'record': cmd_record,
+            'drivers': cmd_drivers}[a.cmd](a)
 
 
 if __name__ == '__main__':

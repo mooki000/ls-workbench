@@ -24,7 +24,7 @@ def check(cond, what):
 def main():
     os.environ.pop('ROUTELIB_DIR', None)
     base = pilot.world_plan()
-    check(base is None or base.__module__ == 'world.plan', 'without ROUTELIB_DIR the planner is the world model\'s own')
+    check(base is None or base.__module__ == 'worldmodel.plan', 'without ROUTELIB_DIR the planner is the world model\'s own')
     with tempfile.TemporaryDirectory(prefix='test-pilot-routelib-') as t:
         os.environ['ROUTELIB_DIR'] = str(Path(t) / 'lib')
         p = pilot.world_plan()
