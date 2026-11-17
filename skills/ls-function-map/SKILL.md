@@ -231,6 +231,10 @@ for pack in sorted(os.listdir(r.root / "Pack/Actor")):
 PY
 ```
 
+Reading what each member holds, over every pack, took 3 minutes:
+`reports/SharedWorld-files/scan_packs.py` (the harness's `world.game_files.load_mts` and `mts.sarc`) is the template; its
+output stays local.
+
 - **Flag names:** the game stores hashes only. `flagdata.py build` already hashes every identifier of the `AI`, `Logic`,
   `Event/EventFlow` and other files against the `GameDataList` (`docs/oot/flag-names.md`); `--names FILE` adds names you
   found. A one-off over other files: `f.murmur3(<string>)` of each string of the decoded file against the `Hash` of

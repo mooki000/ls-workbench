@@ -59,6 +59,9 @@ while another runs needs 12,288 MiB free, `admit_second` in `cpsession.py`; two 
 the fork key `run.late_gpu_free_mib`; the game-free headroom analysis predicts four fit only with `RX_VK_VRAM_MB=500`
 each and the guard `run.gpu_guard_free_mib`: `reports/CoopScale-files/headroom/headroom.py` is the method,
 `reports/CoopScale-files/coop-play4/` the fork, `reports/CoopScale.md` says whether a four-game run exists.
+Two games on one card with the default texture budget stalled together for 3 to 11 s and lost a test kit; the pair holds of
+the PvP nights ran with `RX_VK_VRAM_MB=5500` in both games' environment (`reports/PvpNight-files/night_queue.py` sets it
+unless the caller did) and had no unplanned stall.
 
 Game-free reader check:
 
@@ -115,11 +118,16 @@ counters of `/proc/pressure/*` (`skill://ls-hold-chain`, "The locks").
   its three- and seven-column forms are not GPU completion or scan-out.
 - `RX_VK_FRAMELOG` is the separate pixel stream, still swapchain-only. A still screenshot cannot establish absence
   of a continuous flash. Scan only a real retained capture with eligible consecutive frame triplets; inspect events.
+  Two measured windows with the log switched off between them may carry consecutive sequence numbers (one worker read
+  this in the code; not tested), and the scanner needs only consecutive numbers for a triplet: scan each window as its own
+  file, or cut at a timestamp gap, so the boundary is not taken for three frames.
 - `hs-run.sh` uses populated renderer CSV, labelled `headless-renderer` or `swapchain`; empty/missing renderer CSV
   falls back to three- or seven-column present traces, labelled `game`. Read the raw files for older summaries.
   `run_case.py` still requires renderer CSV for its scene window.
 - Do not compare windowed and headless instruments, mismatched settings, unmatched scene windows or unlike diagnostic
   populations. The adapter's windowed frame-number alignment does not make the clocks interchangeable.
+- The renderer's own timing lines in the game log (`writes collected`, the capture `scan`) have two decimals, a 0.01 ms
+  resolution: an A/B of a change under 0.01 ms needs the mean over many lines, not one line a run.
 - At a 60 fps cap, `over16.7` includes pacing jitter. The live regression statistics emit mean/median, p99, 1% low,
   maximum and `over16.7`/`over20`/`over25`; **not `over33`**. Derive any extra threshold from the same retained window
   and label the analysis, rather than quoting a nonexistent column. Mean uncapped frame time is steadier than 1% low;

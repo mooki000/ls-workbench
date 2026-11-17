@@ -67,6 +67,11 @@ Apply the workbench kernel-stop policy; missing journal coverage is unknown, nev
 - The CSV has no pressure-stall counters. For a stall that may come from the PC, read `/proc/pressure/{cpu,io,memory}`
   before and after the window: the `total=` counters (microseconds of stall since boot) date a machine stall to the
   second, beside the load average. They show the PC stalled, not that it caused the game's hitch.
+- A long log's memory growth (a player's report, a soak) is read from the game log, not this CSV. The `vi: N frames
+  presented (... over the last S s)` line is cumulative in N, and a sleeping PC prints one line that covers hours: count
+  the lines, never sum the S. The memory lines worth counting are `image blocks (render targets)`, `render target images`,
+  `finalized textures ... kept`, `imports`, `memory: working set` and `VRAM:`
+  (`reports/LeakHunt-files/field/analyze_logs.py` counts them).
 - `monotonic_ns` is OS monotonic time; `elapsed_s` starts at monitor start. Neither is UTC or renderer `time_s`.
   `frame,time_s` exactly match the same-run `frames.csv` index/origin, not shifted game-present identifiers.
   `game_frame`, shot/replay `renderer_present` and host `present.csv` remain distinct populations.

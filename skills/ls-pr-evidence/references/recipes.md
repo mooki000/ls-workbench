@@ -75,6 +75,30 @@ Edit the repository path in the two scripts first (`reports/DataReview-files/`),
   which follows the work folder's history; seen once for one pull request's pair, cause not established). Compare the
   lift inputs by hash, the HLE names, the profile and `image.bin` byte for byte, not only the key
   (`reports/tools/wincross/lift-identity.py` writes the identity record).
+- A pairwise trial merge against a pull request that itself conflicts with main: `git merge-tree` cannot separate your
+  hunks from theirs. Write a scratch commit (your resolved tree, parent main) with `git commit-tree` and merge that
+  against each head: it costs only objects.
+
+## Claims and issues
+
+- No issue, and the pull request can be opened the same day: no issue. Its first paragraph and its Problem section carry
+  what the issue would have said, and it names the review or pull request it follows.
+- No issue, and the work takes longer or needs a decision before it starts (a feature, a change of behaviour): open one.
+  Blank issues are switched off, so write the body with the form's own headings (`.forgejo/ISSUE_TEMPLATE/1-game-problem.yml`,
+  `2-install-problem.yml`, `3-save-problem.yml`, `4-idea.yml`, read from the default branch) and end it with the claim.
+  Small fixes of one kind share one issue. The maintainer may close it once the pull request exists. Main opens it with
+  `reports/tools/ls_post.py issue --title-file <t> --body-file <b>`.
+- Main announces claims and PRs through the project team-update tool, following its own `.claude/skills/team-updates/SKILL.md`,
+  not a browser-form copy. Rows go into `reports/POSTED.md` and `reports/PR-INDEX.md`. The browser is only for Discord reads
+  or a specifically named user-requested message.
+
+## Imported authors
+
+A whole unchanged cherry-pick keeps the same patch, author and message, committed by the user: do **not** append a
+provenance line to that unchanged message. When only selected files can be carried, every touched file must be
+byte-identical at the same path in the source tree, the author must match the source author, and the message must contain
+`Imported from <owner>/<repo>#<n> at <source-hash>` (at least its first eight hex digits). Keep the original assistance
+trailers; commit adaptations separately under our identity. Name the author and source in the handoff and body.
 
 ## Text and kits for testers on other machines
 
@@ -94,3 +118,10 @@ Edit the repository path in the two scripts first (`reports/DataReview-files/`),
   leading `@` reads a file.
 - ffmpeg's concat demuxer repeats or ignores the last image's duration (seen once: a clip one frame too long); a
   numbered constant-rate sequence (`-framerate N -i %06d.jpg`) gives the exact length.
+- A mockup for a design pull request (a menu page or a counter column that does not exist yet): write an SVG and render it
+  with `rsvg-convert -o <png> <svg>`. A menu's own colours come from a guide picture
+  (`docs/images/guide/settings-graphics.png`: page `#1E170F`, row `#392D1E`, row edge `#52422C`, gold `#EBA532`, text
+  `#F0E8D6`, top bar `#AE8959`). `reports/LinkLook-files/01-look-page.svg` and `reports/Work562-files/mockup.py` (a
+  generator, made-up numbers) are two; the caption says it is a mockup, not a screenshot.
+- A contact sheet to find the right frames among many: `magick montage -label '%t' <every nth frame> -tile 6x -geometry
+  426x240+2+2 sheet.jpg`.

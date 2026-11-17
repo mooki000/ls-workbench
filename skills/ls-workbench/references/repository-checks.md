@@ -10,7 +10,7 @@ The loop takes about one minute; the MCP suite below about four.
 ```sh
 set -e
 ulimit -S -c 0
-for test in tests/test_*.py harness/test_*.py play/test_*.py perf/test_*.py regress/test_*.py nightly/test_*.py skills/*/scripts/test_*.py; do
+for test in tests/test_*.py harness/test_*.py play/test_*.py play/*/test_*.py perf/test_*.py regress/test_*.py nightly/test_*.py skills/*/scripts/test_*.py; do
   if [ "$test" = nightly/test_rolling.py ]; then
     python3 -I -B "$test" --shared-dir "$PWD/regress"
   else
@@ -44,3 +44,8 @@ was synced on, and `workbench_status` then fails with `backend_failed` (`Package
 A registered session launch that fails with `refused_by_policy path_read` and no path means the operator's read roots
 lack the harness folder (`hs_names.py`) or the gate: that is configuration, not a game fault.
 Publication maps are in `publish.py`; repository-only tests are not automatically installed into the live harness.
+
+Publication traps (`publish-check.sh`): a folder named `world/` is private data to the repository (`.gitignore`, check 1):
+code for the world model lives in `worldmodel/`. A fake key such as `sk-test-...` in a test matches check 3 (a key or token):
+build it at run time. The private word list (check 6) has short words, so an ordinary variable name can contain one: when
+check 6 flags a line you did not expect, rename the variable.

@@ -22,7 +22,11 @@ Start from one of theirs, not from nothing.
    A failed build skips what depends on it; the later independent stages still run (the hold is paid for). If each
    result chooses the next run, say so in the hand-off: several short runs are several waits.
 3. Check the pieces without a lock first (`check-only.py`, `prepare.py --check` in the folders below): trees match the
-   head, scripts parse, files exist. A mismatch found after admission costs the whole wait.
+   head, scripts parse, files exist. A mismatch found after admission costs the whole wait. A game copy whose build has not
+   finished is refused, before you queue and again by the hold's first stage: its receipt says `done: false`, it has no
+   `built-from.txt`, `build.exit` is not 0 or the build log lacks `@@done` (a rehearsal was refused for a build that was
+   still queued). So is a head that moved while you prepared: the newest registered build is the one to hold
+   (`reports/CoopSoak-2-files/hold/launch.py` refuses a moved head).
 4. A diagnostic hold carries every candidate fix next to the question: one 100-second hold told which cause it was and
    tested the fix. You have one waiter per gate, so a second hold of yours queues only after the first is admitted or
    finished; fold both into one when you can.
@@ -32,14 +36,16 @@ Start from one of theirs, not from nothing.
 ## 2. The locks (a convention; no script enforces it)
 
 ```sh
-QUIET=/tmp/longshot-quiet-window.lock       # always exclusive, taken first: every hold, timing run, build or suite that needs
-                                            # the machine quiet
+QUIET=/tmp/longshot-quiet-window.lock       # always exclusive, taken first: every hold and timing run (a build or a suite
+                                            # only as a stage inside one: alone they take no quiet lock, see below)
 MEASURING=/tmp/longshot-measuring.lock      # exclusive when any game runs; -s (shared) for a CPU-only job or an ordinary run
 ```
 
 Also in use: `/tmp/hookshot-full-build.lock` (`flock` in front of `hs-build-slot`, no `-w`, for a full build) and
-`/tmp/longshot-whole-suite.lock` (the whole suite; `reports/tools/verify_heads.py`). One nested command, quiet lock
-outermost:
+`/tmp/longshot-whole-suite.lock` (the whole suite; `reports/tools/verify_heads.py`). A build on its own takes only the
+full-build lock and the build gate (`flock` on the full-build lock, then `hs-build-slot ...`: how the 1383 build ran, no
+quiet or measuring lock), inside `hs-idle.sh` when the task says heavy jobs go through it; a suite goes through
+`hs-idle.sh`. One nested command for a hold, quiet lock outermost:
 
 ```sh
 flock --verbose -w 43200 "$QUIET" flock --verbose -w 43200 [-s] "$MEASURING" CHAIN-OR-GATE-COMMAND
@@ -53,7 +59,10 @@ flock --verbose -w 43200 "$QUIET" flock --verbose -w 43200 [-s] "$MEASURING" CHA
   `hs-gpu-slot --whole timeout --signal=TERM --kill-after=25 N ...`. `--exclusive` on the gate is only for a timing hold
   Main authorised (`hs-gpu-slot --exclusive timeout --kill-after=5 475 ...`). `hs-run.sh` in wrapper mode cannot nest
   inside a gate you already hold.
-- A hold is at most 480 seconds unless the task text grants more (co-op proofs: 1,075 to 1,100). `-w 600` timed out
+- A hold is at most 480 seconds unless the task text grants more: co-op proofs 1,075 to 1,100, and on 17 Nov the ordinary
+  single-game holds of a performance campaign, 1,100. A longer hold runs each stage under its own `timeout` and checks the
+  time left before it starts (`regress.py`'s hold refuses more than 480; `reports/Work61-files/hold/hold61.py` runs several
+  `hs-run.sh` cases one after the other inside the two locks that way). `-w 600` timed out
   silently once; the lane's wait is `-w 43200` (12 hours) with `--verbose`, which logs the wait. 4 hours (`-w 14400`)
   ran out for waiters at priority 10 behind a 3-hour hold, and `coopplay.py run` still queues itself with two nested
   `-w 14400`: on a queue that may be long, queue your own waiter.
@@ -76,6 +85,8 @@ Starting points (read first: they carry their own run's names; the third is the 
   session, suites with `@HEAD@` templates; its last chain was never admitted, so treat it as untried end to end.
 - `reports/SaveSettingsOnly-files/hold/` (`queue_hold.py`, `hold_chain.py`, `make_plan.py`, `inner.sh`, `refresh.sh`):
   a plan of tracks with `min_left`, `timeout --kill-after=25` capped at 1,400 s.
+- `reports/Work61-files/hold/hold61.py`: several game cases of one hold, each its own `hs-run.sh` with its wall and a
+  time-left check, inside the quiet and measuring locks (an ordinary hold of up to 1,100 seconds).
 
 For a pair of games alone, `$H/coop-play/coopplay.py run CASE` is the whole hold (see `ls-scripted-play`).
 
@@ -128,6 +139,9 @@ tail /home/mooki/Code/hookshot-wt/reports/tools/gpu_priority.log
 - A stopped flock keeps its own `-w` timer: a waiter paused for the whole of its wait exits 1 unadmitted (one did,
   after 16,150 s); requeue it in a **new** folder. A stopped flock is not shown by `lslocks`. Never signal the
   dispatcher, and never SIGCONT a waiter: only the dispatcher continues one, and a waiter you continue runs out of order.
+  A waiter that takes the lock in the instant before the dispatcher stops it is continued as a **holder** within a few
+  seconds (fixed 17 Nov 11:43; before that the soak held the lane for 80 minutes after its run ended): a waiter in state
+  `T` is normal, a holder in `T` is not: tell Main.
 - Record the pid of your own waiter when you start it (`chain-waiter.json`). The `$!` of `setsid ... &` inside a subshell
   is a wrapper that exits at once; find the real waiter with `ps --ppid`. Never use `pgrep -f` or `pkill -f` on a lock
   command line: it matches itself and everybody's.

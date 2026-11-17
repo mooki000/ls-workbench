@@ -37,8 +37,10 @@ local run files, never in this public skill or a tracker.
 ## 1. Choose the transport, then reach controllable play
 
 1. Pin the binary and inspect its actual capabilities. The ordinary bridge supplies input, status, options, waits,
-   screenshots and quit. It does **not** imply a sampled position/camera stream. The selected base client's
-   `status.game` has event/loading/age but no sample frame or timestamp.
+   screenshots and quit. It does **not** imply a sampled position/camera stream. What `status.game` carries depends on the
+   head: forge main's `docs/control.md` lists `frame`, `t`, `pos`, `facing`, `camera`, `event`, `loading`, `age`, `life`,
+   `prompt` and `music` (one snapshot from Link's update, kept with its old `frame` when no update came for 250 ms: title,
+   pause, load; no time of day), an older base only event/loading/age. Read the head's `docs/control.md`.
 2. For steering, select `playthrough/hsap.py` only with the control-bridge `oot` sampled-state extension. It requests
    `subscribe` with `events:["oot"]`, `every:6`, selected `flags`, and `changes:true`. An unsupported subscription
    fails; there is no silent fallback. For older `HOS_OOT_STATE_FILE` builds, choose `hsap_file.py` explicitly.
@@ -46,6 +48,13 @@ local run files, never in this public skill or a tracker.
 3. Choose a copied save and `--boot continue`, or a fresh profile and `--boot newgame`. `--boot none` sends no boot
    presses; it still waits for fresh quiet state. Put the owned route's steps in `$LIVE/steps.txt` **before launch**;
    no steps means the driver keeps waiting. Use an `end` step to request completion.
+   From a save, `--boot continue` presses A every 2 s (`newgame`: 0.75 s) from the title until Link has been calm for 3 s (a
+   map, `event` 0, `loading` 0), and a press acts on whatever is in reach: a save made next to a person or a prompt starts
+   the talk that holds Link (240 s lost, the game never reached play), one next to a door opens it and its event moves Link
+   (43 m before the first picture), and in a place whose event never ends (a menu that stays open) the calm test never
+   passes. Start such a scenario 8 to 10 m from anything that reacts, and read `state.jsonl`'s first row (the saved place),
+   not the first row after control; or take the variant that presses A only until the first state with a map:
+   `--boot load` in `reports/BossPoints-files/hold2/code/playthrough/hsap.py`.
 4. Launch through the driver, which invokes `hs-run.sh` and its GPU gate. Use a bounded wall time with shutdown
    reserve; do not wrap it in another gate:
 
@@ -55,13 +64,17 @@ local run files, never in this public skill or a tracker.
 
    For a fresh profile omit `--save` and use `--boot newgame`. For the legacy tap replace only `hsap.py` with
    `hsap_file.py`. The boot timer begins when the game log appears, not while queued.
+   `--env NAME=VALUE` (repeatable) gives the game `hsap.py` starts a switch after `hs-run.sh`'s own options (not with
+   `--game-sock`).
 5. Require `gameplay` and fresh `state` events in `$LIVE/out.jsonl`; require the intended map and known-false event
    and loading state. The bridge driver's `$LIVE/state.jsonl` is a client journal, not a second game-output channel.
    Read `game.frame` for sample age, not the reply envelope's current frame. Retained state through a pause/load is
    not evidence that control returned. Inspect a capture before claiming the intended scene.
 6. A run's wall time counts from the game's start, boot included: 15 to 20 s on a quiet card, 50 to 113 s under load
    (the shader programs are prepared on every start; `gameplay_after_s` in `summary.json` says what it cost). A plan's
-   `wall` is the boot plus the route plus 60 s; a pilot segment's `budget_seconds` counts from control. A copy that never
+   `wall` is the boot plus the route plus 60 s; a pilot segment's `budget_seconds` is game time counted from the game's
+   clock 0 (a duel goal: from its first decision), not from control, so a pilot attached to a game that has already run
+   longer than its budget ends at once. A copy that never
    booted needs a preparation start first (`skill://ls-workbench`, "Cold copies and warm caches"). The solo driver's
    `wall + 60 s` for a pilot is too short beside another game (`SOLO_HOLD_EXTRA=150` worked).
 
@@ -107,7 +120,14 @@ Only a configured workbench session adapter supplies the workbench's gates, isol
 - A co-op side folder holds `auto/` (periodic pictures named by present count), `shots/` (named ones) and `state.jsonl`
   (rows with `w` and a nested `game`). The sampled state has no actors: what is in front of Link comes from the prompt and
   an offline world model. A teleport or an age change reloads the map as an event, so arrival is control in the other map,
-  and the first seconds after a map change are a fade from black: look at pictures after control, not at arrival.
+  and the first seconds after a map change are a fade from black: look at pictures after control, not at arrival. The
+  bridge teleport to Hyrule Field arrives in the tunnel at the Lost Woods exit, not in the open field: a picture of the
+  open field needs a walk out of it.
+- A text box can hold Link from the load (`event` 1, no hearts in the HUD; a boss door shows one for as long as nothing
+  presses A): `advance` (A every 1.2 s until it closes) is the first step of such a run, `interact` ends `timeout` while a
+  text is still open (`advance` after it), and a picture before any input (`shot` as the first step) is what shows it.
+  `enter` presses A at the first prompt on the way, a Talk prompt included (a market gate has a person in front of it): a
+  scenario that wants a load zone and no conversation walks (`walk`, or `through` points).
 
 ## 2. Send an input, observe the effect, capture and stop
 
@@ -135,7 +155,8 @@ and a socket path over the 107-byte `sun_path` limit: make a short `mkdir -m 700
   RDOWN RLEFT RRIGHT`. Combine with `+`; the default hold is 200 ms. Unknown file tokens can be ignored silently.
 - `HOS_INPUT_FRAME_CLOCK=1` advances file time at 60 game presents per second. `HOS_INPUT_EXCLUSIVE=1` suppresses
   physical input while the script is active and for its grace period, not forever. `HOS_INPUT_LIVE` reads complete
-  lines every 30 ms; each line's times start when read. Keep that file outside the disposable run directory.
+  lines every 30 ms and keeps only the last `!cheat` of a poll (space such commands 40 ms apart: `LIVE_GAP` in `hsdebug.py`);
+  each line's times start when read. Keep that file outside the disposable run directory.
 - `hsap.py` routes ordinary `press`, `stick`, `push` and `raw` through the bridge. Its `--analog`/`HSAP_ANALOG=1`
   selects exact steering angles. `hsap_file.py` needs an extra `LX=`/`LY=` file-parser extension for analog pushes;
   the bridge's analog support does not imply that extension.
@@ -147,8 +168,9 @@ and a socket path over the 107-byte `sun_path` limit: make a short `mkdir -m 700
   debug tool (the pilot repository's `hsdebug`, or the MCP's `session_flag_set` where registered): it runs on a
   disposable profile that opted in to `memory: rw`, and its edit reaches a save only after the game's own autosave (a
   few seconds after a map change, "Saving..." in the picture): wait for that before copying a save.
-  Named settings are not action-row selection. On builds with `RX_VK_MENU_SCRIPT`, `ROW:<internal name>` selects
-  a visible row in the current tab, not a translated label or another tab. Verify the actual menu before confirming.
+  Named settings are not action-row selection. A head whose `vk_menu.cpp` has the `ROW:<internal name>` token selects a
+  visible row in the current tab by it, not a translated label or another tab: the co-op line's heads have it, forge
+  main's has none (`git grep -n 'ROW:' gpu/vk/vk_menu.cpp` on your head); elsewhere the script is keys only. Verify the actual menu before confirming.
   The token list is in the game repository's `docs/development.md` (`INS UP DOWN LEFT RIGHT ESC ENTER TABL TABR`, the
   pad's face buttons `PADS PADE PADW PADN`, `TYPE:<text>`, and while a field has the keyboard `HOME END BACK DEL`):
   there is no D-pad token (`TABL`/`TABR` are the tab keys). The script is a fixed timetable of one token a frame with no
@@ -165,6 +187,9 @@ and a socket path over the 107-byte `sun_path` limit: make a short `mkdir -m 700
   script sends Right, Right, Enter (seen once; the keys are timed, so a script that skips the question never reaches the tools).
 - Use bridge `shot` for Vulkan captures. The drivers' legacy `shot` step writes `!shots` to live input; in the selected
   base that command targets the WebGPU renderer, not Vulkan. Do not treat its step completion as a captured PNG.
+  The renderer queues bridge shots (one worker had 16 waiting, each `after` a game frame): n requests at once give n
+  consecutive pictures, so a flicker watch can run from a watcher on its own socket. A shot costs a frame in the frame
+  log: take pictures outside measured windows.
   Bridge shots omit Insert-menu and co-op labels/chat; the automatic menu-overlay stream (`RX_VK_SHOT_MENU=1`) is
   offscreen-only and does show them, so a windowless proof of a label or chat line uses that stream.
   An explicitly authorized real-window presentation/overlay test needs an OS capture of the exact game window.
@@ -199,7 +224,9 @@ There is no workbench MCP log-line wait tool yet; `run_logs` is a bounded read, 
 A successful stop requires observed game/owner/wrapper exit. If graceful quit times out, the owned game remains running;
 only an authorized disposable run may use `stop --terminate`. Save draining is unsupported: never call it a clean save.
 For `hsap`, let its owned runner stop the game before ending the gate. A summary game exit 143 can mean its deliberate
-SIGTERM; shell exit 0 or an `end` event alone does not prove the route's assertions passed.
+SIGTERM; shell exit 0 or an `end` event alone does not prove the route's assertions passed. A solo run's exit 137 is not
+always a crash: it is also the wrapper's SIGKILL after its grace for a game whose `end` step was not done first; read the
+driver's `end` event and `kernel.txt` (an out-of-memory line) before calling it one.
 
 ## 3. Run a local route and prove a saved checkpoint
 
@@ -219,11 +246,14 @@ The probe invokes `hsap.py`, so it needs the socket sampler too. An older file-t
 Use `setsid --wait nohup` for a saved managed launcher and retain its child receipt (not for children that test
 signals: see `ls-workbench`); one chain queues at a time.
 
-The pilot's package, goals and benchmark are described in `play/README.md` (live: `$H/playthrough/`). A tag is never
+The pilot's package, goals and benchmark are described in `play/README.md` (live: `$H/playthrough/`), and so is its learning
+side (the tactics and lessons libraries, the route library, `selfplay.py`, `--tactics`, `--lessons`). A tag is never
 reused (`pilot.py` refuses an existing `pilot/runs/<tag>`), the launch asks the GPU gate itself (a hold must not hold
 it), and a pilot hold's folder name needs `Pilot` for the dispatcher (`skill://ls-hold-chain`). A pilot can take pictures
 through a second short connection to the control socket (`shot` with an absolute path; the socket path is in the run's
-`env-used.txt`), with the run's `--shots` folder as the fallback. Run every script a hold starts once under `python3 -I`
+`env-used.txt`, which the run writes after its gate admission: a chain that polls for it waits for a file newer than its own
+launch, or uses a new tag, since a reused tag can show the previous run's dead socket path until the wrapper has cleared
+the folder), with the run's `--shots` folder as the fallback. Run every script a hold starts once under `python3 -I`
 and keep the hold's frozen code beside `hs_names.py` (`skill://ls-hold-chain`).
 A pilot's vision questions go only after control began and never on a black picture: the model answers `blank`, `void`,
 `missing textures` and `corrupt` yes on every load screen and fade (25 of 25 looks), and "a text box" gets cinematic
@@ -257,6 +287,12 @@ subtitles unless the question says they are not one.
   a position.
 - A save made with `--start` for a new place is untried until a game has booted from it: an entry's README does not say
   (`selfplay.py` warns for a proven save without a proof note). Prove it (`--lib-proven`) before building a route on it.
+- A generated save is only as good as its flags. Before a hold, check it game-free: (1) the lock flags of the door the
+  scenario needs, (2) any person or enemy placed within 10 m whose presence flag your quest step does not clear, (3) the
+  equipment (`--give` does not equip: set the equip flag with `--flag`), (4) the order of the quest steps that arrival
+  events set themselves, read from the event flows. Each of the four failed a save once; a scan of the placements near the
+  start point takes seconds (`reports/BossPoints-files/load.py`). A door that still does not react is read from the flow
+  that opens it: start the player on the side the story arrives from.
 
 ## Co-op pairs: the runner
 
@@ -269,12 +305,15 @@ into `DIR/runner-src` **when it queues**: an edit made while it waits does not r
 moment does. The longest hold is 1,100 seconds and a case that needs more than 480 says `run.hold_seconds`. A case's
 menu steps (`chat`, `accept`, `leave`, `rules`, `menu`) are built from the tokens in `cpcase.py`'s `menu_tokens`.
 `[run] pose_trace = true` writes the dense pose trace that the jank detector and `cppose.analyse_pair` read (Linux sides
-only). `hsap.py` takes no extra `NAME=VALUE` switches, only the inherited environment: a game's setting goes in the
+only). `hsap.py --env NAME=VALUE` (repeatable) gives its own game a switch; in a co-op case a game's setting goes in the
 case's `[room.settings]` or `[sides.X.settings]`. The runner's own tests are plain `python3 -I -B test_*.py` files in
 `$H/coop-play`, not part of `tests/run_all.py`.
 A menu step is compiled into the game's start-up script and can only use `from = "start"` (a game's menu clock runs
 from its own start). The game refuses every `HOS_COOP*` variable that comes from `HOS_ENV_FILE`: they must be in the
-process environment, which matters to any harness that restarts the game. The runner's `--help` also describes the
+process environment, which matters to any harness that restarts the game: a restart keeps the first exec's environment, so a
+per-exec `RX_VK_MENU_SCRIPT` goes into the run's `env-file.txt`, which `hs-run.sh` overwrites with a placeholder just before
+the gate. Such a harness builds the run folder by hand and calls `hs-run.sh --inner` inside the gate
+(`reports/Carry68f-files/hold/fold68-tooling/duel/duel_session.py` does). The runner's `--help` also describes the
 `<win>-install` and `<win>-probe` commands for a Windows side (`skill://ls-windows-laptop`).
 
 Case facts read from `cpcase.py`, `cpexpect.py`, `cpdetect.py` and `cpsession.py`:
@@ -303,6 +342,9 @@ Case facts read from `cpcase.py`, `cpexpect.py`, `cpdetect.py` and `cpsession.py
   before both logs say `room accepted`.
 - `cppose.analyse_pair` and `cppose.replay` compare two sessions on the same messages, which removes the noise between
   sessions; `[run] pose_trace` feeds them.
+- A deliberate stall of one game is `SIGSTOP`, then `SIGCONT` of its own game pid for a few seconds (6 s in the hold that
+  used it): it reproduces the log signature of the two-game stall (`reports/PvpNight-files/src/night_session.py`,
+  `run_stall_stage`).
 - To test a co-op path-layer change (STUN, hole punching, relay fallback, a LAN relay behind a router forward) without the
   internet, the Windows laptop or the LAN relay, use the NAT lab: `skill://ls-nat-lab`.
 

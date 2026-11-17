@@ -30,6 +30,11 @@ The host cutover is deferred: ten live sources remain `~/.agents/skills/hookshot
 without renaming live folders. Keep every explicit live
 command path below. This brief does not authorize or claim any sync, relocation, installation or cutover.
 
+`skill://<name>` knows only the skills registered when the main session started: `ls-hold-chain`, `ls-restack`,
+`ls-windows-laptop`, `ls-relay-lan`, `ls-nat-lab` and `ls-pr-tagging` answer `Unknown skill` although they exist. Read
+`~/.agents/skills/<name>/SKILL.md` instead (the form the first sentence above uses); every `skill://` mention of one of
+them in this brief and in the skills means that file.
+
 Every report has a **Skills and tools** section: names read (and when: before starting, or only after getting stuck)
 and tools actually used. Every report ends with **Skill notes**: one line for each thing in a skill that was wrong,
 missing or misleading (quote the line), and for each procedure you had to invent that no skill covers; or `Skill
@@ -137,9 +142,10 @@ Their rules bind you as they bind everyone. The ones that matter most:
   finished (on 2026-11-11 one stopped 13 builds and 7 runs of the checks for 17 minutes before it had even started).
   Tell the main session what needs a quiet machine and for how long; it opens a window and says when to ask. Counts
   (escapes, waits, left-out draws, memory, pictures, pass or fail) never need `--exclusive`: only frame times do.
-  A longer hold (the co-op runner's longest is 1,100 seconds; co-op proof lanes were given 1,075 to 1,100) exists only when
-  your task text grants it for that hold. The quiet-window and measuring locks queue holds behind each other for hours:
-  `skill://ls-hold-chain`.
+  A longer hold (the co-op runner's longest is 1,100 seconds; co-op proof lanes were given 1,075 to 1,100, a performance
+  campaign's ordinary holds 1,100) exists only when your task text grants it for that hold, and each stage in it checks the
+  time left before it starts. The quiet-window and measuring locks queue holds behind each other for hours:
+  `~/.agents/skills/ls-hold-chain/SKILL.md`.
 - **Two run slots since 2026-11-11 08:05** (while the user is away; the switch is
   `/home/mooki/Games/.hookshot-harness/gpu-slots`, `2` or `1`, the main session's to change). A second game may now
   start beside yours once yours has run for a minute, if the machine has 30 GB of memory available and the card has

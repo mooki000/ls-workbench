@@ -65,6 +65,9 @@ the main session changes.
    is not ours and is not in `SKILL_MAP`, so it cannot be tested by editing and re-running a worker or published, and
    replacing the link with a copy cuts it off from the package's updates. Put the pointer a worker needs into one of our
    skills and leave the link.
+   A **new** skill is not in the session catalogue: the list is read once, when the main session starts, so `skill://<name>`
+   answers `Unknown skill` for it until then. Test it by the brief's table row and the file's path (put the row in first and
+   say so in the task); "found it from the catalogue" cannot pass for a skill made today.
 7. **Publish.** Add a new skill to `SKILL_MAP` in the workbench's `publish.py` (an identity entry when its live name
    already starts with `ls-`). `sync-from-live.sh` copies **live → repository**, not the reverse: reconcile both
    versions first so an older live skill cannot overwrite a newer repository edit. It stages the proposed tree and
@@ -76,9 +79,11 @@ the main session changes.
    A new skill also needs its row in the README's table and the counts in `tests/test_publication.py`; any literal that
    contains an old project name (a lock path, an options file, a repository URL) needs a counted record in
    `docs/names-kept.md` or `name_policy.py` fails. Write the old names in prose as LS or HS and keep them to code spans.
-   Run `publish-check.sh`, the skill check above and the workbench-repository tests in `ls-workbench`, read the diff,
-   then commit and push. A branch that renames a skill or removes a name is rewritten (rebase or squash) **before** its
-   first push: pushed history keeps the old name.
+   Do all of it in your own worktree of the workbench repository (`git worktree add <path> -b <branch> origin/main` from
+   the checkout; `git worktree list` shows who has what): the checkout is shared with the main session and every skills
+   worker, and its branch is never switched. Run `publish-check.sh`, the skill check above and the workbench-repository
+   tests in `ls-workbench`, read the diff, then commit and push. A branch that renames a skill or removes a name is
+   rewritten (rebase or squash) **before** its first push: pushed history keeps the old name.
    Nothing game-derived goes into a skill: commands, paths and procedure only. A machine's SSH alias, key or address
    goes in no skill or brief: write `<win>` or `<relay>`. The alias is written once, in the section "Hosts" of
    `$H/LOCAL-NOTES.md` (`H` as in `skill://ls-workbench`; never published), and `.private/publish-forbidden.txt` lists
@@ -100,6 +105,8 @@ the main session changes.
      Main applies the reviewed patch built as above, with `reports/SkillsNight-files/apply-live-morning.sh`, which
      keeps a backup of the live skills first. Until then do not run `sync-from-live.sh`: it copies live over the
      repository.
+     Keep any other backup of live skills outside the skills tree too (`~/.agents/skill-backups/<date>-<who>`): a `*.prev-*`
+     file beside a skill is a stray (seven were moved out on 17 Nov).
    - **The brief** exists twice, live `reports/AGENT-BRIEF.md` and published `docs/agent-brief.md`, and both get edits.
      Merge them; where the same passage differs, the live text wins (workers read it and the next sync copies it),
      except the LS/HS name wording, which the published copy keeps. An edit made only in the published copy is lost at

@@ -40,9 +40,13 @@ Recurring conflicts and their tools (all under `/home/mooki/Code/hookshot-wt/rep
   attempt; it exits 3 on a block it has no record for.
 - A branch that changes an input a generator turns into committed files (`tests/coop_vectors.txt`): leave no stale
   output; run each generator's `--check` (for example `tests/fuzz/make_seeds.py --check`) after every such pick.
-- Option ids, enum numbers and API numbers that two lines both claim: renumber in the commit that owns them. A test
-  that pins the version with `==` (`tests/test_audio_output_devices.py` pins `MKWVK_API_VERSION`) fails after a bump from
-  either side: move the pin in the commit that owns the bump.
+- Option ids, enum numbers and API numbers that two lines both claim: renumber in the commit that owns them, and take the
+  next number no open pull request claims (list the ones that touch `gpu/vk/vk_api.h` through the forge's `pulls/N/files`:
+  on 17 Nov two claimed 30, others 31 and 33, and two agents bumped to 29 at once). Guards that compare the version
+  (`host->version >= N`) move with it. A test that pins the version with `==` (`tests/test_audio_output_devices.py` pins
+  `MKWVK_API_VERSION`) fails after a bump from either side: move the pin in the commit that owns the bump, and scan
+  **every carried commit** for such pins (`version !=`, `==`) before the replay: a new commit at the end is not enough
+  when the old line was green at each commit (`reports/Carry68g-files/rebase/replay.py`'s `TRANSFORMS` shows the way).
 - `Replay18*-files/resolve-version-check.py`'s assertion ends in `or True`; do not rely on it.
 
 ## 3. Prove it
@@ -67,6 +71,9 @@ head and the new head are the files that differ between the old base and the new
    focused selection (`tests/run_all.py ... --strict --exact`; confirm `--exact` on the head's `run_all.py --help`).
    A textual merge hides the ones that cut functions or tables out of source by their text (`ls-workbench`, section 3):
    fix them in a test-only commit or a `--fixup` plus autosquash.
+   A main that adds a table or a source-text rule over names (the switch table, the MSVC old names) fails the line's new
+   names: run `tests/test_switch_table.py` and `tests/test_msvc_oldnames.py` first. A test that fixes which files may name
+   a variable (`tests/test_coop_invite.py`) fails a fix that mentions it in a comment.
    Start it, and every long run, from a throwaway worktree of the head (`git worktree add --detach <path> <head>`), not
    the carry's own folder: other workers read and reset that folder while the run goes.
 2. A branch that "passes in its worktree" can depend on files `.gitignore` hides (a `*.bin` corpus did): run
@@ -87,5 +94,6 @@ head and the new head are the files that differ between the old base and the new
 
 Its scripts bake the head, base and main hashes and read them at admission. Finish and prove the carry first (queue waits
 were 5,000 to 6,900 seconds). If main moves while it waits: requeue, or keep the slot with the `EDITING` marker and a
-retarget (`skill://ls-hold-chain`). After admission a stale head is only covered by focused checks: carry only the new
+retarget (`skill://ls-hold-chain`). A new waiter is stopped (`T`) at once by the dispatcher, not by Main or a guard of
+yours: never continue it. After admission a stale head is only covered by focused checks: carry only the new
 commits and say what was not rerun. Rebase note form and `--imported`: `skill://ls-pr-evidence`.

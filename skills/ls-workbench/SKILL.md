@@ -31,6 +31,11 @@ A separately authorized remote Windows test does not lift this local restriction
 Reports name the skills read, tools used, pinned sources, checks exercised and work not tested.
 Before deep analysis of a crash, and when choosing places for a bug hunt or tour: `skill://ls-field-data` (leads, not proof).
 
+`skill://<name>` resolves only the skills registered when the main session started. `ls-hold-chain`, `ls-restack`,
+`ls-windows-laptop`, `ls-relay-lan`, `ls-nat-lab` and `ls-pr-tagging` answer `Unknown skill` there although their files
+exist: read them by path (`$HOME/.agents/skills/<name>/SKILL.md`). Every `skill://` mention of one of them below and in the
+other skills means that file.
+
 ## Set up the paths and rules
 
 ```sh
@@ -54,7 +59,7 @@ source "$H/hs-names.sh"
 
 | Thing | Location |
 |---|---|
-| Legacy clone and GitHub remote names | `$HOME/Code/Hookshot`; `origin`, `fork` |
+| Legacy clone and its remotes | `$HOME/Code/Hookshot`; `forge` (the project's main, fetch only), `forge-fork` (the user's fork); `origin` and `fork` are the GitHub names, dead |
 | Worktrees and reports | `$W/<name>`; `$W/reports` |
 | Read-only dump | `$W/work/dump` (`exefs/`, `romfs/`) |
 | Pinned Python and headers | `$P`; `$CPM` |
@@ -66,15 +71,22 @@ source "$H/hs-names.sh"
   in `$H/playthrough/NOTES.md`; dump/save provenance belongs in `$H/LOCAL-NOTES.md`, not a public skill.
 - Never touch the user's `Games/Ocarina*`, `Games/Hookshot`, `Games/Longshot`, `Downloads`, `.config`, global git
   configuration or system packages. Never run or test in a player folder. No code from the other port's repository.
+- Read a file of current main without a worktree: `git -C <the game clone> show forge/main:<path>` (as new as the last
+  fetch of that remote). A checkout that other sessions share (the workbench checkout the brief names, the game clone) is
+  never switched, branched or reset by you: work in your own `git worktree add` of it.
 - Every Vulkan/GL device uses its device gate. Builds use the build gate. Full builds also take
   `/tmp/hookshot-full-build.lock` and set the checkout-confirmed `HOOKSHOT_LIFT_JOBS=8` or `LONGSHOT_LIFT_JOBS=8`
   through `hs_build_env` below. Do not edit build inputs while a build runs.
+- A build is CPU work: it takes **no quiet lock** (that one is for timing holds, `$HOME/.agents/skills/ls-hold-chain/SKILL.md`,
+  section 2) and queues on the full-build lock and the build gate only. When the task says heavy jobs go through the idle
+  gate, `$H/hs-idle.sh` goes in front of the build too: it takes a test slot and the idle class, no build slot, and the
+  lock and gate inside it stay as written (a 32 s incremental build ran that way).
 - Before a gated command, unset the test/bypass variables below. Never set them to skip admission.
 - One waiter of yours per gate. A GPU hold is at most 480 seconds **including shutdown**; use 450 seconds or less
   for an ordinary game so the wrapper's 20-second kill reserve fits. The GPU gate itself does not enforce the limit.
   A longer hold exists only when the task text grants it for that hold (co-op proof lanes were given 1,075 to 1,100
-  seconds): every case inside it then needs its own `timeout` and a check of the time left before it starts, and
-  several cases in one hold is an adapter change, not a switch.
+  seconds, a performance campaign's ordinary holds 1,100): every case inside it then needs its own `timeout` and a check
+  of the time left before it starts, and several cases in one hold is an adapter change, not a switch.
 - Only an explicitly authorized timing hold uses `--exclusive`; only a named short run uses `--priority`.
   `--whole` reserves both GPU slots, not CPU quiet. Read `ls-perf-compare` before any speed claim.
 - Workers never push or post. Use the brief's author and trailers. Leave SDK licence acceptance to the user.
@@ -142,8 +154,8 @@ unset HSGATE_SLOT_DIR HSGATE_INTEL_SLOT_DIR HSGATE_SLOT_TEST HSGATE_SLOT_NODESKT
    (`tests/test_crash_record.py`) times out under it. Reset it for the children:
    `setsid --wait nohup env --default-signal=HUP bash "$SCRIPT"` (or drop `nohup`: `setsid` already detaches the launcher
    from the terminal).
-   Never put a job in the tool shell as `( ... "$t" ... ) &` inside a `for` loop (the variable is expanded late and
-   every job ran the last file); write the job as a script that takes its argument and start it with `xargs` or
+   Never put a job in the tool shell as `( ... "$t" ... ) &` or `setsid nohup ... "$t" &` inside a `for` loop (the variable
+   is expanded late and every job ran the last file); write the job as a script that takes its argument and start it with `xargs` or
    `/bin/sh script arg`. Never wait with `pgrep -f` or stop with `pkill -f` on a lock command line: it matches its own
    command line and every worker's; record the pid of your own waiter at launch and wait on that.
 
@@ -177,6 +189,10 @@ stale objects) or rebuild far more than predicted: `references/details.md`, "Don
 Copy the donor game into the new `$COPY`, remove only that copy's inherited `runs/`, and deploy both
 `work/fast/sa/build/$HS_EXE` and `$HS_RENDERER`. Changes to shipped assets, including pipeline-state lists, need
 candidate-owned generation/deployment or a full build. Record the source of both binaries and their checksums.
+
+When `nx2/` is unchanged apart from a patch the donor already has, reflink **both** the donor's `work/build` and its
+finished copy (not its `runs/`) into new owned folders and run the same gated build: about 30 s
+(`reports/PerfAtlas-files/build/build.sh`). A plan that shows a long lift is not this case.
 
 `RX_RELEASE=1` and the donor's actual PGO identity matter. Different profile paths can rebuild hot objects; no profile
 is not a comparable build. `-Wno-everything`/`-w` in the build flags mean an empty warning log proves nothing.
@@ -243,7 +259,8 @@ PANEL_W=400 PANEL_H=225 "$HOME/.agents/skills/hookshot-pr-evidence/scripts/panel
   "$OUT/panel.jpg" 2 "$FRAME_A" "1. Before" "$FRAME_B" "2. After"
 ```
 
-Choose a new output path distinct from all inputs. Inspect the resulting image before citing it. Stills do not prove
+Choose a new output path distinct from all inputs. Inspect the resulting image before citing it: a caption wider than its
+cell is cut (about 28 characters per 600 px at the default font). Stills do not prove
 that a continuous flash is absent. `RX_VK_FRAMELOG` is the separate pixel stream and remains swapchain-only.
 
 `RX_VK_FRAME_LOG` is timing CSV. Headless renderer intervals are CPU intervals after the offscreen copy submission,
@@ -297,6 +314,7 @@ cannot set). Never run `ulimit -c 0` in a persistent tool shell: it lowers that 
 Apply any assignment-specific outer quiet/shared measuring locks as well (`skill://ls-hold-chain`); record admission wait
 separately from child time.
 When a worker is assigned only focused checks, hand those receipts to the integration owner; do not call them a full suite.
+For one change use `--changed` or `--exact` below: at load 50 to 90 the idle gate alone held a whole-suite run for 8 minutes.
 `tests/run_all.py --list` prints what would run, `--exact <path> ...` runs just those checks with their `RUN_ALL_ARGS`
 and `--changed [BASE]` those that read changed files (heads that have them say so in `--help`). A baseline taken without
 `--strict` skipped checks a strict run runs: compare strict with strict. A `RUN_ALL_SKIP` that names an OS other than
@@ -312,16 +330,22 @@ Run the whole suite before handing over a head, not only the tests a change seem
 (`tests/test_env_on.py` for on/off switches, `tests/test_menu_i18n.py` for translated menu texts,
 `tests/test_readme_menu_rows.py`) catch changes far from their files. On a PC whose .NET cannot restore
 `Microsoft.AspNetCore.App.Ref` offline, `tests/test_updater_asset_digest.py` fails with `NU1100` on plain main too:
-report it as inherited and local after confirming the same failure on the base commit; do not hunt for an SDK.
+report it as inherited and local after confirming the same failure on the base commit; do not hunt for an SDK. An
+offline `dotnet build` of the launcher's core tests needs `DisableTransitiveFrameworkReferenceDownloads=true` in the
+environment for the same reason.
+
+**Main's own suite is not green on this PC and its failure count is not a constant** (37 to 41 failing names on 17 Nov,
+not the "7 inherited failures" an older assignment quotes). Quote no count: run main and your head through the same runner
+in the same layout, compare the failing **names** and say which runner and layout: `references/details.md`, "Main's suite
+and the failing names".
 
 Fixtures that cut text out of source files, host-file build lists, the fuzz test and the `python3 -I` import path:
 `references/details.md`, "Fixtures". Run text-cutting fixtures on the new head **before** any queued hold.
 
-Changed C/C++ fixtures also need the Windows-target syntax check. `$H/hs-win-fixture-check.sh` has no
-`hs_win_fixture_check.py` beside it; use the working pair in the pr-evidence skill's scripts folder, with `--sysroot`
-(a fresh HOME hides the default discovery). The sysroot is the folder that holds `include/windows.h`: the
-`llvm-mingw-<date>-ucrt-x86_64` folder itself, but `<root>/x86_64-w64-mingw32` for an `-ubuntu-` build; a root without
-that file stops the checker at its usage line. Pass `--output` an absolute, new folder.
+Changed C/C++ fixtures also need the Windows-target syntax check, with the pair in the pr-evidence skill's scripts folder
+(`$H/hs-win-fixture-check.sh` has none beside it) and `--sysroot` (a fresh HOME hides the default discovery): the folder
+that holds `include/windows.h` (the `llvm-mingw-<date>-ucrt-x86_64` folder itself, `<root>/x86_64-w64-mingw32` for an
+`-ubuntu-` build). Pass `--output` an absolute, new folder.
 
 ```sh
 E="$HOME/.agents/skills/hookshot-pr-evidence/scripts"
@@ -330,9 +354,9 @@ HOME="$TEST_HOME" HS_PYTHON="$P" RX_CPM="$CPM" "$H/hs-idle.sh" "$E/hs-win-fixtur
   --sysroot "$SYSROOT" --output "$OUT/win-fixtures"
 ```
 
-Reading the result (`BASE` is a git revision; exit 2 `INCOMPLETE` is normal for a Linux-only driver; a driver that needs
-a failing compile is unjudged; a failure main has too is inherited): `references/details.md`, "The Windows-target
-syntax check".
+Reading the result (`BASE` is a git revision; exit 2 `INCOMPLETE` is normal for a Linux-only driver; `PASS: 0 captured
+translation units` means no driver was selected; a failure main has too is inherited): `references/details.md`, "The
+Windows-target syntax check".
 
 Keep unsupported discovery visible. Syntax success is not Windows execution. Read `ls-pr-evidence` for the
 pre-push checker, imported-author rules, CI comparison and drafts. The main session alone syncs live skills into the public

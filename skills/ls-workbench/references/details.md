@@ -33,6 +33,18 @@ Reference material for `SKILL.md`; read the part the task touches.
   file to change). Run every path a hold will use once game-free first (`--copy`): a chain whose build path was only ever
   `--check`ed failed in its first second. The lift key of a not-yet-built checkout needs the donor's unpacked exefs given
   by hand. `--check-only` leaves a 3.8 GB reflinked `work/check-*` folder (seen once): delete it.
+- Whether two trees share a lift, in seconds and from no receipt: `python3 reports/LinuxTests-files/liftsrc.py <worktree>`
+  prints the hashes of the lift's input files and of the HLE set (the reader `lift-identity.py` uses); diff two outputs.
+  The key alone can mislead (`skill://ls-pr-evidence`, `references/recipes.md`, "Rebases and carries"). `lift-identity.py`
+  also needs a receipt that carries `lift_process_environment`; a build made without one (the 1383 build's) cannot be
+  proven with it.
+- A renderer or host-only probe in minutes: `reports/LinuxTests2-files/hold/build_native.py LABEL WORKTREE EXPECTED_COMMIT`
+  compiles the two products natively over a donor's finished work folder (the lift inputs are checked equal by hash first;
+  no lift, no game; through the build gate); `reports/LeakHunt-files/build_native.py` is the copy with `--allow-dirty`.
+  For a main whose `nx2/` equals a finished build's, `make_game.py --update` over a reflinked copy of that work folder and
+  copy gave a whole copy in 260 s with a 1 s lift (`reports/Work562-files/build562.py`).
+- A rebuild was killed by the system once (`lift.py`, signal 9, memory) while other agents were busy: `free -g` before
+  `build.py`, then retry.
 
 ## Fixtures: text-cutting tests, build lists, fuzzing
 
@@ -50,6 +62,11 @@ Reference material for `SKILL.md`; read the part the task touches.
 - A header that gains an include breaks every fixture that stands in for the included one, and a new function called
   from a host file that a fixture compiles needs a stand-in in that fixture (a host input file compiled by the
   background-input fixture): the feature's own tests show neither, the whole suite does.
+- A diagnostic counter put inside a function that a fixture cuts out of the source by its text (`texture_frame`,
+  `destroy_later`) breaks that fixture (`test_readback_timeout_reuse`: `rt_retired` undeclared): a diagnostic commit is not
+  a pull request. No game-free test links all the host sources together: a duplicate global between two host files passed
+  every fixture and failed only in the real link, so build the head (an incremental build through the gate) before handing
+  it over.
 - A branch's version gate keeps a two-session fixture from delivering anything until its test gate is switched off (the
   pattern is in `tests/coop_events_test.c`). A text-cutting fixture needs a marker per new function; a missing marker
   fails only at the fixture's compile.
@@ -64,6 +81,25 @@ Reference material for `SKILL.md`; read the part the task touches.
 - `hs-nocore.sh` sets exactly one byte as the core limit; a fixture that lowers its children's soft limit to 0 undoes it
   (the kernel then calls systemd-coredump: a journal entry and a notification). End a deliberate abort with `_exit(1)`
   or `prctl(PR_SET_DUMPABLE, 0)`, or `setrlimit` to 1, never 0 (`tests/test_coop_fuzz.py` does).
+
+## Main's suite and the failing names
+
+Whole strict runs of main showed 37 to 41 failing names on this PC on 17 Nov (compile errors in old fixtures,
+`test_import_reach`, `test_linux_update`, ...). The count moves with the head, the load, the runner and where the tree
+sits; the "7 inherited failures" an older assignment quotes were the subset that reads one renderer file. Quote no count
+and compare none:
+
+- Run main's commit **and your head** through the same runner in the same layout: `reports/tools/verify_heads.py OUT.json
+  main=<sha> head=<sha>` (the test gate, a global suite lock, `--jobs 6`, its worktrees under `/tmp`). `LSV_PY=<python with
+  FastMCP>` for a head whose tests import the MCP adapter: `--strict` fails a missing package.
+- Compare the failing **names**. A name only the head fails is yours; a name both fail is inherited and is said by name.
+- The layout changes the names. A worktree in the work area has the `Tooling` clone beside it; a `/tmp` worktree or a bare
+  `git archive` copy has not, and `test_docs`, `test_bug_report*`, `test_cpu_report`, `test_crash_groups` and
+  `test_hardware_report` then fail or pass differently (3 to 5 more names; a bare copy also needs `git init && git add -A`
+  for `git ls-files`). Say which runner and layout each list came from.
+
+At load 50 to 90 the idle gate alone held a whole-suite run for 8 minutes: for one change or a diagnostic use `--changed` or
+`--exact`, and keep the whole suite for the head you hand over.
 
 ## The Windows-target syntax check
 
@@ -84,6 +120,12 @@ the checkout, leaves an untracked folder and fails a hold's clean-tree assertion
 runs on Windows includes: a new host file with only a Linux fixture is `UNJUDGED`; run a by-hand syntax check with the
 llvm-mingw compiler and say so.
 
+A fixture that includes the project's environment header after `<stdlib.h>` still needs `_CRT_SECURE_NO_WARNINGS` before its
+**first** include: the header defines it only for its own include. The checker stops at the first command of a driver that
+is not a compile (the run of its first fixture: `NOT TESTED: ... stopped before`), so a second fixture that the driver
+compiles after running the first is never reached; its `COVERAGE:` line says so. Compile such a one by hand with the
+llvm-mingw compiler and say so.
+
 ## Cold copies and warm caches
 
 - A copy made by `nx2/make_game.py` has no `cache/` and no `.nv-cache/`: its first start prepares every shipped
@@ -100,9 +142,15 @@ llvm-mingw compiler and say so.
   `gpu/vk/vk_state.h`: `git diff --stat <warm head> <new head> -- <those paths>` is empty (or the two checkouts print the
   same `stamp`). Settle it before choosing the base commit: every warm copy built before a translator change prepares
   cold. A copy rebuilt from new sources over an old cache keeps the old stamp, so it is not a warm base.
+  A warm copy is valid when it was built from the same translator sources **and** its `cache/*_vk_pipelines.stamp` is newer
+  than the last commit that touched them (`git log -1 -- gpu/vk/eden gpu/vk/sirit gpu/vk/compat gpu/vk/vk_shader.cpp
+  gpu/vk/vk_bank.cpp gpu/vk/vk_state.h` against the stamp file's mtime): on 17 Nov every copy built before the latest such
+  commit prepared cold, so a new copy always did (4 to 7 minutes).
 - Check a clone is warm before queueing: the stamp, the `.built` marker and the prepared-list files `cmp`-equal to the
   warm copy's, the same names and sizes in `cache/`. A game that starts from a copied save is playable in about 30
   seconds from a warm copy, not the 80 a pilot's frame counter suggests.
+- A cache also fills per area: a clone warmed in one dungeon compiled a second dungeon's pipelines at its first visit
+  (the `vk: start-up` counter again; seen once): a scenario in a new area budgets that.
 
 ## Clones, disk and the end of a topic
 
@@ -124,6 +172,9 @@ llvm-mingw compiler and say so.
 - `cp -a --reflink=always` across filesystems fails per file with one line each (`/tmp` is tmpfs): keep dry-run copies
   on the same disk and pipe such a command to `| tail`. `cp -al` of read-only assets (an unpacked romfs, 186,000 files)
   took 2 seconds where the reflink copy took 4 to 8 minutes under load; a 45 GB reflink clone took 40 to 60 seconds.
+- A hold's pictures are most of its disk: three holds of 100 to 200 s wrote 6.7 GB of 1280x720 PNGs with `--shots 120`
+  (`hsap.py --shots <presents>`: one picture every N presents, default 600); 240 is enough for a panel. Make the panels
+  (the analyzer's `--panels` needs the shots) before pruning, then delete the rest.
 
 ## Tool-shell hazards
 

@@ -34,14 +34,13 @@ curl -s "$API/pulls/<n>"   # $API and $FORGE: references/forge.md; head and desc
 ```
 
 `$H/hs-win-fixture-check.sh` has no `hs_win_fixture_check.py` beside it, so the installed copy fails: use the pair in `$E`
-(the workbench checkout's copy is the same pair). The sysroot is the folder that holds `include/windows.h` (else the
-checker stops at its usage line): under `deps/llvm-mingw/` of the work area, the `llvm-mingw-<date>-ucrt-x86_64` folder
-itself, but `<llvm-mingw>/x86_64-w64-mingw32` for the `-ubuntu-<n>-x86_64` build, whose root has no `include/windows.h`. A fresh
-HOME hides the default discovery: pass `--sysroot` (or `LS_MINGW=<that folder>`); `clang` and `clang++` come from `PATH`.
-`<base-revision>` is a git revision, not a path; the commit's parent as base selects only the drivers that commit
-changes (seconds). Run it **after** committing: the report names `HEAD`. `--output` must be a new directory: give an absolute
-path outside the checkout. Exit 2 (`INCOMPLETE`) is normal for a Linux-only driver and when only a Python test driver
-changed (`0 captured translation units, 1 unjudged driver`): `ls-workbench`, section 3.
+(the workbench checkout's copy is the same pair). `--sysroot` is the folder that holds `include/windows.h` (else the
+checker stops at its usage line; `ls-workbench`, section 3, says which folder); a fresh HOME hides the default discovery
+(`LS_MINGW=<that folder>` does it too); `clang` and `clang++` come from `PATH`. `<base-revision>` is a git revision, not a
+path; the commit's parent selects only the drivers that commit changes (seconds). Run it **after** committing: the report
+names `HEAD`. `--output` must be a new directory, absolute, outside the checkout. Exit 2 (`INCOMPLETE`) is normal for a
+Linux-only driver and when only a Python test driver changed; a change that selects no driver at all prints `PASS: 0
+captured translation units, 0 unjudged`: nothing was judged (`ls-workbench`, section 3).
 
 Read every comment and review page, including inline discussions: `curl -s "$API/issues/<n>/comments"`,
 `$API/pulls/<n>/reviews` and `$API/issues/<n>/timeline?limit=50&page=K` (the comments endpoint is not paged:
@@ -78,9 +77,35 @@ the **current live body** of every pull request you touch: one whose forge statu
 it now, and a kept "When it applies" box that is not ticked fails it. Make `<diff>` with
 `git diff --src-prefix=a/ --dst-prefix=b/`: this PC's git prints `i/` and `w/` prefixes that neither the checker nor
 `git apply` reads. Its less obvious rules, a revert's form and the length limit: `references/forge.md`.
-What each part of the template must carry (the sections of the older form):
+
+**The first lines (the user's standing rule, 17 Nov 2026):** the status line, then `## TL;DR` and `## Breakdown`, before the
+template's own first heading. TL;DR: two to four plain sentences a player could follow: what was wrong or missing, what
+this changes, the headline result and how it was checked. Breakdown: short bullets: who it helps, what was wrong, what
+changes, what does not change, how it was checked, what is still open, risk. An example:
+`https://git.magicbean.dev/MagicBeanDev/Longshot/pulls/1462`. The verbose "How it was tested" rule below still applies.
+The checker enforces the rest: the status line is the description's first line (type, `Risk:` exactly `low`, `medium` or
+`high`, `Tested on:`, `Needs:`), and every `Must be tested` item reads `<where>: <how>, expecting <what>` and says who runs
+it (`references/forge.md`).
+
+What each part of the template must carry (the sections of the older form; the template's own headings are `Why`, `How to
+reproduce` for a fix, `What changed`, `Measurements`, `Testing` with `Tested:`, `Not tested:` and `Must be tested:`,
+`Risks` with `Compatibility`, `Issues` and `Checklist`):
 
 ```
+**Type:** fix · **Risk:** low · **Tested on:** <OS, GPU> · **Needs:** <OS, GPU, or none>        (the description's first line)
+
+## TL;DR
+<two to four plain sentences: what was wrong or missing, what this changes, the headline result, how it was checked>
+
+## Breakdown
+- Who it helps: <...>
+- What was wrong: <...>
+- What changes: <...>
+- What does not change: <...>
+- How it was checked: <...>
+- What is still open: <...>
+- Risk: <...>
+
 **What this is for:** who gains what, in a player's or developer's words, with the issue (#N). **What is measured:**
 hardware, system, base commit, and each kind of check in half a sentence, with the headline numbers. **Not measured:**
 platforms, GPUs, areas, input devices, lengths that were not tried.
@@ -118,6 +143,8 @@ It also compiles against llvm-mingw's libc++, while the project's Windows runner
 clang++ against Microsoft's standard library: a C++ library call can pass here and fail there (seen with
 `std::chrono::file_clock::to_sys`, which Microsoft's library does not have). For changed C++ fixtures only a real
 Windows run settles it; run the whole suite locally first, not just the tests the change seems to touch.
+**Must be tested:** `None`, or one bullet per thing that must be checked before merge and that you cannot check yourself:
+`<where: OS, GPU, driver or a Test Farm tag>: <the steps>, expecting <the result>`, and who runs it (`@Beanstalk ...` or by hand).
 ## Risks               what could break and for whom; what a wrong guess here would look like
 ## Overlaps            other open pull requests in the same lines, from the forge's `pulls/N/files` and a trial merge, hunks read
 ## Questions for you   only real decisions for the maintainers, numbered
@@ -172,19 +199,10 @@ The worklist score remains severity S0 8, S1 5, S2 3, S3 1, times reach, times c
    `git branch -a`): a public sweep alone missed two topic reports.
 2. An existing issue: comment the claim there (what, why, hardware, the branch or pull request); the pull request
    says `Fixes #N` (or `Refs #N` when it is one part) and names the tracking issue.
-3. No issue, and the pull request can be opened the same day (a fix that is already proven, a reviewer's follow-up):
-   no issue. The pull request is the record; its first paragraph and its Problem section carry what the issue would
-   have said, and it names the review or pull request it follows.
-4. No issue, and the work takes longer or needs a decision before it starts (a feature, a change of behaviour):
-   open one. Blank issues are switched off, so write the body with the form's own headings
-   (`.forgejo/ISSUE_TEMPLATE/1-game-problem.yml`, `2-install-problem.yml`, `3-save-problem.yml`, `4-idea.yml`, read from
-   the default branch) and end it with the claim.
-   Small fixes of one kind share one issue. The maintainer may close it once the pull request exists.
-   Main opens it with `reports/tools/ls_post.py issue --title-file <t> --body-file <b>`.
-
-5. Main announces claims and PRs through the project team-update tool, following its own
-   `.claude/skills/team-updates/SKILL.md`, not a browser-form copy. Rows go into `reports/POSTED.md` and
-   `reports/PR-INDEX.md`. The browser is only for Discord reads or a specifically named user-requested message.
+3. No issue, and the pull request can be opened the same day (a fix that is already proven, a reviewer's follow-up): no
+   issue; the pull request is the record. Work that takes longer or needs a decision first: open an issue with the form's
+   own headings, ending with the claim. Main opens it and announces claims and PRs: `references/recipes.md`, "Claims and
+   issues".
 
 A claim is dropped out loud when the work stops.
 Designing from another project's behaviour, or text and kits for testers on other machines: `references/recipes.md`.
@@ -206,7 +224,9 @@ Designing from another project's behaviour, or text and kits for testers on othe
 4. **Checks**: a game-free test that fails without the change, and the whole of `tests/run_all.py` (many tests cut
    functions out of the source by their text: a renamed function breaks one; fix it in the same change). A branch that
    "passes in its worktree" can depend on files `.gitignore` hides (a `*.bin` corpus did): `git status --ignored`, and
-   run the focused tests in a clean `git archive` checkout.
+   run the focused tests in a clean `git archive` checkout. A worktree in the work area has the `Tooling` clone beside
+   it and a `/tmp` copy has not, so `test_docs`, `test_bug_report*`, `test_cpu_report`, `test_crash_groups` and
+   `test_hardware_report` judge differently there; the archive needs `git init && git add -A` for `git ls-files`.
 5. **In the game**, on this machine: what was done and seen. A measured run is one new file
    `docs/tested/YYYY-MM-DD-topic-tester-run.md` (`docs/tested/README.md`; checked by
    `tests/test_tested_configurations.py`): the table in `docs/tested-configurations.md` is frozen. Main's #2712 rule:
@@ -225,9 +245,10 @@ Designing from another project's behaviour, or text and kits for testers on othe
    `_CRT_SECURE_NO_WARNINGS` defined before CRT includes or in compiler flags where required. A syntax pass is not
    Windows execution and the forge has no Windows runner (`references/forge.md`, "What CI covers"): **Not tested** names
    the Windows run, and a real one goes on the Windows laptop only when the task allows it (`skill://ls-windows-laptop`).
-   Where main's own suite is red, only the same established failures are inherited: compare every failing test and
-   its diagnostics, retain head and base links, and say “accepted with inherited failures”, never “all green”; unknown
-   logs or names block that judgement.
+   Where main's own suite is red, only the same established failures are inherited: compare every failing test **by name**
+   and its diagnostics, from the same runner and layout (`ls-workbench`, section 3: main fails 37 to 41 names on this PC,
+   not a small fixed count), retain head and base links, and say “accepted with inherited failures”, never “all green”;
+   unknown logs or names block that judgement.
 8. **The main session** reads every commit's diff, runs the test both ways itself, runs the description check (the
    checker in "The body"), reads author and trailers (`git log --format='%an <%ae>' <base>..<branch>`,
    `git interpret-trailers --parse`) and the changed file names for game files or build output, and only then opens the
@@ -250,15 +271,11 @@ demands `--tested-in-game` for code the game runs and has no `--base`).
 
 ### Preserve imported authors
 
-A squash lists every commit author as a co-author; keep the original author on carried work. A whole unchanged
-cherry-pick keeps the same patch, author and message, committed by the user: do **not** append a provenance line to that
-unchanged message, and prove it unchanged (`reports/Integrate18-files/prove_carry.py`, `skill://ls-restack`). When only
-selected files can be carried, every touched file must be byte-identical at the same path in the source tree, the author
-must match the source author, and the message must contain `Imported from <owner>/<repo>#<n> at <source-hash>` (at
-least its first eight hex digits). Keep the original assistance trailers; commit adaptations separately under our
-identity. No script checks identity or trailers any more: read `git log --format='%H %an <%ae>%n%b' <base>..<branch>`
-yourself, and name the author and source in the handoff and body.
-
+A squash lists every commit author as a co-author; keep the original author on carried work, and prove an unchanged
+cherry-pick unchanged (`reports/Integrate18-files/prove_carry.py`, `skill://ls-restack`). No script checks identity or
+trailers: read `git log --format='%H %an <%ae>%n%b' <base>..<branch>` yourself. The rules for carrying selected files
+only (byte-identical files, the author, the `Imported from <owner>/<repo>#<n> at <source-hash>` message):
+`references/recipes.md`, "Imported authors".
 
 ## The title
 
@@ -289,8 +306,7 @@ PANEL_H=1010` for two per row). In a chat preview only colour cues read: the cap
   once through its raw link after the push (the bytes must match).
 - Nothing unpublished and nothing private in it: other tabs of a menu under work, paths with the home folder, a room
   secret that is still in use.
-- Frames come from `hs-run.sh`'s `shots/` folder; a contact sheet finds the right ones quickly:
-  `magick montage -label '%t' <every nth frame> -tile 6x -geometry 426x240+2+2 sheet.jpg`.
+- Frames come from `hs-run.sh`'s `shots/` folder; a contact sheet (`references/recipes.md`) finds the right ones quickly.
 - Cite single files (`shots/<frame>.png`), never a whole `shots/`, `auto/` or `runs/` folder: a folder cite pins every
   frame below it against clean-up; copy the one picture into `reports/<Topic>-files/` instead. ImageMagick and ffmpeg
   traps (annotation placement, `%`, clip length): `references/recipes.md`.
