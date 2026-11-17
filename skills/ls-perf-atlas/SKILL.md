@@ -1,0 +1,137 @@
+---
+name: ls-perf-atlas
+description: >
+  Use when asked to find where a game area costs frames and why: a heavy place (Castle Town, Kakariko, Hyrule Field, a dungeon with
+  effects), "go through the hard-to-render areas", price a part of the frame (people, animals, effects, shadows, resolution, culling),
+  rank optimization candidates, or add an area to the suite. Viewpoints and walks, the actor tools and render switches as
+  attribution, the cost table, the coverage matrix, and how a proposed optimization is proven. Read ls-workbench and ls-perf-compare first.
+---
+
+# The perf atlas: where a frame goes, area by area
+
+**Use for:** a map of where frames are lost and what each part costs, and the work that follows from it. It finds *where to
+look* with ordinary runs (counts, shares, pictures) and *proves* with the paired exclusive worker. It is not a second timing
+runner: every speed claim stays with `ls-perf-compare` and `ls-regression-hunt`. Read `ls-workbench` (paths, gates, windowless runs),
+`ls-perf-compare`, `ls-scripted-play`, `ls-field-data` and `ls-hold-chain` first. Set `H` and `P` as `ls-workbench` does.
+
+The code is `play/perfatlas/` (live: `playthrough/perfatlas/`); its tests use a fake game: `python3 -I -B play/perfatlas/test_perfatlas.py`.
+`ATLAS="python3 -I -B <folder>/perfatlas/atlas.py"`; `ATLAS --help` lists `check`, `plan`, `merge`, `hold`, `table`, `coverage`.
+
+## 1. What counts as a result
+
+| Level | What | How it is obtained | May be said |
+|---|---|---|---|
+| observation | counts (draws, passes, barriers, uploads), pass shares, CPU-versus-GPU split, pictures | ordinary gated run, `atlas.py hold` | "ordinary run, no speed claim"; never a frame rate as a verdict |
+| lead | a part that looks expensive, ranked | the cost table | where to spend an exclusive hold |
+| priced | what a part costs at a viewpoint | exclusive paired run, off versus on, A B A B | the gap with its same-arm spread |
+| proven | an optimization is faster | exclusive paired run, main versus main plus the change, same viewpoint, same settings, pictures equal | the paired result and the rows |
+
+Quiet rule, bands set before the results, every invalid row kept, one waiter: `ls-perf-compare`, section 2. A scene with moving
+crowds can fail the 5% same-arm tolerance (an earlier exclusive Market hold had 7.35% between repeats): run the first pair of a scene
+**with the same build on both arms** (a null pair). Its spread and gap say whether the scene can decide anything before a real change is spent on it.
+
+## 2. The tools that exist, with what each is good for
+
+| Tool | Use | Switch or command | Known limits |
+|---|---|---|---|
+| Control bridge | place, aim, wait, pictures, settings | `HOS_CONTROL=<socket in a 0700 folder>`; the control client (`$HS_CTL` of `ls-workbench`: `status`, `press`, `stick`, `shot`, `option get\|set`, `wait`); `status.game`: `pos`, `facing`, `camera`, `event`, `loading`, `age` | no time of day; samples stop while a map loads; `teleport` lands at the destination's start point only |
+| `!pos X Y Z [FACING [CAM_YAW CAM_PITCH]]` | stand at an exact viewpoint (metres, degrees, numbers of `status.game`) | a line in the `HOS_INPUT_LIVE` file | needs a player camera (not a lock-on or a cutscene); the camera is held 2 s, then the follow camera eases back; on the branch of PR 1351 (was `!place X Y Z`) |
+| Actor tools (PR 1426) | take people, animals, effects, breakables out of an area | `!actors off\|on <map\|here\|*> <glob> [force]`, `!actors clear\|list\|reload`; `HOS_OOT_ACTORS_OFF=<map>:<glob>[!],...` at launch | applied at the area's **next layout read**; `reload` is the Teleport list's change to the same map (puts Link at the entrance, refused in an event or within seconds of a load); people tied to a door or an event and a behaviour group's leader stay (a street vendor and some guards stalled the game when removed): the left-out count is in the log line `actors: <map>: ... left out` |
+| `!cheat N` | time of day, teleport | `100+h` sets hour h; `1000+i` teleports to destination i | `!pos` is not taken in the same update as a pending `!cheat` |
+| FPS counter | the frame's parts on screen | option `fps_counter` 4 = Breakdown, 5 = Dev (draws, dispatches, passes, uploads, GPU slot waits) | headless needs `RX_VK_SHOT_MENU=1` to draw it; the same parts are the frame trace's columns |
+| Frame trace | per frame: interval, game, render, GPU wait, pace, waits, the main thread's time, draw/descriptor/command ms | `RX_VK_FRAME_TRACE=1 HOS_PROFILE_DIR=<folder>` writes `<folder>/frames.csv`; `at_ns` is the host clock (`time.monotonic_ns()` on Linux) | draw/descriptor/command ms time one draw in eight unless `RX_VK_PROF_ALL=1` |
+| Pass timing | GPU time per pass, program and copy | `RX_VK_PASS_TIMING=1\|2`, logged every 600 presents, no file | every span waits for the GPU: spans add up to more than an unprofiled frame, read shares only |
+| Scene lines | draws, dispatches, passes, barriers, uploads, textures, GPU time, replay ms by part | always on, every 120 presents | averages of the last 120 presents |
+| Draw statistics | one frame's draws by program | `RX_VK_DRAW_STATS=<folder>`, touch `<folder>/draw_stats.now` | one frame |
+| `HOS_PROFILE=1` (cpu.csv, all-thread sampler) | where the CPU goes | `scripts/profile_report.py <folder>` | it switches on pass timing and a 2 ms sampler: it perturbs timing, never time with it |
+| Perf summaries (#1383) | per-map, per-second frame and GPU ms | player telemetry | position and angle fields are wrong (bin middles, wrong object and units), cutscenes sampled: a coarse survey only |
+| Perf monitor (`perf.csv`) | sampled GPU/CPU/memory | `--perf` | the writer is not on main: a main build writes no file |
+| Regression worker | paired timing | `regress.py hunt` or `_hold` with a scenario | `ls-regression-hunt` |
+| Route library, pilot, BugHunter | walks, stuck places; detectors flag present gaps and visual faults | `ls-scripted-play` | no perf cell in PlayBench; the Go-Explore archive is unmerged |
+| Field data | where players lose frames | `ls_field.py perf --by map`, `hitches --by map` | `ls-field-data`: sessions and hours beside every figure |
+
+No setting turns shadows or draw distance off: shadow size is a menu row, there is no draw-distance switch. Price the passes with pass timing instead.
+Dynamic resolution and the Auto preset are on by default: a fixed-cost run sets `HOS_DYNRES=0 RX_VK_AUTO_TUNE=0 RX_VK_AUTO_PRESET=0`
+(the atlas adds them, with `HOS_OUTPUT_RES=2048x1152 HOS_FPS_MAX=240 RX_VK_DLSS=0 RX_VK_FRAMEGEN=0` and no periodic pictures).
+
+## 3. The perf tools game (attribution only)
+
+The actor tools, `!pos` and the overlay are not on main until their pull requests merge. For attribution build one owned copy that has them:
+a worktree on forge main, merge PR 1426, PR 1358 and the `!pos` branch, resolve the API-number and docs conflicts (each takes a number:
+the renderer table grew by 1358 and the host table by 1426; keep both numbers), and build with the donor shortcut of `ls-workbench`
+("Incremental host/renderer-only changes"): reflink a donor's `work/build` (same `nx2/` apart from the actor patch) and its built copy
+without `runs/` (warm caches: the translator stamp is the same), then `make_game.py` again. Run it through the idle gate
+(`hs-idle.sh`), the full-build lock and the build gate; it took 32 seconds. **Never use this copy as a timing arm**: a timing comparison
+of an optimization is main against main plus the change, both built the same way. Delete the worktree and copy when the pull requests merge.
+
+## 4. The suite
+
+**Viewpoint:** a place to stand still: position, facing, camera yaw and pitch, time of day, dwell. **Walk:** ground points walked in a
+closed loop (the stick angle is the camera's yaw minus the bearing, handedness checked as Link moves). **Condition:** one change to a
+block of a run: `actors` (rules, then a reload), `option` (live, put back), `time` (hour, then a reload), `env` (launch switches, so a
+process of its own). The catalogue (`atlas.py check` lists it) has each actor family off, all offered families off, the render
+resolution, shadow size, anisotropic filtering and upscaler rows, real occlusion queries, culling off, a small texture budget, the mesh
+path off and pass timing. Libraries and results stay in local files outside every repository: they hold places.
+
+```sh
+$ATLAS check library.json
+$ATLAS plan library.json --area <key> --tod day --viewpoints a,b,c --conditions baseline,actors-people,actors-animals --prefix a --out plan-a.json
+$ATLAS plan library.json --area <key> --tod day --viewpoints a,b --conditions pass-timing --min-frames 1300 --dwell 20 --prefix p --out plan-p.json
+$ATLAS merge plan-a.json plan-p.json --hold-limit 1100 --out plan.json    # one admission for several runs
+$ATLAS hold plan.json --hold h1 --copy <owned copy> --out <new folder> --hs-run <path>/hs-run.sh --saves <folder> --hold-seconds 1060
+$ATLAS table <out>/<run> ... --library library.json --md cost.md --json cost.json
+$ATLAS coverage --field field.json --areas areas.json --cells cells.json --next 8
+```
+
+A plan blocks the runs as: baseline, each condition, baseline again (the first and the last block give the **revisit drift**: the same
+place after several area reloads), at most `--run-budget` seconds a run (boot 60 s, reload 25 s, 3 s arrival, settle, dwell; estimates
+tuned by the first results). `hold` is ordinary-run machinery: it needs the queued waiter's locks (one waiter, `ls-hold-chain`; start it
+from a folder named for the topic, freeze `perfatlas/` beside the plan, receipts `admitted.txt`, `hold.log`, `exit.txt`, `out/`). It
+starts the game through the run wrapper (which asks the GPU gate itself), makes a private control folder, drives the ops, ends the game
+by pid only, and leaves per run: `windows.jsonl` (one record per measured stretch with the host-clock start and end and the log's byte
+offsets), `ops.jsonl`, `game_log.txt`, `trace/frames.csv`, `present.csv`, `summary.txt`, `run.json`, `shots/`.
+A run is 450 s at most, boot included; an ordinary hold may be longer when the main session grants it, with a time-left check before each run.
+
+**Choosing viewpoints** (local script; the method, not the code): the nav mesh's largest connected component gives places Link can
+reach (one face centre in each 6 m cell); the placement files give what stands around (people, animals, effect locators, geometry, other
+objects); each place is scored at eight facings by what lies in a 90 degree cone within 80 m, weighted by kind and distance. Take the
+top places by people (crowds), by distant geometry (vistas), by total (dense), by animals and effects, the middle of the walkable area,
+and the **lowest** score that still has geometry in front (a cheap reference). Keep them 22 m apart. Confirm each by its counts in the first
+run: the score is a proxy, the scene line's draws are the truth.
+
+## 5. Reading the cost table
+
+Every row is a window. Frame ms is the renderer trace's interval (headless: CPU after the offscreen submit). `game`, `render`, `gpu wait`,
+`pace` are the FPS counter's split; **bound** names the longest of them (`pace` when pacing is over 30% of the frame). Draws, GPU ms
+and the replay parts come from the scene lines inside the window. The pass table is the clean pass-timing blocks (the first block in a
+window covers earlier frames and is dropped; a window that holds one block is marked partial). The family table is the mean difference of
+a condition to **its own run's** baseline (cross-run deltas are marked and never averaged in). A window is flagged when it did not arrive,
+the camera is off its aim, Link moved over a metre, an event ran, or it has fewer than 120 frames.
+Read with the field: where players lose frames the game's own split puts most of the frame in `game` (about three quarters in the Castle Town sessions): check whether the
+window agrees before spending an hour on the renderer.
+
+## 6. Pitfalls found on the way
+
+- The actor tools remove only what the layout offers; geometry, doors, sensors and tied people stay. A table of "people off" is the tool's partial answer: quote the left-out count beside it.
+- `!actors reload` puts Link at the entrance, so a viewpoint follows each reload with its `!pos`; two reloads inside seconds are refused.
+- Pictures: take them after the window (the bridge `shot` costs a frame); periodic pictures off (`RX_VK_SHOT_EVERY=1000000`).
+- Pass timing and `HOS_PROFILE=1` change the frame: run them apart from the numbers you quote as frame ms.
+- Auto-tune can change the render resolution during a run: fixed-cost env always.
+- A new copy starts cold (4 to 7 minutes of pipelines): reflink a warm copy's caches only when the translator stamp is the same.
+- Path-valued switches (`RX_VK_FRAME_LOG`, `HOS_PROFILE_DIR`, `*_FILE`) go in the real environment, not the env file.
+- The field is a few players' evenings and its figures are averages under fps caps: use it to rank, never to price.
+- One bridge fault ends a run on purpose (an uncertain input is not repeated); a refused or late step is recorded and the run goes on.
+
+## 7. Add an area
+
+1. Name the map and its saves: `hs_make_save.py --from <entry> --out lib:<name> --start keep|<Map>:x,y,z,yaw --time day|night` (a new save is untried until a game boots from it).
+2. Write the library entry (`areas`, saves by time of day), pick viewpoints as above, `check` it.
+3. Plan one baseline run with 8 viewpoints, queue it, read the table: drop the viewpoints that did not arrive or sit inside the cheapest decile.
+4. Plan the attribution runs (families, settings, one process each for launch switches) and pass timing at the top three viewpoints.
+5. Fill the coverage cells (`planned`, `observed`, `priced`, `finding`) and rank the next ones with `coverage --next`.
+6. Rank optimization candidates by price and by where in the code they would go (`ls-function-map` first); each gets an expected gain and a proof plan
+   (viewpoint, settings, null pair, A B A B hold, count of holds) before any code.
+
+## Status
+
+The driver and the cost table are tested against a fake game and made-up logs; the first real holds are queued (update this line with what they showed).

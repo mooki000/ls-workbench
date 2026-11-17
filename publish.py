@@ -35,6 +35,7 @@ SKILL_MAP = {
     'ls-windows-laptop': 'ls-windows-laptop',
     'ls-relay-lan': 'ls-relay-lan',
     'ls-nat-lab': 'ls-nat-lab',
+    'ls-perf-atlas': 'ls-perf-atlas',
 }
 LIVE_LAYOUT = 'legacy'  # cutover.py changes only the installed source layout
 HARNESS_MAP = {name: Path(name).name for name in (
@@ -77,7 +78,10 @@ GROUPS = {
                              'playbench/draft.py', 'playbench/guard.py', 'playbench/hold.py', 'playbench/nightly.py', 'playbench/playbench.py',
                              'playbench/referee.py', 'playbench/runner.py', 'playbench/score.py', 'playbench/store.py', 'playbench/trend.py',
                              'playbench/test_playbench.py', 'playbench/rehearsal/fake_game.py', 'playbench/rehearsal/fake_hs_run.sh',
-                             'playbench/rehearsal/hsap_wrap.py', 'playbench/rehearsal/rehearse.py', 'playbench/rehearsal/rehearse_pilot.py')),
+                             'playbench/rehearsal/hsap_wrap.py', 'playbench/rehearsal/rehearse.py', 'playbench/rehearsal/rehearse_pilot.py',
+                             'perfatlas/__init__.py', 'perfatlas/atlas.py', 'perfatlas/bridge.py', 'perfatlas/costtable.py', 'perfatlas/coverage.py',
+                             'perfatlas/driver.py', 'perfatlas/model.py', 'perfatlas/parse.py', 'perfatlas/plan.py', 'perfatlas/test_perfatlas.py',
+                             'perfatlas/rehearsal/fake_game.py', 'perfatlas/rehearsal/fake_hs_run.sh')),
     'regress': ('regress', ('regress.py', 'build_case.py', 'run_case.py', 'test_regress.py', 'test_longshot_names.py')),
     'perf': ('perf', ('hs_perf.py', 'test_hs_perf.py')),
     'nightly': ('nightly', ('hs-nightly.py', 'build.py', 'common.py', 'scenario.py', 'monitor.py',
