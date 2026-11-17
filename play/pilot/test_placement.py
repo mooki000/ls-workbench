@@ -421,7 +421,12 @@ with open(live / 'out.jsonl', 'a') as f:
 def run_in(tmp):
     spec_checks(tmp)
     apply_checks(tmp)
-    run_checks(tmp)
+    os.environ['PILOT_TACTICS_DIR'] = str(tmp / 'tactics')   # (pilot.py run writes what it learns there: never into the real library beside the harness)
+    try:
+        run_checks(tmp)
+    finally:
+        os.environ.pop('PILOT_TACTICS_DIR', None)
+    check((tmp / 'tactics' / 'book.jsonl').is_file(), 'the runs wrote what they learned into the test\'s own tactics folder, not into the harness\'s')
     roam_checks(tmp)
     plan_checks(tmp)
 
