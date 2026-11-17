@@ -12,10 +12,10 @@ import json
 
 STATES = ('-', 'n/a', 'planned', 'observed', 'priced', 'finding')
 USE_CASES = {
-    'first-visit': 'a fresh game, the first time the area loads (pipelines and textures cold)',
-    'revisit': 'the same area again in one process (caches warm, state from the last visit)',
     'stand': 'standing still at a viewpoint, looking at the heavy view',
     'walk': 'a fixed route on foot (streaming, loads, hitches)',
+    'revisit': 'the same area again in one process (caches warm, state from the last visit)',
+    'first-visit': 'a fresh game, the first time the area loads (pipelines and textures cold)',
     'crowd': 'the most people and animals in view or near',
     'night': 'night (other actors, lights, other effects)',
     'cutscene': 'a cutscene or conversation camera (nothing to control)',
@@ -93,14 +93,13 @@ def matrix_markdown(ranked, cells, use_cases=None):
 
 
 def next_cells(ranked, cells, use_cases=None, limit=10):
-    """the cells to fill next: in rank order, for each area the first use cases of the list whose state is '-' (planned cells come after);
-    [(area key, use case, why)]"""
+    """the cells to fill next: use case by use case in the list's order (the first ones matter most), the areas in rank order inside each;
+    only cells whose state is '-' (planned ones are in hand); [(area key, use case, why)]"""
     use_cases = use_cases or list(USE_CASES)
     out = []
-    for r in ranked:
-        for c in use_cases:
-            st = cells.get((r['key'], c), {}).get('state', '-')
-            if st == '-':
+    for c in use_cases:
+        for r in ranked:
+            if cells.get((r['key'], c), {}).get('state', '-') == '-':
                 why = f"{r['label']}: " + (f"{r['lost_hours']:.2f} player-hours lost" if r['lost_hours'] else 'known heavy' if r['heavy'] else 'no field row')
                 out.append((r['key'], c, why))
                 if len(out) >= limit:

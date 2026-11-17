@@ -507,7 +507,7 @@ class Coverage(unittest.TestCase):
         self.assertIn('| Area A | 20 | 2.00 | 30.0 | 10.0 | 900 | observed | planned |', md)
         self.assertIn('Area C * | - | - | - | - | - | - | - |', md)
         nxt = coverage.next_cells(ranked, cells, ['stand', 'walk'], limit=3)
-        self.assertEqual([(k, c) for k, c, _ in nxt], [('b', 'stand'), ('b', 'walk'), ('c', 'stand')])
+        self.assertEqual([(k, c) for k, c, _ in nxt], [('b', 'stand'), ('c', 'stand'), ('d', 'stand')])
         with self.assertRaises(ValueError):
             coverage.load_cells({'cells': {'a|stand': {'state': 'done'}}})
 
