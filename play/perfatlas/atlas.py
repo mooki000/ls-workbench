@@ -119,7 +119,7 @@ def find_log(run_dir, wait_s=900):   # (the wrapper may wait for the GPU gate fi
     return None
 
 
-def run_one(a, run, outdir):
+def run_one(a, run, outdir, cap_s=None):
     """one run of a hold: the game through hs-run.sh, the driver beside it, the files collected"""
     out = Path(outdir) / run['id']
     out.mkdir(parents=True, exist_ok=False)
@@ -141,6 +141,8 @@ def run_one(a, run, outdir):
     if not os.path.isabs(save):
         save = str(Path(a.saves) / save)
     wall = int(a.wall or min(450, max(120, run['est_s'] + 90)))   # (an ordinary game: 450 s at most, boot included)
+    if cap_s is not None:
+        wall = min(wall, max(60, int(cap_s)))   # (the hold's own end: the game is over before its waiter's timeout)
     cmd = [a.hs_run, a.copy, tag, str(wall), '--user', save] + [f'{k}={v}' for k, v in env]
     say(f"run {run['id']}: {tag} wall {wall}s save {Path(save).name}; env " + ' '.join(f'{k}={v}' for k, v in run['env']))
     (out / 'launch.txt').write_text(' '.join(cmd) + '\n')
@@ -201,7 +203,7 @@ def cmd_hold(a):
             metas.append({'id': run['id'], 'skipped': 'the hold is nearly used up'})
             continue
         try:
-            metas.append(run_one(a, run, out))
+            metas.append(run_one(a, run, out, None if left is None else left - 30))
         except Exception as e:   # (a run's fault must not take the hold's other runs with it)
             say(f"run {run['id']} failed: {type(e).__name__}: {e}")
             metas.append({'id': run['id'], 'aborted': f'{type(e).__name__}: {e}'})
