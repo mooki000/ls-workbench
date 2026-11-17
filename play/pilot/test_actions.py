@@ -5,6 +5,7 @@ small invented worlds, and every candidate's step lines run through hsap's own p
 
     python3 -I -B test_actions.py        (test_pilot.py calls run() too)
 """
+import contextlib
 import json
 import math
 import os
@@ -24,6 +25,19 @@ import test_interact as TI  # noqa: E402
 
 check, state, Target, Goal, step, nums, Sim, WithWorld = TI.check, TI.state, TI.Target, TI.Goal, TI.step, TI.nums, TI.Sim, TI.WithWorld
 labels = TI.labels
+SONGS = {'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'song-a': '2 4 1 5 3 4', 'song-b': '4 5 3 1 2 4'}   # invented songs (pitches 1..5): the pitches decide which note orders differ
+
+
+@contextlib.contextmanager
+def song_file(data):
+    """PILOT_SONG_PITCHES points at a file of these invented songs for the length of the block."""
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, 'sp.json').write_text(json.dumps(data))
+        os.environ['PILOT_SONG_PITCHES'] = str(Path(d, 'sp.json'))
+        try:
+            yield
+        finally:
+            os.environ.pop('PILOT_SONG_PITCHES', None)
 
 
 def plan_result(why, near, after, kind, needed, steps=None):
@@ -43,16 +57,16 @@ def link(kind, a, b, height=0.0, gap=None, actor=None):
 def song_checks():
     with tempfile.TemporaryDirectory() as d:
         f = Path(d, 'sp.json')
-        f.write_text(json.dumps({'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'storm': '1 2 5 1 2 5', 'bad': '1 9', 'junk': 'x y'}))
+        f.write_text(json.dumps({'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'song-a': '1 3 5 2 4 1', 'bad': '1 9', 'junk': 'x y'}))
         os.environ['PILOT_SONG_PITCHES'] = str(f)
         os.environ.pop('PILOT_NOTE_BUTTONS', None)
         try:
-            check(actions.song_table() == {'storm': [1, 2, 5, 1, 2, 5]}, f'song_table keeps whole songs of pitches 1..5 ({actions.song_table()})')
+            check(actions.song_table() == {'song-a': [1, 3, 5, 2, 4, 1]}, f'song_table keeps whole songs of pitches 1..5 ({actions.song_table()})')
             orders = actions.note_orders()
             check(orders[0] == ('L', 'R', 'Y', 'X', 'A') and ('L', 'R', 'A', 'Y', 'X') in orders and len(orders) == 2,
                   f'the confirmed order first, the other guess second, no duplicate ({orders})')
-            check(actions.song_buttons('storm', orders[0]) == ['L', 'R', 'A', 'L', 'R', 'A'] and actions.song_buttons('storm', orders[1]) == ['L', 'R', 'X', 'L', 'R', 'X'],
-                  'a song by two note orders: pitches 1 2 5 are L R A under the first, L R X under the second')
+            check(actions.song_buttons('song-a', orders[0]) == ['L', 'Y', 'A', 'R', 'X', 'L'] and actions.song_buttons('song-a', orders[1]) == ['L', 'A', 'X', 'R', 'Y', 'L'],
+                  'a song by two note orders: pitches 1 3 5 2 4 1 are L Y A R X L under the first, L A X R Y L under the second')
             check(actions.song_buttons('nothing', orders[0]) == [], 'an unknown song has no buttons')
             os.environ['PILOT_NOTE_BUTTONS'] = 'L R A Y X'
             check(actions.note_orders()[0] == ('L', 'R', 'A', 'Y', 'X'), 'PILOT_NOTE_BUTTONS names the order believed')
@@ -66,15 +80,39 @@ def song_checks():
         check(actions.song_table() == {} and actions.note_orders()[0] == ('L', 'R', 'Y', 'X', 'A'), 'no private data: no songs, the hint-bar order first')
     finally:
         os.environ.pop('PILOT_SONG_PITCHES', None)
-    # the shipped files agree: the table's pitches under the confirmed button order give exactly the notes of songs.json (proven in the game: Storms, Minuet; the rest inferred)
+    # the song that moves the time of day is named by a local setting, like the arrival flag: `_time_song` of the song file, or PILOT_TIME_SONG
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d, 'sp.json')
+        f.write_text(json.dumps({'_time_song': 'song-a', 'song-a': '1 3 5 2 4 1'}))
+        os.environ['PILOT_SONG_PITCHES'] = str(f)
+        os.environ.pop('PILOT_TIME_SONG', None)
+        try:
+            check(actions.time_song() == 'song-a', 'time_song: the name the song file gives')
+            os.environ['PILOT_TIME_SONG'] = 'song-b'
+            check(actions.time_song() == 'song-b', 'PILOT_TIME_SONG names it first')
+            os.environ.pop('PILOT_TIME_SONG')
+            f.write_text(json.dumps({'song-a': '1 3 5 2 4 1'}))
+            check(actions.time_song() is None, 'a song file that names no time song: none')
+            f.write_text(json.dumps({'_time_song': 7}))
+            check(actions.time_song() is None, 'a name that is not a string: none')
+        finally:
+            os.environ.pop('PILOT_SONG_PITCHES', None)
+            os.environ.pop('PILOT_TIME_SONG', None)
+    os.environ['PILOT_SONG_PITCHES'] = '/nonexistent/none.json'
+    try:
+        check(actions.time_song() is None, 'no private data: no time song')
+    finally:
+        os.environ.pop('PILOT_SONG_PITCHES', None)
+    # the local files agree: the table's pitches under the confirmed button order give exactly the notes of songs.json, for every song both hold (by structure only: no song is named here)
     sp, sj = HERE / 'chapters' / 'song_pitches.json', HERE / 'songs.json'
     if sp.is_file() and sj.is_file():
         book = json.loads(sj.read_text())
         order = actions.note_orders()[0]
-        check(order == ('L', 'R', 'A', 'Y', 'X'), f'the button order believed first is the songbook\'s (L D, R F, A A, Y B, X high D): {order}')
+        check(order == ('L', 'R', 'A', 'Y', 'X'), f'the button order believed first is the one the song file confirms: {order}')
         notes = {**book['inferred'], **book['proven']}
-        bad = {n: (actions.song_buttons(n, order), s.split()) for n, s in notes.items() if actions.song_table().get(n) and actions.song_buttons(n, order) != s.split()}
-        check(not bad and actions.song_buttons('minuet', order) == 'L X Y A Y A'.split(), f'the pitches table gives the songs.json notes for every song both hold ({bad})')
+        both = [n for n in notes if actions.song_table().get(n)]
+        bad = {n: (actions.song_buttons(n, order), notes[n].split()) for n in both if actions.song_buttons(n, order) != notes[n].split()}
+        check(both and not bad, f'the pitches table gives the songs.json notes for every song both hold ({len(both)} songs; {bad})')
 
 
 # ---- obstacles
@@ -243,29 +281,24 @@ def candidate_checks():
 
         os.environ['PILOT_SONG_PITCHES'] = '/nonexistent/none.json'
         try:
-            c = interact.candidates('Test_Area', Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='minuet'), Target('here', 0.0, 0.0, radius=1000.0), state(), {}, None)
+            c = interact.candidates('Test_Area', Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='song-a'), Target('here', 0.0, 0.0, radius=1000.0), state(), {}, None)
             check('song-warp' not in labels(c) and 'ocarina-out' in labels(c), 'warp_song with no song data offers no song')
         finally:
             del os.environ['PILOT_SONG_PITCHES']
-        with tempfile.TemporaryDirectory() as d:
-            Path(d, 'sp.json').write_text(json.dumps({'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'minuet': '1 5 4 3 4 3', 'epona': '5 4 3 5 4 3'}))
-            os.environ['PILOT_SONG_PITCHES'] = str(Path(d, 'sp.json'))
-            try:
-                t = Target('here', 0.0, 0.0, radius=1000.0)
-                c = interact.candidates('Test_Area', Goal('warp_song', [t], song='minuet'), t, state(), {}, None)
-                got = {x.label: x.lines for x in c}
-                check(got['song-warp'][0] == 'ocarina L A X Y X Y' and got['song-warp-alt'][0] == 'ocarina L X Y A Y A' and got['song-warp'][1] == 'wait 4',
-                      f'warp_song: the song by the believed order, then by the other ({got.get("song-warp")}, {got.get("song-warp-alt")})')
-                c2 = interact.candidates('Test_Area', Goal('warp_song', [t], song='minuet'), t, state(), {'history': [('song-warp', 'played', 0, None)]}, None)
-                check({x.label: x.lines for x in c2}['song-warp'][0] == 'ocarina L X Y A Y A', 'after one miss the other order is the first candidate')
-                h = Target('horse', 40.0, 0.0, kind='reach', radius=2.0)
-                c = interact.candidates('Test_Area', Goal('ride', [h], song='epona', fast=6.5), h, state(), {}, None)
-                got = {x.label: x.lines for x in c}
-                check(got['call-horse'][0] == 'ocarina A X Y A X Y' and got['ride-to'][0].startswith('ride 40.00 0.00 radius 2 fast 6.5 timeout') and 'mount' not in got,
-                      f'ride: call her, ride to the target; mount only at a prompt ({got})')
-                check('mount' in labels(interact.candidates('Test_Area', Goal('ride', [h], song='epona'), h, state(prompt='Mount'), {}, None)), 'ride: mount at a prompt')
-            finally:
-                del os.environ['PILOT_SONG_PITCHES']
+        with song_file(SONGS):
+            t = Target('here', 0.0, 0.0, radius=1000.0)
+            c = interact.candidates('Test_Area', Goal('warp_song', [t], song='song-a'), t, state(), {}, None)
+            got = {x.label: x.lines for x in c}
+            check(got['song-warp'][0] == 'ocarina R X L A Y X' and got['song-warp-alt'][0] == 'ocarina R Y L X A Y' and got['song-warp'][1] == 'wait 4',
+                  f'warp_song: the song by the believed order, then by the other ({got.get("song-warp")}, {got.get("song-warp-alt")})')
+            c2 = interact.candidates('Test_Area', Goal('warp_song', [t], song='song-a'), t, state(), {'history': [('song-warp', 'played', 0, None)]}, None)
+            check({x.label: x.lines for x in c2}['song-warp'][0] == 'ocarina R Y L X A Y', 'after one miss the other order is the first candidate')
+            h = Target('horse', 40.0, 0.0, kind='reach', radius=2.0)
+            c = interact.candidates('Test_Area', Goal('ride', [h], song='song-b', fast=6.5), h, state(), {}, None)
+            got = {x.label: x.lines for x in c}
+            check(got['call-horse'][0] == 'ocarina X A Y L R X' and got['ride-to'][0].startswith('ride 40.00 0.00 radius 2 fast 6.5 timeout') and 'mount' not in got,
+                  f'ride: call her, ride to the target; mount only at a prompt ({got})')
+            check('mount' in labels(interact.candidates('Test_Area', Goal('ride', [h], song='song-b'), h, state(prompt='Mount'), {}, None)), 'ride: mount at a prompt')
         sign = Target('sign', 3.0, 0.0, kind='talk', radius=1.5)
         c = interact.candidates('Test_Area', Goal('read_sign', [sign]), sign, state(pos=[2.0, 0.0, 0.0], facing=90.0, prompt='Check'), {}, None)
         check('read-sign' in labels(c) and labels(c).index('read-sign') == 0, f'read_sign at its Check prompt ({labels(c)})')
@@ -388,7 +421,7 @@ class SongSim(Sim):
     """A warp song that works only with the second note order."""
     def apply(self, cand, target):
         if cand.label in ('song-warp', 'song-warp-alt'):
-            if cand.lines[0].split()[1:] == ['L', 'X', 'Y', 'A', 'Y', 'A']:   # (the second note order: pitches 1 5 4 3 4 3 as L X Y A Y A)
+            if cand.lines[0].split()[1:] == ['R', 'Y', 'L', 'X', 'A', 'Y']:   # (the second note order: pitches 2 4 1 5 3 4 as R Y L X A Y)
                 self.area = 'Warp_Area'
             return 'played', [step('ocarina', 'played')]
         return 'done', [step('wait', 'done')]
@@ -439,20 +472,15 @@ def policy_checks():
         outcome, chosen = play(Goal('strafe', [Target('e', 4.0, 0.0, kind='fight', radius=1.0)], count=2), StrafeSim())
         check(outcome == 'met' and chosen.count('strafe-left') + chosen.count('strafe-right') == 2 and chosen.index('ztarget') < chosen.index('strafe-left'),
               f'rules lock on, then strafe twice: {outcome} ({chosen})')
-        with tempfile.TemporaryDirectory() as d:
-            Path(d, 'sp.json').write_text(json.dumps({'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'minuet': '1 5 4 3 4 3'}))
-            os.environ['PILOT_SONG_PITCHES'] = str(Path(d, 'sp.json'))
-            try:
-                sim = SongSim()
-                g = Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='minuet', to='Warp_Area')
-                outcome, chosen = play(g, sim)
-                check(outcome == 'met' and chosen[0] == 'song-warp', f'rules play a warp song: {outcome} ({chosen})')
-                none = SongSim()
-                none.apply = lambda cand, target: ('played', [step('ocarina', 'played')]) if cand.label.startswith('song') else ('done', [step('wait', 'done')])
-                outcome, chosen = play(Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='minuet', to='Warp_Area'), none)
-                check(outcome == 'failed' and sum(c.startswith('song-warp') for c in chosen) <= 4, f'a song that never warps is tried at most four times: {outcome} ({chosen})')
-            finally:
-                del os.environ['PILOT_SONG_PITCHES']
+        with song_file(SONGS):
+            sim = SongSim()
+            g = Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='song-a', to='Warp_Area')
+            outcome, chosen = play(g, sim)
+            check(outcome == 'met' and chosen[0] == 'song-warp', f'rules play a warp song: {outcome} ({chosen})')
+            none = SongSim()
+            none.apply = lambda cand, target: ('played', [step('ocarina', 'played')]) if cand.label.startswith('song') else ('done', [step('wait', 'done')])
+            outcome, chosen = play(Goal('warp_song', [Target('here', 0.0, 0.0, radius=1000.0)], song='song-a', to='Warp_Area'), none)
+            check(outcome == 'failed' and sum(c.startswith('song-warp') for c in chosen) <= 4, f'a song that never warps is tried at most four times: {outcome} ({chosen})')
 
 
 def label_checks():
@@ -472,10 +500,10 @@ def label_checks():
 def grammar_checks():
     import test_hsap
     lines = set()
-    with WithWorld():
+    with WithWorld(), song_file(SONGS):
         mark = Target('m', 6.0, 2.0, y=0.0, kind='reach', radius=1.2)
         for kind, kw in (('cross', {}), ('cross', {'how': 'swim'}), ('dive', {}), ('push_block', {'direction': 'pull'}), ('buy', {'price': 20}), ('use_item', {'button': 'ZR', 'hold': 150}),
-                         ('strafe', {}), ('ride', {'song': 'epona', 'fast': 6.5}), ('read_sign', {}), ('warp_song', {'song': 'minuet'})):
+                         ('strafe', {}), ('ride', {'song': 'song-b', 'fast': 6.5}), ('read_sign', {}), ('warp_song', {'song': 'song-a'})):
             g = Goal(kind, [mark], **kw)
             for st in (state(pos=[1.0, 0.0, 1.0]), state(pos=[5.0, 0.0, 2.0], prompt='Check', rupees=50, facing=90.0), state(pos=[5.5, 1.0, 2.0], prompt='Mount')):
                 for c in interact.candidates('Test_Area', g, mark, interact.with_near('Test_Area', st), {}, None):

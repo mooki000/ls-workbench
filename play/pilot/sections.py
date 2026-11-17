@@ -887,7 +887,7 @@ class ChapterPilot:
         return rec, after, outcome
 
     def run_wait_time(self, o, st):
-        """Wait for day or night: look at the sky band's brightness every few seconds; play the Sun's Song (adult, when known) or wait."""
+        """Wait for day or night: look at the sky band's brightness every few seconds; play the song that moves the time (adult, when the local song file names it: actions.time_song) or wait."""
         t_now = st.get('t') or 0.0
         want = str(o.params.get('until') or 'day')
         reads, solved, why = [], False, None
@@ -898,7 +898,7 @@ class ChapterPilot:
         song = None
         try:
             import actions
-            notes = actions.song_buttons('sun', actions.note_orders()[0]) if area_age(st.get('area') or '') == 'adult' else []
+            notes = actions.song_buttons(actions.time_song() or '', actions.note_orders()[0]) if area_age(st.get('area') or '') == 'adult' else []
             song = notes or None
         except ImportError:
             pass

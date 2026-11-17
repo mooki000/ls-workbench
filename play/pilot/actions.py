@@ -14,8 +14,8 @@ What the state shows of each action [read; the first game runs of PilotSections 
   warp song              the map changes (and the game's arrival flag, a private setting)
   ride                   Link's ground speed over a second (a horse is far faster than a run)
   time of day            the brightness of the game's own picture (sections.py), the one thing here no flag tells
-The data (note sequences of songs, the buttons, the arrival flag) is private: chapters/song_pitches.json beside this file, or PILOT_SONG_PITCHES; nothing of the
-game is in this module. Without it a warp-song goal offers no song.
+The data (note sequences of songs, the buttons, the arrival flag, the name of the song that turns day to night) is private: chapters/song_pitches.json beside this
+file, or PILOT_SONG_PITCHES; nothing of the game is in this module. Without it a warp-song goal offers no song.
 """
 import json
 import math
@@ -91,6 +91,17 @@ def arrive_flag():
     except (OSError, ValueError, AttributeError):
         return None
     return flag if isinstance(flag, str) and flag else None
+
+
+def time_song():
+    """The name of the song that moves the time of day (private: `_time_song` of the song file, or PILOT_TIME_SONG), or None: then a time wait only waits."""
+    if os.environ.get('PILOT_TIME_SONG'):
+        return os.environ['PILOT_TIME_SONG']
+    try:
+        name = json.loads(Path(os.environ.get('PILOT_SONG_PITCHES') or HERE / 'chapters' / 'song_pitches.json').read_text()).get('_time_song')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return name if isinstance(name, str) and name else None
 
 
 def song_buttons(name, order):

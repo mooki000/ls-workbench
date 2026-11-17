@@ -1873,69 +1873,69 @@ def interact_view_checks():
 
 def interact_gear_checks():
     with WorldSimulation(boot_events=0, follow=False) as sim:
-        sim.executor(['ocarina L R A', 'end']).run()
+        sim.executor(['ocarina Y X L', 'end']).run()
         a = sim.steps()[0]
         wire = [b for _, b in sim.bridge.pressed_log]
-        check(a['result'] == 'no-song' and wire == ['LEFT', 'L', 'R', 'A', 'B'] and sim.bridge.notes == ['L', 'R', 'A'],
+        check(a['result'] == 'no-song' and wire == ['LEFT', 'Y', 'X', 'L', 'B'] and sim.bridge.notes == ['Y', 'X', 'L'],
               f"ocarina takes it out (D-pad Left), plays the notes in order, and when the game takes no song puts it away with B: no-song ({a['result']}; {wire})")
-        check('note wait turned on' in a['detail'] and 'note wait turned off' in a['detail'] and 'L R A' in a['detail'],
+        check('note wait turned on' in a['detail'] and 'note wait turned off' in a['detail'] and 'Y X L' in a['detail'],
               f"the detail has the notes and the game's oc lines ({a['detail']})")
         check(not sim.bridge.oc_on, 'the ocarina is away afterwards')
         check([h for _, _, h in sim.bridge.note_log] == [0.1] * 3 and [b[1] - a_[1] for a_, b in zip(sim.bridge.note_log, sim.bridge.note_log[1:])] == [15, 15],
-              f'notes are held 100 ms and start 0.25 s apart by default: the timing the game took Storms at in every run of hold pi2-h1 ({sim.bridge.note_log})')
+              f'notes are held 100 ms and start 0.25 s apart by default: the timing the game took a song at in every run of hold pi2-h1 ({sim.bridge.note_log})')
         seqs = [r for r in sim.bridge.requests if r['cmd'] == 'sequence' and 'L/' in r.get('script', '')]
-        check(len(seqs) == 1 and seqs[0]['units'] == 'hos' and seqs[0]['script'] == '0:L/100,0.25:R/100,0.5:A/100',
+        check(len(seqs) == 1 and seqs[0]['units'] == 'hos' and seqs[0]['script'] == '0:Y/100,0.25:X/100,0.5:L/100',
               f"the notes go out as ONE timed sequence, not one request each ({[r.get('script') for r in seqs]})")
     # hold and gap: the notes' length and the pause after each (a song taken at 100/150 ms)
     with WorldSimulation(boot_events=0, follow=False) as sim:
-        sim.executor(['ocarina L R A hold 400 gap 600', 'end']).run()
+        sim.executor(['ocarina Y X L hold 400 gap 600', 'end']).run()
         a = sim.steps()[0]
         log = sim.bridge.note_log
-        check(a['result'] == 'no-song' and sim.bridge.notes == ['L', 'R', 'A'] and [h for _, _, h in log] == [0.4] * 3 and
+        check(a['result'] == 'no-song' and sim.bridge.notes == ['Y', 'X', 'L'] and [h for _, _, h in log] == [0.4] * 3 and
               [b[1] - a_[1] for a_, b in zip(log, log[1:])] == [60, 60],
               f"ocarina ... hold 400 gap 600: each note held 0.4 s, the next started 1.0 s after the one before ({log}; {a['detail']})")
     # a window just opened ignores the notes pressed in its first 3 s (holds pi2-h1..h3: 21 of 22 tries in a fresh window gave no song, 6 of 6 in one that had been
     # open 3 s or more did; with the poller on, the first note was missing and the game had five notes): the step lets the window warm up before the notes, unless it has been open that long
-    storms = ['L', 'R', 'X', 'L', 'R', 'X']
-    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
-        sim.executor(['ocarina L R X L R X', 'end']).run()
+    tune = ['A', 'Y', 'L', 'X', 'R', 'A']   # an invented song: the simulated game takes these six notes, in this order, and nothing else
+    play = 'ocarina ' + ' '.join(tune)
+    with WorldSimulation(boot_events=0, follow=False, song=tune, warm=180) as sim:
+        sim.executor([play, 'end']).run()
         a = sim.steps()[0]
         first = sim.bridge.note_log[0][1] if sim.bridge.note_log else None
         left = [f for f, x in sim.bridge.pressed_log if x == 'LEFT'][0]
         check(a['result'] == 'played' and not sim.bridge.dropped and first is not None and first - left >= 175,
               f"the step waits for the window: no note was lost, the first came {None if first is None else first - left} frames after the D-pad Left ({a['result']}; dropped {sim.bridge.dropped})")
-    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
-        sim.executor(['ocarina L R X L R X ready 0', 'end']).run()
+    with WorldSimulation(boot_events=0, follow=False, song=tune, warm=180) as sim:
+        sim.executor([play + ' ready 0', 'end']).run()
         a = sim.steps()[0]
-        check(a['result'] == 'no-song' and sim.bridge.dropped == ['L'],
+        check(a['result'] == 'no-song' and sim.bridge.dropped == tune[:1],
               f"ready 0 plays at once: the first note is lost and there is no song ({a['result']}; dropped {sim.bridge.dropped})")
-    with WorldSimulation(boot_events=0, follow=False, song=storms, warm=180) as sim:
-        sim.executor(['ocarina out', 'wait 3.5', 'ocarina L R X L R X', 'end']).run()
+    with WorldSimulation(boot_events=0, follow=False, song=tune, warm=180) as sim:
+        sim.executor(['ocarina out', 'wait 3.5', play, 'end']).run()
         a, b = [s for s in sim.steps() if s['src'].split()[0] == 'ocarina']
         first = sim.bridge.note_log[0][1]
         left = [f for f, x in sim.bridge.pressed_log if x == 'LEFT'][0]
         check(b['result'] == 'played' and first - left < 300 and not sim.bridge.dropped,
               f"a window that has been open 3.5 s needs no further wait: the notes start {first - left} frames after the D-pad Left ({b['result']}, {b['secs']} s)")
     # a song the game takes: it closes the note wait by itself (no B from us), plays it back and holds Link; the step waits for control and says played
-    storms = ['L', 'R', 'X', 'L', 'R', 'X']
-    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
-        sim.executor(['ocarina L R X L R X', 'end']).run()
+    with WorldSimulation(boot_events=0, follow=False, song=tune) as sim:
+        sim.executor([play, 'end']).run()
         a = sim.steps()[0]
         wire = [b for _, b in sim.bridge.pressed_log]
-        check(a['result'] == 'played' and wire == ['LEFT'] + storms and sim.bridge.songs_taken == 1 and 'B' not in wire,
+        check(a['result'] == 'played' and wire == ['LEFT'] + tune and sim.bridge.songs_taken == 1 and 'B' not in wire,
               f"a song the game takes ends played and nobody presses B ({a['result']}; {wire}; {a['detail']})")
         check(sim.game.st['event'] == 0 and sim.bridge.busy_left == 0 and a['secs'] >= 5.0,
               f"the step waited until the song's playback let Link go ({a['secs']} s, event {sim.game.st['event']})")
     # the same notes too slowly (0.6 s apart: invented rule, the game's own is not known beyond 0.25 s): not taken, put away
-    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
-        sim.executor(['ocarina L R X L R X gap 450', 'end']).run()
+    with WorldSimulation(boot_events=0, follow=False, song=tune) as sim:
+        sim.executor([play + ' gap 450', 'end']).run()
         a = sim.steps()[0]
         check(a['result'] == 'no-song' and sim.bridge.songs_taken == 0 and [b for _, b in sim.bridge.pressed_log][-1] == 'B',
               f"notes the game does not take end no-song and the ocarina is put away ({a['result']})")
     # after a song the playback holds Link and a D-pad Left sent into it is lost: the step after the song finds him free; and an `ocarina out`
     # asked while a scene or a playback holds Link waits for control before the D-pad Left
-    with WorldSimulation(boot_events=0, follow=False, song=storms) as sim:
-        sim.executor(['ocarina L R X L R X', 'ocarina out', 'ocarina away', 'end']).run()
+    with WorldSimulation(boot_events=0, follow=False, song=tune) as sim:
+        sim.executor([play, 'ocarina out', 'ocarina away', 'end']).run()
         a, b, c = sim.steps()
         check(a['result'] == 'played' and b['result'] == 'out' and c['result'] == 'away' and not sim.bridge.lost,
               f"ocarina out right after a taken song works and no button was lost ({a['result']}, {b['result']}, {c['result']}; lost {sim.bridge.lost})")

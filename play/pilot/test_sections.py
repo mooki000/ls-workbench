@@ -612,6 +612,29 @@ def wait_time_checks(tmp):
         cp.run(st)
         finish(game, chan)
         check(cp.timeline[0]['outcome'] == 'budget: time' and cp.timeline[0]['goal_status'] == 'open', 'a night that does not end within the objective\'s time is a budget outcome')
+        # the song that moves the time of day: an adult who has waited 20 game seconds plays the one the local song file names (an invented one here), twice; no name, or a child: no song
+        sp, plain = Path(tmp) / 'time-songs.json', {'_buttons': ['L', 'R', 'Y', 'X', 'A'], 'song-a': '2 4 1 5 3 4'}
+        real_age = sections.area_age
+
+        def waited(book, adult):
+            sp.write_text(json.dumps(book))
+            os.environ['PILOT_SONG_PITCHES'] = str(sp)
+            sections.area_age = (lambda area: 'adult') if adult else real_age
+            try:
+                shots[:] = [dark] * 14 + [bright]
+                cp, game, chan, st, run_dir, client = start(tmp, replies=[plan_wait])
+                cp.capture = capture
+                cp.markers = [sections.Marker({'name': 'day', 'flag': 'Talked=1'})]
+                cp.chapter.max_objectives = 1
+                cp.run(st)
+                finish(game, chan)
+                return cp.timeline[0]['outcome'], [src for src, _ in game.log if src.startswith('ocarina')]
+            finally:
+                sections.area_age = real_age
+                os.environ.pop('PILOT_SONG_PITCHES', None)
+        check(waited({**plain, '_time_song': 'song-a'}, True) == ('solved', ['ocarina R X L A Y X'] * 2), 'an adult waiting for the day plays the time song the song file names, twice')
+        check(waited(plain, True) == ('solved', []), 'a song file that names no time song: the pilot only waits')
+        check(waited({**plain, '_time_song': 'song-a'}, False) == ('solved', []), 'a child has no time song: the pilot only waits')
 
 
 YOFF = '''

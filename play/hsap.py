@@ -57,7 +57,7 @@ Steps (one a line; # starts a note):
                               `oc: the note wait turned on`; first it waits until Link is free: a song's playback holds him and a D-pad Left sent
                               into it is lost); the window then warms up for `ready` ms (default 3000) from that line, since a window opened a
                               moment ago ignores its first note; the notes (L R A Y X, the game's own note buttons) go out as ONE timed sequence,
-                              each held 100 ms and starting 250 ms after the one before by default (what the game took the Song of Storms at);
+                              each held 100 ms and starting 250 ms after the one before by default (what the game took a song at);
                               then up to 4 s for the game to close its note wait itself: played (it did: a song was taken, the step waits for
                               Link to be free again) / no-song (it did not: B puts the ocarina away) / out / away / no-ocarina (no note wait in
                               3.5 s, or Link held 25 s)
@@ -1764,7 +1764,7 @@ class Executor(ActionSteps, ItemSteps):
         if mode == 'out':
             return 'out', 'the ocarina waits for a note; ' + lines()
         # all the notes as ONE timed sequence (the game's frames, not this program's wall clock between requests): 100 ms notes starting 250 ms
-        # apart took the Song of Storms in every run of hold pi2-h1; one request a note, 150/450 ms or 400/450 ms, never did
+        # apart took a song in every run of hold pi2-h1; one request a note, 150/450 ms or 400/450 ms, never did
         every = (hold + gap) / 1000.0
         # a window opened a moment ago ignores its first note (holds pi2-h1..h3: 21 of 22 tries in a fresh window gave no song, 6 of 6 in one open 3 s or more did):
         # the window warms up first, `ready` ms from the game's `turned on` line
