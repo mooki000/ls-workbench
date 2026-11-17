@@ -159,7 +159,11 @@ BOOLS["ChestOpen.%d" % ACTOR_ID] = (0, 8, 0)
 
 
 def game_data():
-    entries = {"Bool": [], "Int": [], "Struct": [], "Enum": [dict(Hash=h("Mode"), DefaultValue=0, RawValues=["A", "B"], ResetTypeValue=8, SaveFileIndex=0)]}
+    entries = {"Bool": [], "Int": [], "Struct": [],
+               "Enum": [dict(Hash=h("Mode"), DefaultValue=h("B"), RawValues=["A", "B"], ResetTypeValue=8, SaveFileIndex=0)],
+               "Bool64bitKey": [dict(Hash=77, ResetTypeValue=24, SaveFileIndex=0), dict(Hash=(1 << 63) + 5, ResetTypeValue=24, SaveFileIndex=0)],
+               "Float": [dict(Hash=h("Misc_Ratio"), DefaultValue=0.5, ResetTypeValue=0, SaveFileIndex=2)],
+               "IntArray": [dict(Hash=h("Misc_Counts"), DefaultValue=-1, OriginalSize=2, TotalSize=4, ResetTypeValue=8, SaveFileIndex=0)]}
     for name, (default, reset, file) in BOOLS.items():
         entries["Bool"].append(dict(Hash=h(name), DefaultValue=bool(default), ResetTypeValue=reset, SaveFileIndex=file))
     for name, default in INTS.items():
@@ -244,7 +248,7 @@ static const char *const scan_roots[] = { "Event", "Banc", "GameData", "RSDB" };
 # identifiers the made-up flow files spell out (the rest of the flags stay unnamed until a test names them)
 FLOW_NAMES = ["Markers", "Stock", "Dungeons", "Caps", "ChestOpen", "Sword", "Song1", "Song2", "Bomb", "Medal", "Cloak", "Boots", "AlphaCave",
               "Wallet", "Count", "Keys", "HasMap", "Story_Alpha", "Story_StartsTrue", "Player.Rupees", "Player.MagicSize", "Misc_Counter",
-              "Temp_Flag", "Unsaved_Flag", "Option_Flag", "NoReset_Flag", "Heart_Flag", "Standing_Flag", "Fight_Flag"]
+              "Temp_Flag", "Unsaved_Flag", "Option_Flag", "NoReset_Flag", "Heart_Flag", "Standing_Flag", "Fight_Flag", "Misc_Ratio"]
 
 
 def romfs_files(little=True):

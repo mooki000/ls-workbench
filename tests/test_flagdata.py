@@ -381,6 +381,36 @@ class Reports(Fixture):
         self.assertEqual(fd_report.resolve_map("Ke", maps), "")          # too short to mean anything
         self.assertEqual(fd_report.map_table({1: (older, "x", "y")})["TowerKeep"], "TowerKeep")
 
+    def test_the_other_containers_are_listed_with_names_defaults_and_placed_actors(self):
+        p = self.pipeline()
+        by_kind = {}
+        for r in fd_report.make_other_rows(p["ctx"]):
+            by_kind.setdefault(r["kind"], []).append(r)
+        self.assertEqual({k: len(v) for k, v in by_kind.items()},
+                         {"Bool64bitKey": 2, "Enum": 1, "Float": 1, "IntArray": 1, "Struct": 10})
+        enum, = by_kind["Enum"]
+        self.assertEqual((enum["default"], enum["extra"], enum["named"]), ("B", "2 values: A, B", "no"))
+        ratio, = by_kind["Float"]
+        self.assertEqual((ratio["name"], ratio["default"], ratio["file"], ratio["name_source"]), ("Misc_Ratio", "0.5", 2, "files"))
+        counts, = by_kind["IntArray"]
+        self.assertEqual((counts["default"], counts["extra"]), ("-1", "OriginalSize 2; TotalSize 4"))
+        placed, wide = sorted(by_kind["Bool64bitKey"], key=lambda r: r["hash"])
+        self.assertEqual((placed["hash"], placed["map"], placed["prefix"], placed["note"]),
+                         ("000000000000004d", "ZoneA", "Other", 'placed actor Other "Other_One" in ZoneA'))
+        self.assertEqual((wide["hash"], wide["map"], wide["note"]), ("8000000000000005", "", ""))   # (a key no placed actor has: 16 digits)
+        self.assertLessEqual({"Markers", "Stock", "Dungeons", "Caps", "ChestOpen", "Dungeons.AlphaCave"}, {r["name"] for r in by_kind["Struct"]})
+        self.assertTrue(all(r["extra"].endswith("members") for r in by_kind["Struct"]))
+
+    def test_describe_other_covers_the_kinds_the_list_has(self):
+        d = fd_classify.describe_other
+        self.assertEqual(d("Vector3", dict(DefaultValue=dict(x=1.0, y=2.0, z=0.0))), (" ".join(["1.0", "2.0", "0.0"]), ""))
+        self.assertEqual(d("BoolExp", dict(Values=[[12, 5], [2, 7, 9]])), ("", "terms 12:5 2:7:9"))
+        self.assertEqual(d("String64", dict(DefaultValue="x")), ("x", ""))
+        self.assertEqual(d("Binary", dict(DefaultValue=40960)), ("40960", ""))
+        self.assertEqual(d("BoolArray", dict(DefaultValue=False, OriginalSize=80, TotalSize=80)), ("0", "OriginalSize 80; TotalSize 80"))
+        self.assertEqual(d("Enum", dict(DefaultValue=12345, RawValues=["A"])), ("0x00003039", "1 values: A"))
+        self.assertEqual(d("Bool64bitKey", dict(Hash=1)), ("", ""))
+
     def test_a_short_kind_word_before_the_place_is_skipped(self):
         p = self.pipeline()
         ctx = p["ctx"]
@@ -402,6 +432,10 @@ class Reports(Fixture):
         with open(self.tmp / "out/excluded.csv", encoding="utf-8") as f:
             left = list(csv.DictReader(f))
         self.assertEqual((list(left[0]), len(left)), (fd_report.EXCLUDED_COLUMNS, 10))
+        self.assertTrue(all(r["family"] for r in left))
+        with open(self.tmp / "out/others.csv", encoding="utf-8") as f:
+            other = list(csv.DictReader(f))
+        self.assertEqual(list(other[0]), fd_report.OTHER_COLUMNS)
         md = (self.tmp / "out/flags.md").read_text(encoding="utf-8")
         self.assertIn("co-op looks at **19**", md)
         self.assertIn("| story scenes | 1 | each player's own", md)

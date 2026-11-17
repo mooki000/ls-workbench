@@ -14,7 +14,8 @@ import fd_romfs
 
 CSV_COLUMNS = ["category", "scene", "shared_by_default", "default_mode", "name", "hash", "kind", "default", "map", "prefix", "family",
                "named", "name_source", "note", "reset", "file"]
-EXCLUDED_COLUMNS = ["reason", "kind", "name", "hash", "default", "reset", "file", "map", "prefix", "named"]
+EXCLUDED_COLUMNS = ["reason", "kind", "name", "hash", "default", "reset", "file", "map", "prefix", "named", "family", "name_source", "note"]
+OTHER_COLUMNS = ["kind", "name", "hash", "default", "reset", "file", "map", "prefix", "family", "named", "name_source", "note", "extra"]
 
 
 def resolve_map(token, maps):
@@ -132,7 +133,8 @@ def make_rows(results, ctx):
         mp, prefix, note = ctx.area(name, parent_name)
         if r.category is None:
             left.append(dict(reason=r.reason, kind=e.kind, name=name or "", hash="%08x" % h, default=e.default, reset=e.reset, file=e.file,
-                             map=mp, prefix=prefix, named="yes" if name else "no", _hash=h))
+                             map=mp, prefix=prefix, named="yes" if name else "no", family=ctx.family(r, name, parent_name),
+                             name_source=source, note=ctx.note(r, name, parent_name, note), _hash=h))
             continue
         rows.append(dict(category=r.category, scene="yes" if r.scene else "no", shared_by_default="yes" if r.shared_by_default else "no",
                          default_mode=r.mode if not r.scene else "own (story scenes: each player)", name=name or "", hash="%08x" % h,
@@ -143,6 +145,41 @@ def make_rows(results, ctx):
     rows.sort(key=lambda x: (order[x["category"]], x["scene"] == "yes", x["family"], x["name"] or "\uffff", x["hash"]))
     left.sort(key=lambda x: (x["reason"], x["name"] or "\uffff", x["hash"]))
     return rows, left
+
+
+def make_other_rows(ctx):
+    """Rows of the entries of every container but Bool and Int (structs, per-object keys, enums, strings, arrays ...), sorted. A name is
+    looked for the same way (a 32-bit hash); a per-object key is matched against the placed actors of the Banc files."""
+    rows = []
+    for o in ctx.tables.others:
+        wide = o.kind == "Bool64bitKey" or o.hash >> 32 != 0   # (a key is always 16 digits)
+        hit = ctx.book.names.get(o.hash) if o.kind == "Struct" else None if wide else ctx.book.flag_name(o.hash)   # (a struct's name is its group's)
+        name, source = hit if hit else (None, "")
+        parent = ctx.parent.get(o.hash)
+        parent_name = ctx.struct_name(parent[0]) if parent else None
+        note, mp, prefix = "", "", ""
+        if o.kind == "Bool64bitKey":
+            actor = ctx.book.actors.get(o.hash)
+            if actor:
+                mp, prefix = ctx.maps.get(actor[0], actor[0]), actor[1] or ""
+                note = "placed actor %s \"%s\" in %s" % (actor[1], actor[2], actor[0])
+            family = "per-object keys (a placed actor's hash)" if actor else "per-object keys (no placed actor of the files)"
+        else:
+            mp, prefix, note = ctx.area(name, parent_name)
+            if name is not None:
+                family = ctx.top(name) + ".*" if "." in name else "flat %s flags" % o.kind
+            elif o.hash in ctx.parent:
+                family = "unnamed, in group %s" % (ctx.top(parent_name) if parent_name else "(unnamed group)")
+            else:
+                family = "unnamed, in no group"
+            if name is None and o.hash in ctx.parent:
+                member = ctx.book.names.get(ctx.parent[o.hash][1])
+                note = 'member %s of group %s' % ('"%s"' % member[0] if member else "0x%08x" % ctx.parent[o.hash][1], parent_name or "0x%08x" % ctx.parent[o.hash][0])
+        rows.append(dict(kind=o.kind, name=name or "", hash=("%016x" if wide else "%08x") % o.hash, default=o.default,
+                         reset="" if o.reset is None else o.reset, file="" if o.file is None else o.file, map=mp, prefix=prefix,
+                         family=family, named="yes" if name else "no", name_source=source, note=note, extra=o.extra))
+    rows.sort(key=lambda x: (x["kind"], x["family"], x["name"] or "\uffff", x["hash"]))
+    return rows
 
 
 def write_csv(path, columns, rows):

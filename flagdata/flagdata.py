@@ -8,8 +8,8 @@
                                        name, family, category and default mode of flags, from the cache `build` made
 
 `build` runs the classifier of LS's `host/oot_coop.c` over the player's own GameDataList and RomFS (the same rules, lists, struct
-memberships and story-scene list the game uses), recovers the flags' names by hashing, and writes `flags.csv`, `excluded.csv` and
-`flags.md` to --out. It also writes the private cache the log annotator (`coop_log.py`) reads. The counts equal the game's log line
+memberships and story-scene list the game uses), recovers the flags' names by hashing, and writes `flags.csv`, `excluded.csv`, `others.csv`
+(the entries of the containers the sync never reads: structs, per-object keys, enums, strings, arrays ...) and `flags.md` to --out. It also writes the private cache the log annotator (`coop_log.py`) reads. The counts equal the game's log line
 (`playing a save: N progress flags ...`); --compare-log checks that against a log and fails on any difference.
 
 The outputs hold names read from the player's game files: they stay on the player's machine. `build` refuses to write them into the
@@ -125,12 +125,14 @@ def build(args):
     lines += ["warning: " + w for w in warnings]
     fd_report.write_csv(out / "flags.csv", fd_report.CSV_COLUMNS, rows)
     fd_report.write_csv(out / "excluded.csv", fd_report.EXCLUDED_COLUMNS, left)
+    other = fd_report.make_other_rows(ctx)
+    fd_report.write_csv(out / "others.csv", fd_report.OTHER_COLUMNS, other)
     fd_report.write_md(out / "flags.md", ctx, results, rows, left, dict(lines=lines))
     for w in warnings:
         print("warning: " + w, file=sys.stderr)
     print("counts: " + ", ".join("%s %d" % (k, v) for k, v in counts.items()))
-    print("named %d of %d classified flags; wrote flags.csv, excluded.csv, flags.md to %s" % (
-        sum(1 for r in rows if r["named"] == "yes"), len(rows), out))
+    print("named %d of %d classified flags; wrote flags.csv, excluded.csv, others.csv (%d entries of the other containers) and flags.md to %s" % (
+        sum(1 for r in rows if r["named"] == "yes"), len(rows), len(other), out))
     if not args.no_cache:
         key = fd_cache.make_key(romfs.raw(romfs.glob_one(fd_classify.GAMEDATA_FOLDER, fd_classify.GAMEDATA_NAME)), text.encode())
         meta = dict(counts=counts, stamp="%08x" % scenes.stamp(), source=args.source or fd_source.SOURCE, rev=None if args.source else args.rev)

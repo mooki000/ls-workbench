@@ -115,6 +115,7 @@ def recover(tables, scenes, collector, prefix="HavePlayedEvent.", names_files=()
     targets = {e.hash for e in tables.bools} | {e.hash for e in tables.ints} | set(tables.structs)
     for members in tables.structs.values():
         targets.update(m for m, _ in members)
+    targets.update(o.hash for o in tables.others if o.kind != "Bool64bitKey" and o.hash >> 32 == 0)   # (the other containers' flags: 64-bit keys have no name to find)
     book = Book(targets)
     book.actors = dict(collector.actors)
     # The order is the order of trust: the first name that hashes to a flag keeps it.

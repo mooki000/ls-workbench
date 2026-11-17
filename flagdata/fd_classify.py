@@ -44,11 +44,55 @@ class Result:
         return self.category is not None and self.mode in ("shared", "pool")
 
 
+@dataclass
+class Other:
+    """An entry of a container the classifier does not look at (every kind but Bool and Int; a struct is one too)."""
+    kind: str
+    hash: int          # 32 bits; 64 for Bool64bitKey, the per-object keys
+    default: str       # the default as text ("" when the kind has none)
+    reset: object      # the reset kind and the save file index (None for a struct: it holds no value of its own)
+    file: object
+    extra: str         # what else the entry says: a struct's member count, an enum's values, array sizes, an expression's terms
+
+
+SIZE_KEYS = ("ArraySize", "OriginalSize", "Size", "TotalSize")
+
+
+def describe_other(kind, e):
+    """(default text, extra text) of an entry of a kind other than Bool and Int."""
+    default, extra = e.get("DefaultValue"), []
+    if kind == "Struct":
+        return "", "%d members" % len(default or [])
+    if kind in ("Enum", "EnumArray"):
+        values = e.get("RawValues") or []
+        names = {fd_romfs.murmur3(v): v for v in values}
+        default = names.get(default, "0x%08x" % default if isinstance(default, int) else "")
+        extra.append("%d values: %s" % (len(values), ", ".join(values)))
+    elif kind == "BoolExp":
+        default = ""
+        extra.append("terms " + " ".join(":".join(str(x) for x in t) if isinstance(t, (list, tuple)) else str(t) for t in e.get("Values", [])))
+    elif kind == "Vector3":
+        default = " ".join(repr(default.get(c, 0.0)) for c in "xyz") if isinstance(default, dict) else ""
+    elif default is None:
+        default = ""
+    elif isinstance(default, bool):
+        default = int(default)
+    sizes = ["%s %s" % (k, e[k]) for k in SIZE_KEYS if k in e]
+    return str(default), "; ".join(sizes + extra)
+
+
 class GameTables:
-    """What the classifier reads of the GameDataList: the Bool and Int entries and the structs."""
+    """What the classifier reads of the GameDataList: the Bool and Int entries and the structs; the entries of every other container
+    are kept as `others` (the flag map lists them, the classifier never looks at them)."""
 
     def __init__(self, data):
         self.kinds = Counter({kind: len(rows) for kind, rows in data.items()})
+        self.others = []
+        for kind, rows in data.items():
+            if kind not in ("Bool", "Int"):
+                for e in rows:
+                    default, extra = describe_other(kind, e)
+                    self.others.append(Other(kind, e["Hash"] & 0xFFFFFFFFFFFFFFFF, default, e.get("ResetTypeValue"), e.get("SaveFileIndex"), extra))
         self.bools = [Entry(e["Hash"], "Bool", int(bool(e.get("DefaultValue"))), e.get("ResetTypeValue", 0), e.get("SaveFileIndex", 0))
                       for e in data.get("Bool", [])]
         self.ints = [Entry(e["Hash"], "Int", e.get("DefaultValue", 0), e.get("ResetTypeValue", 0), e.get("SaveFileIndex", 0))
