@@ -102,6 +102,14 @@ the load. Then one bullet per check, each with its result as the program printed
 - game runs: what was done, the log lines quoted, a table with one row per run
 - pictures, each with a caption that says what to look at
 - what was rerun after a rebase and what was only rebuilt
+- **Methodology and tools, verbose (the user's standing rule, 17 Nov 2026):** step by step, how it was tested: the build
+  and how it was made (native, cross, from which donor or cache), the save or scene and the settings, how the game was
+  driven (control bridge commands, scripted input, the test player, debug teleport or warp, actor toggles), how many
+  runs and how long, what was sampled and how often (log lines, counters, RSS, nvidia-smi, frame logs, pictures), how
+  each number was computed (script, window, what counts as a pass), and the commands to run it again. Name every tool:
+  link public ones (the file on the forge, `docs/control.md`, the workbench's file on
+  https://github.com/mooki000/ls-workbench), attach a small script when it helps a reviewer rerun, and describe private
+  ones in words ("the workbench's run wrapper", with its link): no local paths, no `hs-` tool names.
 
 ## Not tested          (or "Not shown yet" for a draft)
 Explicitly list the **Windows execution of every new/changed C/C++ fixture** when only syntax was checked.
