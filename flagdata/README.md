@@ -1,12 +1,13 @@
 # flagdata: flags, their names and what co-op does with them
 
-A tool for working with the game's flags (its "game data") on **your own** copy of the game. The method, the families of flags and
+Two tools for working with the game's flags (its "game data") on **your own** copy of the game. The method, the families of flags and
 what stays unnamed are in [docs/oot/flag-names.md](../docs/oot/flag-names.md).
 
 | Tool | What it does |
 |---|---|
-| `flagdata.py build` | Runs the co-op progress classifier of LS's `host/oot_coop.c` over your GameDataList and RomFS, recovers the flags' names by hashing, and writes `flags.csv`, `excluded.csv` and `flags.md` (counts, families, maps, every small category in full, what is left out and why). Also writes a private cache that `lookup` reads. |
+| `flagdata.py build` | Runs the co-op progress classifier of LS's `host/oot_coop.c` over your GameDataList and RomFS, recovers the flags' names by hashing, and writes `flags.csv`, `excluded.csv` and `flags.md` (counts, families, maps, every small category in full, what is left out and why). Also writes a private cache for `coop_log.py`. |
 | `flagdata.py lookup HASH ...` | A flag's name, family, category and default mode from that cache. `flagdata.py hash NAME ...` prints the game's hash of a name. |
+| `coop_log.py LOG ...` | Prints a game log's co-op lines (`sent`/`received`/`applied`/`held progress <hash> ...`, `the game shows`, `pool keys`, the `test:` and `flag ... reads` lines, `refused`) with the flag each hash is. `--summary` groups what the log shows per verb, category and family. |
 
 ## Nothing of the game is here
 
@@ -26,6 +27,9 @@ python3 -I -B flagdata/flagdata.py build --romfs <your RomFS folder> --repo <LS 
 #   --names FILE   names to try, one a line (# comments; `Part{000..127}` expands a numbered range): each is checked by hash
 #   --sweep DIR    text that quotes names (the LS source, your notes): a stricter filter applies
 
+python3 -I -B flagdata/coop_log.py game.log                # every co-op flag line, annotated
+python3 -I -B flagdata/coop_log.py --summary game.log      # what was applied/held/sent/received, per category and family
+python3 -I -B flagdata/coop_log.py --only applied,held game.log
 python3 -I -B flagdata/flagdata.py lookup 1a2b3c4d
 ```
 
@@ -55,8 +59,8 @@ build of the game, or by an LS commit with another list, will differ: pass the m
 | `fd_classify.py` | The classifier over the GameDataList; the categories and the room's default modes |
 | `fd_names.py` | Name recovery: sources, order of trust, struct hierarchy, placed-actor ids, the chance-match filter |
 | `fd_report.py` | Rows, families, maps, `flags.csv`, `excluded.csv`, `flags.md` |
-| `fd_cache.py` | The private cache `lookup` reads |
-| `flagdata.py` | The program |
+| `fd_cache.py` | The private cache the annotator reads |
+| `flagdata.py`, `coop_log.py` | The two programs |
 
-Tests: `python3 -I -B tests/test_flagdata.py` (a made-up game; one test needs Python 3.14's zstd and is
+Tests: `python3 -I -B tests/test_flagdata.py` and `tests/test_coop_log.py` (a made-up game; one test needs Python 3.14's zstd and is
 skipped without it). Standard library only. Written on Linux; not run on Windows.

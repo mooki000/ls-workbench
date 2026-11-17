@@ -1,4 +1,4 @@
-"""The private cache of a build: every Bool and Int flag with its name, family, category and default mode, for `flagdata.py lookup`.
+"""The private cache of a build: every Bool and Int flag with its name, family, category and default mode, for the log annotator.
 
 It is made from a player's own game files, so it lives under the user's own state folder (`$LS_FLAGDATA_STATE`, else
 `$XDG_STATE_HOME/ls-workbench/flagdata`, else `~/.local/state/ls-workbench/flagdata`), mode 0600 in a 0700 folder, and is never written

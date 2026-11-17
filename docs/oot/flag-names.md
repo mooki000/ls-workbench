@@ -123,10 +123,11 @@ ammunition **each player's own**; story scenes each player's own ("Story scenes:
 python3 flagdata/flagdata.py build --romfs <RomFS> --repo <LS clone> [--rev REV] --out <folder outside this repository> \
     [--names FILE] [--sweep DIR] [--compare-log game.log]
 python3 flagdata/flagdata.py lookup <hash> ...            # name, family, category, default mode
+python3 flagdata/coop_log.py game.log [--summary]         # a co-op log, each flag line with its flag
 ```
 
 `build` writes `flags.csv`, `excluded.csv`, `flags.md` and a **private cache** under the user's state folder
-(`$XDG_STATE_HOME/ls-workbench/flagdata`, mode 0600) that `flagdata.py lookup` reads. All of it holds names read from the player's files:
+(`$XDG_STATE_HOME/ls-workbench/flagdata`, mode 0600) that the log annotator reads. All of it holds names read from the player's files:
 it is never written under this checkout, and never committed, posted or sent. `flagdata/README.md` has the details.
 
 ## Open questions

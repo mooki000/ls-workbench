@@ -9,7 +9,7 @@
 
 `build` runs the classifier of LS's `host/oot_coop.c` over the player's own GameDataList and RomFS (the same rules, lists, struct
 memberships and story-scene list the game uses), recovers the flags' names by hashing, and writes `flags.csv`, `excluded.csv` and
-`flags.md` to --out. It also writes the private cache `lookup` reads. The counts equal the game's log line
+`flags.md` to --out. It also writes the private cache the log annotator (`coop_log.py`) reads. The counts equal the game's log line
 (`playing a save: N progress flags ...`); --compare-log checks that against a log and fails on any difference.
 
 The outputs hold names read from the player's game files: they stay on the player's machine. `build` refuses to write them into the
@@ -135,7 +135,7 @@ def build(args):
         key = fd_cache.make_key(romfs.raw(romfs.glob_one(fd_classify.GAMEDATA_FOLDER, fd_classify.GAMEDATA_NAME)), text.encode())
         meta = dict(counts=counts, stamp="%08x" % scenes.stamp(), source=args.source or fd_source.SOURCE, rev=None if args.source else args.rev)
         path = fd_cache.write(fd_cache.state_dir(args.state), key, rows, left, meta)
-        print("cache for lookup: %s" % path)
+        print("cache for the log annotator: %s" % path)
     return 0 if ok else 1
 
 

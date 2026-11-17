@@ -148,15 +148,17 @@ against `forge/main`; check against the branch that holds the patch.
 
 The game names its flags by hash only. A co-op log line such as `applied progress <8 hex digits> = 1` says which flag by its hash; the
 page `docs/oot/flag-names.md` explains how names are recovered from the player's own files, what stays unnamed and why, and how the
-co-op layer sorts flags into categories (and which a default room shares). A tool, in `flagdata/`, runs on the player's own game:
+co-op layer sorts flags into categories (and which a default room shares). Two tools, in `flagdata/`, run on the player's own game:
 
 ```sh
 W=$M/../../flagdata    # (M: the map's folder, section 1)
+python3 -I -B $W/coop_log.py LOG                  # each co-op flag line with its flag's name, family, category and default mode
+python3 -I -B $W/coop_log.py --summary LOG        # what was applied, held, sent and received, per category and family
 python3 -I -B $W/flagdata.py lookup 1a2b3c4d      # one hash
 python3 -I -B $W/flagdata.py build --romfs <RomFS> --repo <LS clone> --rev <commit> --out <folder outside any repository>
 ```
 
-`flagdata.py lookup` reads the private table `build` made under the user's state folder (`$XDG_STATE_HOME/ls-workbench/flagdata`); without it, it
+`coop_log.py` reads the private table `build` made under the user's state folder (`$XDG_STATE_HOME/ls-workbench/flagdata`); without it, it
 says how to make one. **The names are game data**: they stay in that table, in `--out` and in your report's files folder, never in a skill,
 a pull request, an issue or a comment. Say "a played event of the room's data" or give the hash, not the name; the exceptions are names LS's
 own source already quotes. A hash with no name is normal (about a quarter of the flags have none): say so, and say the family.

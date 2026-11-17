@@ -44,7 +44,7 @@ the scripts were written by them under those rules, then run and checked here. T
 | `mcp/` | Registered tools, CLI and private broker; operator setup is required | `README.md`, `CATALOGUE.md` |
 | `docs/agent-brief.md` | The rules every agent on my machine reads first | |
 | `docs/oot/` | A map of the game's lifted functions: what each `f_<address>` looked at so far does, its data and structures, and how sure each row is (about 1,400 rows, by dyst). Search it before reading lifted code; add what you learn | `README.md`, `fnmap.py` |
-| `flagdata/` | For your own copy of the game: rebuild the co-op progress classification and the flags' names from your files (reports and a private cache). No game data is here | `README.md`, `flagdata.py`, `docs/oot/flag-names.md` |
+| `flagdata/` | For your own copy of the game: rebuild the co-op progress classification and the flags' names from your files (reports and a private cache), and annotate a co-op log with them. No game data is here | `README.md`, `flagdata.py`, `coop_log.py`, `docs/oot/flag-names.md` |
 
 ### The harness
 
