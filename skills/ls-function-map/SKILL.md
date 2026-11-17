@@ -200,9 +200,12 @@ python3 -I -B $W/flagdata.py build --romfs <RomFS> --repo <LS clone> --rev <comm
 ```
 
 `coop_log.py` reads the private table `build` made under the user's state folder (`$XDG_STATE_HOME/ls-workbench/flagdata`); without it, it
-says how to make one. **The names are game data**: they stay in that table, in `--out` and in your report's files folder, never in a skill,
-a pull request, an issue or a comment. Say "a played event of the room's data" or give the hash, not the name; the exceptions are names LS's
-own source already quotes. A hash with no name is normal (about a quarter of the flags have none): say so, and say the family.
+says how to make one. **The names are game data**: outside the workbench repository's flag map they stay in that table, in `--out` and in your
+report's files folder, never in a skill, a pull request, an issue or a comment. Look a flag up first in the published flag map:
+`python3 docs/oot/flagmap.py find <hash|name|words>` and `show <hash>` (every flag of the game's list, its name where one was recovered,
+its save file and group, what co-op does with it; the file layout is `docs/oot/save-format.md`). In LS pull requests, issues and comments
+say "a played event of the room's data" or give the hash and the family, not the name; the exceptions are names LS's own source already
+quotes. A hash with no name is normal (about half of the list's entries have none): say so, and say the family.
 
 **A value the game re-writes every frame itself** (seen once: an Int whose own code queues it each frame) cannot be set
 from outside by a flag set: the applier `f_80bb9980` walks each ring in slot order, so the last slot wins, and the
