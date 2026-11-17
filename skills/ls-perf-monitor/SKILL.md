@@ -64,6 +64,9 @@ Apply the workbench kernel-stop policy; missing journal coverage is unknown, nev
   `texture_used_bytes` / `texture_budget_bytes` describe a different population; do not substitute either pair.
 - RSS includes shared resident pages; Windows private commit is not resident RAM. Linux RSS/RssAnon is not commit.
   Available RAM and swap are whole-PC context. Keep bytes in data; convert to MiB (`bytes / 2**20`) only for display.
+- The CSV has no pressure-stall counters. For a stall that may come from the PC, read `/proc/pressure/{cpu,io,memory}`
+  before and after the window: the `total=` counters (microseconds of stall since boot) date a machine stall to the
+  second, beside the load average. They show the PC stalled, not that it caused the game's hitch.
 - `monotonic_ns` is OS monotonic time; `elapsed_s` starts at monitor start. Neither is UTC or renderer `time_s`.
   `frame,time_s` exactly match the same-run `frames.csv` index/origin, not shifted game-present identifiers.
   `game_frame`, shot/replay `renderer_present` and host `present.csv` remain distinct populations.

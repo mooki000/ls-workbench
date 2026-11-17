@@ -64,8 +64,10 @@ Every change on the laptop goes into the ledger `C:\ls\CHANGES.txt` with its und
 - **480 s game cap** in three files (`hs-run.ps1`, `<win>-run.py`, `run-worker.py`; also `<win>-case.py`, `cpwin.py`). Only a
   `crossplay15-*` tag may go to 1,100 s; a ten-minute two-PC session needs that tag and Main's word.
 - **ssh command line**: `remote()` base64-encodes UTF-16 with no guard. About 8,000 encoded characters run; 8,100 fail
-  with "The command line is too long" (a launch of 8,732 wasted a 7,573 s queue wait). Split a long read-only script, or
-  scp it and run the file. Only `cpwin.py` guards it (7,600) and retries "exec request failed on channel 0".
+  with "The command line is too long" (a launch of 8,732 wasted a 7,573 s queue wait). Split a long read-only script, scp
+  it and run the file, or send it on ssh stdin to the laptop's Python (`ssh <win> "C:\ls\tools\python\python.exe -I -
+  ARGS" < script.py`: nothing is written there; `reports/InternetSession-files/probe/probes.py` does it). Only `cpwin.py`
+  guards the limit (7,600) and retries "exec request failed on channel 0".
 - **PowerShell traps**: an apostrophe inside a single-quoted string kills a helper at `[scriptblock]::Create` before it
   runs (double it, lint every ledger sentence; `firewall-step.py` refuses a second try, so recover with a ledger line,
   delete the failed helper, apply again). Windows PowerShell 5 strips JSON quotes passed to a native CLI: send the bridge
@@ -78,7 +80,29 @@ Every change on the laptop goes into the ledger `C:\ls\CHANGES.txt` with its und
   visible windows can last a whole session while bridge steps still work, so probe one picture before a long hold. Bridge
   `shot` omits the Insert-menu overlay. A 1280x720 window is a DPI-scaled swapchain: record both sizes.
 - **Session 0**: ssh runs in session 0 (no window, no firewall prompt); desktop runs belong to the scheduled task.
-  Windows log stamps lag the game by up to about 2 s: bracket, do not align.
+- **Windows log lag**: the log reaches this PC by a poll over ssh, so its stamps lag the game by 1.5 to 6 s and one poll
+  can stamp several lines alike (seen: an `is away` / `is back` pair): bracket, do not align, and date such a pair from
+  the other side's frame gaps and the relay log. The runner checks a Windows side's `leave` and
+  `accept` log line once, at the planned time plus the step's span plus 3 s (`verify_menu_step` in `cpsession.py`), so a
+  late log fails a clean step: `reports/InternetSession-files/runner/cpsession.py` waits up to 12 s for `leave`
+  (`accept` is not covered). A `chat` expectation widens its acknowledgement window with `win_slack_s` (default 4; a
+  two-hour run saw 5.9 s of lag): give a Windows pair 8 or more.
+- **Another network**: the SSH client configuration reaches the laptop over its LAN address. From a hotspot every `ssh`
+  and `scp` needs `-o HostName=<tailnet address>` (the pinned known-hosts file has a key for both addresses): put a PATH
+  shim named `ssh` and `scp` that adds it for the laptop's alias (`reports/InternetSession-files/bin/`); the wrapper's
+  `OPTS` and the runner's helpers call plain `ssh`/`scp`, so the shim is all they need.
+- **Metered link**: the evidence copy of a run folder with automatic pictures is hundreds of MB (216 MB, base64 over ssh,
+  in a 15-minute run). Use `--no-auto-shots` (case: `win.no_auto_shots`, the default for a soak tag) and fetch only
+  `*.json`, `*.txt` and named pictures; `win.defer_fetch` (`reports/InternetSession-files/runner/cpwin.py`) copies nothing
+  of the run folder. Count bytes from the adapter (`Get-NetAdapterStatistics` before and after): once, the raw-socket
+  counter of `reports/InternetSession-files/watch/net_watch_internet.py` missed about 110 MB of the adapter's transmit.
+- **Shader preparation**: a fresh one does not finish on the laptop's Arc GPU: the one unlimited run failed (exit 4; its
+  one-shot claim is spent) and a bounded one reached 399 of 38,809 programs in 392 s. A task that asks for one there
+  cannot be met as written: say so and ask Main how to cover that step.
+- **Undoing the long-tag patch** (`reports/Soak4-files/<win>-long/undo.py`): run `--dry-run` first and pass `--stamp` of
+  the apply whose dated copies (`<name>.before-soak4-<stamp>` in `C:\ls\scripts`) exist. Without `--stamp` it takes the
+  newest receipt, and a second `apply` that found the files patched writes an `unchanged` receipt with no copies, so the
+  undo refuses. It needs the ssh shim above when the laptop is on a hotspot.
 - A Windows cross-built fixture runs there (the laptop has Python at `C:\ls\tools\python`); `record.py` with `fixture_cc.py`
   in `reports/WinFixtures-files/tools/` is a working route to execute the co-op drivers. The syntax check in
   `ls-workbench` does not run them.

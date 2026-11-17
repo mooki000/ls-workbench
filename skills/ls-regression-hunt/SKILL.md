@@ -153,8 +153,9 @@ A plan needs `kind`, **`entries`**, `run_command`, `scenario`, `seconds`, `grace
 `run_command`. Use new output paths and run each plan only once; `_hold` does not refuse an old plan by itself.
 
 1. Check that all entries fit the cap, including the ten-second worker reserve. Set `window` and `avoid`
-   (`every`, `at`, `for`, in seconds) only from an observed periodic disturbance. These are `_hold` plan fields;
-   the hunt's automatic plan does not copy them from a scenario.
+   (`every`, `at`, `for`, in seconds) only from an observed periodic disturbance (the desktop's usage widget is the
+   known one: `skill://ls-perf-compare`). These are `_hold` plan fields; the hunt's automatic plan does not copy them
+   from a scenario.
 2. After authorization for that one timing hold, use the existing GPU gate and an outer shutdown bound:
 
    ```sh

@@ -40,10 +40,10 @@ def destination(root):
 
 class PublicationTests(unittest.TestCase):
     def test_explicit_skill_map_and_logical_cross_references(self):
-        self.assertEqual(len(publish.SKILL_MAP), 18)
+        self.assertEqual(len(publish.SKILL_MAP), 19)
         self.assertEqual({live for live, public in publish.SKILL_MAP.items() if live == public},
                          {'ls-function-map', 'ls-skill-upkeep', 'ls-field-data', 'ls-pr-tagging', 'ls-hold-chain',
-                          'ls-restack', 'ls-windows-laptop', 'ls-relay-lan'})
+                          'ls-restack', 'ls-windows-laptop', 'ls-relay-lan', 'ls-nat-lab'})
         for live, public in publish.SKILL_MAP.items():
             original = f'name: {live}\nRead `{live}` and skill://{live}.\nSee skills/{live}/SKILL.md.\n'
             expected = f'name: {public}\nRead `{public}` and skill://{public}.\nSee skills/{public}/SKILL.md.\n'
@@ -97,7 +97,7 @@ class PublicationTests(unittest.TestCase):
             with patch.dict(os.environ, {'LS_WB_SOURCE_ROOT': str(root)}):
                 pairs = publish.files()
             destinations = {str(destination) for _, destination in pairs}
-            self.assertEqual(len(pairs), 93)
+            self.assertEqual(len(pairs), 94)
             self.assertIn('harness/ls-port.py', destinations)
             self.assertTrue({'play/pilot/pilot.py', 'play/pilot/interact.py', 'play/pilot/test_pilot.py', 'play/bench/run.py',
                              'play/bench/test_bench.py'} <= destinations)

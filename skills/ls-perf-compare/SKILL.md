@@ -52,6 +52,14 @@ P="$HOME/Code/hookshot-wt/deps/python/bin/python3"
    **at most 6 cores** over five-second samples, and same-arm repeat spread at most 5%. Load average is context,
    not the quiet test. Set the decision bands before collecting results.
 
+**A co-op room** whose other games are part of the experiment has no wording in the quiet rule: apply it to everything
+except the room's games, write that sentence in the result and report their cores beside it (one game at the 60 fps cap
+uses about 2.6 to 3.0 cores). One 24 GB card holds two real games under the runner's stock rule (a game that starts
+while another runs needs 12,288 MiB free, `admit_second` in `cpsession.py`; two games leave about 9.6 GiB). A third needs
+the fork key `run.late_gpu_free_mib`; the game-free headroom analysis predicts four fit only with `RX_VK_VRAM_MB=500`
+each and the guard `run.gpu_guard_free_mib`: `reports/CoopScale-files/headroom/headroom.py` is the method,
+`reports/CoopScale-files/coop-play4/` the fork, `reports/CoopScale.md` says whether a four-game run exists.
+
 Game-free reader check:
 
 ```sh
@@ -81,7 +89,10 @@ It tests synthetic histories, held workers and fake adapters. It does not warm a
    Do not describe the planned duration as actual queue or occupancy time; preserve both receipts separately.
 4. Keep one waiter, never withdraw/requeue to jump it, and do no analysis or other work beside your own timing hold.
    Never nest the GPU exclusive gate inside the Intel gate. A periodic desktop job is not ours to stop: a reviewed
-   plan's `window` and `avoid` fields can avoid an observed disturbance without changing the desktop.
+   plan's `window` and `avoid` fields can avoid an observed disturbance without changing the desktop. The known one is
+   the desktop's usage widget (`omarchy-agent-usage-update`: about 37 `rg` searches on 15 to 30 cores for 3 to 5 s,
+   starting 56 to 58 s into minutes :08, :23, :38 and :53 of every hour): `{"every": 900, "at": 535, "for": 12}` in
+   `avoid` covers it (`at` counts seconds into each quarter hour of the wall clock; see `avoid_delay` in `regress.py`).
 5. Retain every invalid/disturbed row. Require the adapter's validity/quiet verdict and both same-arm repeats within
    tolerance. A successful input, normal wrapper exit or low load average is not timing validity.
 
@@ -89,6 +100,13 @@ Ordinary gated runs establish counts, pictures, start/finish and memory observat
 no speed claim**; do not quote their printed frame rate even as an aside. A memory experiment does not need exclusive
 GPU time. The current numeric `hunt` classifier nevertheless requires timing mode; use ordinary collection without
 that classifier, not an unnecessary exclusive hold.
+
+A long ordinary run (a soak, a co-op session) meets the same widget: one two-hour soak had nine bursts of frame stalls
+up to 2.7 s. List its four bursts an hour as a known disturbance in the result and check whether stalls start at them
+before blaming the game or the network. An exclusive hold does not isolate the game from this PC's other unlocked work
+either (one two-hour run saw load average 130 and a stall of 8.8 s): put the load average (`pc.load` in every co-op
+sampler row, `reports/Soak4-files/sampler/`) beside any frames verdict and date a machine stall from the `total=`
+counters of `/proc/pressure/*` (`skill://ls-hold-chain`, "The locks").
 
 ## 3. Analyse the same clock and report the paired result
 

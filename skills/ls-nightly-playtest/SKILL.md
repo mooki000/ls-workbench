@@ -302,8 +302,11 @@ unsupported or exhausted hunts say why they are inconclusive. The adapter is imp
 
 ## Optional timer after reboot — disabled
 
-Do not arm it until the user explicitly asks. Only then enable private `timer_enabled`, and only after a clean full
-night (a game-free-only result is not a clean full night):
+Arming a nightly job is the user's decision, never yours. A user decision that Main relays in the task text (for
+example "a scoreboard runs every night") authorises arming it; without such text, stop with the command ready and ask
+Main. Even then arm only after the job's own first manual run showed valid results, and never pass `--user-authorized`
+on your own judgement. For this watch also enable private `timer_enabled` only after a clean full night (a game-free-only
+result is not a clean full night):
 
 ```sh
 "$P" -I -B "$H/nightly/hs-nightly.py" arm --user-authorized
@@ -315,6 +318,11 @@ After that explicit opt-in the transient service uses `run --rearm`; only a clea
 night. Failure or game-free-only completion stops the chain. The lock prevents overlap. `timer.json` records the
 calendar, unit and command. A reboot removes transient units; re-arming still requires the user's authorization.
 No timer has been armed or exercised by this lane.
+
+The pilot's nightly self-play (`pilot/selfplay.py nightly`: plan, saves, check, one queued waiter; it arms no timer) and
+the play scoreboard (`playbench.py nightly --rearm`, which first waits for two quiet player minutes) are separate
+commands, not scenarios of this watch, with the same lane rules (quiet lock, then measuring lock, one waiter) and the
+same arming rule.
 
 ## Public sync list
 

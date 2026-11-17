@@ -35,6 +35,7 @@ the scripts were written by them under those rules, then run and checked here. T
 | `skills/ls-restack` | Moving our own long cherry-picked branch onto a moved main: replay, byte proofs, conflict resolvers, tests before the hold | `SKILL.md` |
 | `skills/ls-windows-laptop` | Staging, running, capturing and restoring on the remote Windows laptop: tools, limits, who may use it | `SKILL.md` |
 | `skills/ls-relay-lan` | The shared co-op relay on the LAN relay host: room limits, probes, the log, install and update | `SKILL.md` |
+| `skills/ls-nat-lab` | Two games or the game-free player behind simulated NATs on this PC with no sudo: the lab's levels, the case table, counters, the before/after of a path-layer change | `SKILL.md`, `references/evidence.md` |
 | `harness/` | Run/check helpers, shared runtime-name selection and local commit porting | `hs-run.sh`, `hs_names.py`, `ls-port.py` |
 | `gates/` | Queues that let many test runs share one GPU and one CPU without hurting each other or the desktop | `hs-gpu-slot` |
 | `play/` | Step drivers that play on a running game (one for the control bridge's state samples, one for older builds with the state file; the driver is chosen explicitly), the pilot that plays a segment of goals with them (a fixed policy or a model; interactions, stuck recovery, human-like movement, eyes, metrics) and a benchmark of its arms, with their game-free tests | `README.md`, `hsap.py`, `pilot/pilot.py`, `bench/run.py` |
@@ -187,7 +188,7 @@ variables use `LS_WB_*`. The Discord helper's override is `LS_DISCORD_CONFIG`; t
 their directory and frontmatter `name`, with logical references such as `skill://ls-workbench`.
 
 Publication maps ten existing live `~/.agents/skills/hookshot-<suffix>/` folders to `skills/ls-<suffix>/`;
-`ls-function-map`, `ls-skill-upkeep`, `ls-field-data`, `ls-pr-tagging`, `ls-hold-chain`, `ls-restack`, `ls-windows-laptop` and `ls-relay-lan` are identity entries: their live and published names are already the same.
+`ls-function-map`, `ls-skill-upkeep`, `ls-field-data`, `ls-pr-tagging`, `ls-hold-chain`, `ls-restack`, `ls-windows-laptop`, `ls-relay-lan` and `ls-nat-lab` are identity entries: their live and published names are already the same.
 The live folders have **not** been renamed: absolute and home-relative `.agents/skills/hookshot-*` command paths
 remain intentional until a separately authorized host cutover. This repository change does not run publication,
 sync, relocation or cutover, install the renamed MCP entry point, or change live configuration.

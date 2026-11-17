@@ -41,14 +41,31 @@ ssh <relay> tail -n 300 ~/longshot-relay/relay.log
 
 Lines: `room X created (N rooms)`, `joined as member`, `left`, `dropped`, `closed, empty for 600 s (N rooms)`, `closed, its
 maker left before anyone joined`; N counts rooms open on the whole relay. Each timestamp carries its offset (the relay
-host is two hours behind this PC). STUN, DATA and addresses are not logged. A bare 20-byte STUN request is never answered;
-the answer budget is 20 per second for the LAN with a burst of 100. (`ssh` prints "Ran in a copy of the busy session shell"
-at the end of its output: that is the tool's note, not the relay's.)
+host is two hours behind this PC). STUN, DATA and addresses are not logged. The relay never answers more than 1.1 times
+the request's size (the IPv4 answer is 32 bytes), so a bare 20-byte STUN request gets nothing: add a SOFTWARE attribute
+(type 0x8022) as `R/InternetSession-files/probe/laptop_probe.py` does. A fake STUN server (a test fixture's) must answer
+with type `0x0101`; `0x0001` is a request and is ignored without a word. The answer budget is 20 per second for the LAN
+with a burst of 100. (`ssh` prints "Ran in a copy of the busy session shell" at the end of its output: that is the
+tool's note, not the relay's.)
 
 Scripts: `probe-relay.py` in the install files (room probe; `hs-nocore.sh <python> -I -B probe-relay.py --source <any
 coop_relay.py>`; its client names are fixed, so two workers' probes differ only by room id and time),
 `stun-probe.py` in the STUN files (three answered and four silent STUN cases, no room),
 `R/CrossPlay16-files/coop-play-src/cprelayprobe.py` (the room probe with `--script --host --port --timeout`).
+
+## A player outside the LAN (the user's word first)
+
+- The relay host's firewall rule for the relay port admits the LAN /24 only, so a router forward alone cannot work: the
+  outside player's packets die at the host. The forward and a firewall rule for the outside player are both the user's to
+  add and to remove.
+- First sign of a live forward behind a blocking firewall: a `UFW BLOCK` line with `DPT=24680` from the outside player's
+  address in the host's kernel journal (`ssh <relay> "journalctl -k --since '10 min ago' --no-pager | grep DPT=24680"`;
+  group adm may read it; ignore lines whose `SRC=` is on the LAN). Allow rules are not logged: silence does not prove the
+  rule.
+- The relay's STUN names the sender's address as the relay sees it: a maker on the relay's own LAN is told its LAN
+  address, `coop_direct_lan=0` drops only host candidates, and that private address stays the whole offer, so no
+  internet player can go direct to that maker. A head with the public-STUN fallback (`coop_stun_public`) asks a public
+  server instead; one without stays on the relay. Reproduce either in `skill://ls-nat-lab`, not on the internet.
 
 ## Layout, install and update (the user's word first)
 
