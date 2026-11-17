@@ -81,6 +81,9 @@ source "$H/hs-names.sh"
   map: `skill://ls-function-map`. What you work out goes back as a row in your report.
 - End every final report with **Skill notes**: what in a skill was wrong, missing or misleading, and what no skill
   covers (`skill://ls-skill-upkeep`). Workers report; only the main session edits skills.
+- Delete what you made when your topic ends (game copies, `work/` folders, frame folders you do not cite), measure disk
+  with `btrfs filesystem du`, not `du`, and mind the shell hazards: `references/details.md`, "Clones, disk and the end
+  of a topic" and "Tool-shell hazards".
 
 ```sh
 unset HSGATE_SLOT_DIR HSGATE_INTEL_SLOT_DIR HSGATE_SLOT_TEST HSGATE_SLOT_NODESKTOP HSGATE_IN_GATE HSGATE_IN_INTEL_GATE
@@ -201,6 +204,8 @@ device, cache or isolation settings to bypass policy. `--user "$SAVE"` copies a 
 without it the wrapper copies `user-template/` if present, otherwise starts fresh.
 `hs-run.sh` refuses a copy outside `$HOME/Games/.hookshot-h-*` or the workbench's `builds/.hookshot-h-*` (exit 2);
 `--inner` is not a way around that.
+Inside a hold, a solo start of an owned copy with switches is `hs-run.sh "$COPY" "$TAG" 60 NAME=VALUE ...`: `NAME=VALUE`
+after the options is how switches reach the game, and it asks its own gate, so do not nest it in another.
 
 Useful options: `--input '<script>'`, `--from <seconds>`, `--keep-user`, `--prepare`, `--whole`, `--intel`,
 `--mem-max <size>` and `--perf` (sampled context: read `ls-perf-monitor`). Intel cannot combine with `--whole`, `--exclusive` or `--priority`. `--mem-max` uses a systemd
@@ -208,6 +213,9 @@ user scope with `MemoryMax` and no swap; it does not prove the game stayed under
 
 - Prepare only when needed: `"$H/hs-run.sh" "$COPY" "$TAG" 450 --prepare`. Check the actual game's exit 0 and
   `@@done shaders`; a timed-out preparation is incomplete. Do not infer restart/resume behavior.
+- A new copy starts **cold**: no `cache/`, so its first start prepares every shipped pipeline (4 to 7 minutes on a quiet
+  card, longer under load) before the game can be played. Reflink a warm copy's `cache/` and `.nv-cache/` into it, but
+  only when the shader translator's stamp is the same: `references/details.md`, "Cold copies and warm caches".
 - A picture larger than 2048x1152 adds `--whole`, based on `HOS_OUTPUT_RES` or the copy's `output_res`. Keep those
   settings unchanged while queued. Ordinary runs may share the card; their printed rates are **not measurements**.
 - Inspect `$COPY/runs/$TAG/summary.txt`, `exit.txt`, `$HS_LOG` (`hookshot_log.txt` or `longshot_log.txt`),
@@ -263,6 +271,9 @@ A `vcores: X ran without a core after 2000 ms: core N: Y` line names the thread 
 that owned the core **at that instant**; it does not say Y held the core for two seconds. Guest thread names are not
 unique (a pool's workers share one), so neither name identifies one worker. What those threads are in the game:
 `skill://ls-function-map`.
+A `guest backtrace:` line is also printed for harmless events (the game changing its present interval during a movie):
+judge a fault by `FATAL` and the summary's `fatal=` count, never by that line alone. The build a run played is the game
+log's first line (`vX-N-gSHA (source S)`), not a copy's `built-from.txt`: a clone can come from another build.
 
 Observe the queue without modifying tickets: the GPU state is `/tmp/hs-gpu-slots/` (`queue/`, `yielded/`,
 `holder.0`, `holder.1`, `last-kind`, `long-holds.log`, `closed`). File contents alone do not prove process liveness.
@@ -292,6 +303,10 @@ cannot set). Never run `ulimit -c 0` in a persistent tool shell: it lowers that 
 Apply any assignment-specific outer quiet/shared measuring locks as well (`skill://ls-hold-chain`); record admission wait
 separately from child time.
 When a worker is assigned only focused checks, hand those receipts to the integration owner; do not call them a full suite.
+`tests/run_all.py --list` prints what would run, `--exact <path> ...` runs just those checks with their `RUN_ALL_ARGS`
+and `--changed [BASE]` those that read changed files (heads that have them say so in `--help`). A baseline taken without
+`--strict` skipped checks a strict run runs: compare strict with strict. A `RUN_ALL_SKIP` that names an OS other than
+`linux` or `windows` stops the whole run before anything starts.
 
 Check the selected tests' literal `RUN_ALL_ARGS`, `RUN_ALL_MODULES` and `RUN_ALL_SKIP` declarations. Explicitly named
 tests override `RUN_ALL_SKIP`: exclude real-device tests before a game-free selection. `--strict` fails missing prerequisites;
@@ -310,7 +325,9 @@ Fixtures that cut text out of source files, host-file build lists, the fuzz test
 
 Changed C/C++ fixtures also need the Windows-target syntax check. `$H/hs-win-fixture-check.sh` has no
 `hs_win_fixture_check.py` beside it; use the working pair in the pr-evidence skill's scripts folder, with `--sysroot`
-(a fresh HOME hides the default discovery):
+(a fresh HOME hides the default discovery). The sysroot is the folder that holds `include/windows.h`: the
+`llvm-mingw-<date>-ucrt-x86_64` folder itself, but `<root>/x86_64-w64-mingw32` for an `-ubuntu-` build; a root without
+that file stops the checker at its usage line. Pass `--output` an absolute, new folder.
 
 ```sh
 E="$HOME/.agents/skills/hookshot-pr-evidence/scripts"
@@ -329,43 +346,9 @@ workbench and commits. Run `sync-from-live.sh` only when that integration is exp
 
 ## Workbench repository checks (not the game suite)
 
-This tools repository has no `tests/run_all.py` or checked-in CI workflow. From its reviewed checkout (the repository
-this skill is published from, or your own worktree of it; the agent brief names its folder), run the direct
-drivers separately: generic unittest discovery misses the plain-assert play drivers, and rolling must use this checkout's rules.
-
-```sh
-set -e
-ulimit -S -c 0
-for test in tests/test_*.py harness/test_*.py play/test_*.py perf/test_*.py regress/test_*.py nightly/test_*.py skills/*/scripts/test_*.py; do
-  if [ "$test" = nightly/test_rolling.py ]; then
-    python3 -I -B "$test" --shared-dir "$PWD/regress"
-  else
-    python3 -I -B "$test"
-  fi
-done
-python3 -I -B nightly/test_compare.py --mutations
-node --test skills/ls-discord-updates/scripts/test_discord_tab.mjs
-python3 -I -B skills/ls-skill-upkeep/check_skills.py --root skills
-python3 -I -B name_policy.py
-bash publish-check.sh
-```
-
-For MCP, install the selected checkout's package metadata and locked dev dependencies into its own environment;
-`PYTHONPATH` alone is insufficient. Do not borrow another checkout's editable package registration.
-Use the pinned Python 3.12 for the current fixtures: Python 3.14's automatic Unix-socket cleanup breaks the
-stale-socket broker fixture before its production assertion; retain that failure rather than weakening the check.
-
-```sh
-uv sync --locked --project mcp --python "$P"
-TEST_TMP=$(mktemp -d /tmp/ls-wb-tests.XXXXXX)
-TMPDIR="$TEST_TMP" uv run --project mcp --locked --no-sync python -B -m pytest -q -p no:cacheprovider mcp/tests --basetemp "$TEST_TMP/pytest"
-```
-
-Fixture state must have **no `.git` ancestor**; keep `TMPDIR` and pytest's base outside all repositories. Suppress
-cores with the soft limit only, not `ulimit -c 0` or a hard-zero wrapper: the MCP worker sets `(1, 1)`.
-An offline setup needs the locked packages already cached. A setup failure is not a test result. These suites use
-synthetic fixtures, not a game, live gate or account. Keep every failed attempt and its setup correction.
-Publication maps are in `publish.py`; repository-only tests are not automatically installed into the live harness.
+Changing this tools repository (harness, drivers, skills, MCP server) has its own direct-driver loop, the MCP suite
+(pinned Python 3.12, locked dependencies, state outside every repository, `uv sync --locked` after each branch switch)
+and the publication checks: `references/repository-checks.md`. The game suite does not cover them.
 
 ## MCP routes
 
