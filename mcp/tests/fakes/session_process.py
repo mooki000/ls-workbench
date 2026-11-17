@@ -47,6 +47,7 @@ async def game(args):
     root = Path(args[0])
     fixture = Path(os.environ["SESSION_FIXTURE"])
     pairs = dict(line.split("=", 1) for line in (root / "extra-env.txt").read_text().splitlines() if "=" in line)
+    (fixture / "game-env.json").write_text(json.dumps(pairs))
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
     (fixture / "pids.json").write_text(json.dumps({"game": os.getpid(), "child": child.pid}))
     stopping = asyncio.Event()

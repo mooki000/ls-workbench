@@ -29,7 +29,7 @@ from src.tools import status as status_tools
 MCP_ROOT = Path(__file__).resolve().parents[1]
 FAKES = Path(__file__).parent / "fakes"
 ERROR_FIELDS = {"code", "operation", "retryable", "retry_after_seconds", "operator_action"}
-LIVE_READS = {"session_state", "session_wait", "session_options_get", "session_saves_list"}
+LIVE_READS = {"session_state", "session_wait", "session_options_get", "session_saves_list", "session_destinations", "session_flags"}
 
 
 async def observed(predicate, *, seconds=20, label="expected observed state"):
