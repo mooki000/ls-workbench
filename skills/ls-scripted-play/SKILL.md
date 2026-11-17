@@ -40,7 +40,8 @@ local run files, never in this public skill or a tracker.
    screenshots and quit. It does **not** imply a sampled position/camera stream. What `status.game` carries depends on the
    head: forge main's `docs/control.md` lists `frame`, `t`, `pos`, `facing`, `camera`, `event`, `loading`, `age`, `life`,
    `prompt` and `music` (one snapshot from Link's update, kept with its old `frame` when no update came for 250 ms: title,
-   pause, load; no time of day), an older base only event/loading/age. Read the head's `docs/control.md`.
+   pause, load; no time of day: the live command `!cheat 100+h` sets the hour h, 0 to 23, and an area reload shows it), an
+   older base only event/loading/age. Read the head's `docs/control.md`.
 2. For steering, select `playthrough/hsap.py` only with the control-bridge `oot` sampled-state extension. It requests
    `subscribe` with `events:["oot"]`, `every:6`, selected `flags`, and `changes:true`. An unsupported subscription
    fails; there is no silent fallback. For older `HOS_OOT_STATE_FILE` builds, choose `hsap_file.py` explicitly.
