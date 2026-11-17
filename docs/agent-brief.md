@@ -8,8 +8,8 @@ the matching published skill IDs below. Use their existing tools rather than inv
 | Task kind | Published skill ID | Tool to use |
 |---|---|---|
 | Any LS or HS work; build/run/check | `ls-workbench` | `tools/deps-local.sh`, build slot, `hs-run.sh`, `hs-idle.sh` |
-| Issue survey, reproduction, reply | `ls-issue-triage` | `gh issue view --comments`; read attachments and `POSTED.md` |
-| PR/review/rebase/CI or tracker draft | `ls-pr-evidence` | `pr_overlap.py`, `hs-pr-ci.sh`, `hs-win-fixture-check.sh`, `hs-pr-check.sh` |
+| Issue survey, reproduction, reply | `ls-issue-triage` | `forge.py issue view N --comments`, `forge.py search`; read attachments and `POSTED.md` |
+| PR/review/rebase/CI or tracker draft | `ls-pr-evidence` | the forge's API and `scripts/check_pr_description.py` (`references/forge.md`), `hs-win-fixture-check.sh`; Main posts with `ls_post.py` |
 | FPS, frame-time, stutter comparison | `ls-perf-compare` + `ls-regression-hunt` | `regress.py` held worker and `run_case.py`; A B A B in an authorized exclusive hold |
 | Regression, suspect/revert/bisect | `ls-regression-hunt` | `regress.py plan`, then authorized `hunt` |
 | Controller-free play, state, saves | `ls-scripted-play` | `scripts/hookshot_ctl.py`, `playthrough/hsap.py` (capability-selected) |
@@ -21,6 +21,7 @@ the matching published skill IDs below. Use their existing tools rather than inv
 | Moving our own long cherry-picked branch onto a moved main | `ls-restack` | `reports/Integrate18-files/prove_carry.py`, `git range-diff`; not `ls-pr-loop`'s carry of a test result |
 | Anything run, staged or captured on the remote Windows laptop (the second PC of a two-PC session) | `ls-windows-laptop` | `reports/tools/<win>/<win>-run.py`; only when the task text says so; `<win>` is the laptop's SSH alias (see "The public repository") |
 | A session through the shared co-op relay on the LAN relay host; installing, updating or probing it | `ls-relay-lan` | `reports/Soak4-files/chain/<relay>-room-guard.py` before any Make; `<relay>` is the host's SSH alias (see "The public repository") |
+| Two games (or the game-free player) behind simulated NATs on this PC: hole punching, STUN, relay fallback, a path-layer change before and after | `ls-nat-lab` | `reports/NatLab2-files/runner/labctl.py check` / `probe` / `report`; no sudo, no internet, no laptop |
 | A skill was wrong, stale, misleading, or no skill covers a repeated procedure | `ls-skill-upkeep` | **Skill notes** in your report; the main session alone edits skills (`check_skills.py`) |
 
 Published `ls-<suffix>` skills live in `skills/ls-<suffix>/` and use logical references such as `skill://ls-workbench`.
@@ -235,7 +236,8 @@ The user wants every pull request at the level of his own earlier ones for the o
   <base-revision> --sysroot <llvm-mingw-sysroot>`; the copy in `$H` has no checker beside it)
   through `hs-idle.sh` with the pinned Python. Keep each compiler command, errors and explicit unjudged coverage.
   A syntax pass is not a Windows execution: **Not tested** names the remaining Windows run of the new fixtures.
-  Read `hs-pr-ci.sh <pr>...`'s failed job/test names, not just a green/red count; inherited failures and the known
+  Read the head's statuses on the forge and the failed job/test names, not just a green/red count (`ls-pr-evidence`,
+  `references/forge.md`); inherited failures and the known
   release-script race remain visible. Never remove or weaken a check to get a green rebase.
 - Current main `AGENTS.md` (#2712) requires game evidence before a runtime/performance PR is opened ready for review;
   if the game could not be run, disclose it and keep the PR a draft until someone has. Passing source checks alone
@@ -243,7 +245,7 @@ The user wants every pull request at the level of his own earlier ones for the o
 - **The body** (`reports/drafts/<Topic>-body.md`): first paragraph "**What this is for:** ... **What is measured:** ...
   **Not measured:** ..."; then Problem (the chain of causes), What changed (per file, and what is unchanged), How it
   was tested (result lines, tables, pictures with captions), Not tested, Risks, Overlaps
-  (`/home/mooki/.agents/skills/hookshot-pr-evidence/scripts/pr_overlap.py --branch <name>`, hunks read), Questions.
+  (the forge route in `ls-pr-evidence`'s `references/forge.md`, hunks read), Questions.
 - **Pictures**: several frames as one labelled picture with
   `/home/mooki/.agents/skills/hookshot-pr-evidence/scripts/panels.sh`; look at it; name it `ls-<topic>-<what>.jpg`
   and tell the main session, which uploads it.

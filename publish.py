@@ -38,7 +38,7 @@ SKILL_MAP = {
 }
 LIVE_LAYOUT = 'legacy'  # cutover.py changes only the installed source layout
 HARNESS_MAP = {name: Path(name).name for name in (
-    'hs-run.sh', 'hs-idle.sh', 'hs-nocore.sh', 'hs-pr-check.sh', 'hs-save.sh',
+    'hs-run.sh', 'hs-idle.sh', 'hs-nocore.sh', 'hs-save.sh',
     'hs-watch-ends2.sh', 'hs-watch-threads.py', 'hs-window.py', 'tools/deps-local.sh',
     'hs-names.sh', 'hs_names.py', 'test_hs_names.py',
 )}

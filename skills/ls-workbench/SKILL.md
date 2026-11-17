@@ -11,9 +11,10 @@ description: >
 
 **LS / HS:** LS continues HS at `https://git.magicbean.dev/MagicBeanDev/Longshot`.
 Keep local harness/clone paths, gates and external runtime spellings unchanged. `hs-names.sh` / `hs_names.py`
-select the owned checkout/copy's runtime names; missing or mixed identities refuse. Existing `gh`, release, CI and
-queue routes below remain GitHub-only. Do not substitute forge names or migrate credentials; use reviewed public
-Forgejo GET readers. Proposed forge login/read helpers can change credentials and are not an approved workaround.
+select the owned checkout/copy's runtime names; missing or mixed identities refuse. The GitHub routes (`gh`, release,
+CI) are gone with the upstream, which answers 404: use the reviewed public Forgejo GET readers
+(`skill://ls-pr-evidence/references/forge.md`). Proposed forge login/read helpers can change credentials and are not an
+approved workaround.
 
 Published skills use `skills/ls-<suffix>/`, frontmatter `name: ls-<suffix>` and logical references such as
 `skill://ls-workbench`. Publication maps ten existing live `~/.agents/skills/hookshot-<suffix>/` folders to those
@@ -115,17 +116,10 @@ unset HSGATE_SLOT_DIR HSGATE_INTEL_SLOT_DIR HSGATE_SLOT_TEST HSGATE_SLOT_NODESKT
    "$P" -I -B nx2/dump.py --dump "$W/work/dump"
    ```
 
-3. Use the selected release profile, hot list and link order. The following is the **legacy HS/GitHub**
-   download route. Renamed main's `scripts/release_parts.py` still uses GitHub, not Forgejo; for LS require
-   a separately verified matching release/setup/profile source, not a renamed old profile or an assumed Forgejo
-   release. No credential extraction is authorized. If the matching artifacts are absent, create the download parent first;
-   keep its cache in the worktree. Record the returned release tag. These commands download; `--help` does not.
-
-   ```sh
-   mkdir -p "$WT/.release"
-   RUNNER_TEMP="$WT/.release" TMPDIR="$WT/.release" "$P" -I -B scripts/release_parts.py previous "$WT/.release/setup.txt" --repo NotRexed/Hookshot
-   RUNNER_TEMP="$WT/.release" TMPDIR="$WT/.release" "$P" -I -B scripts/release_parts.py profile "$WT/.release/setup.txt" work
-   ```
+3. Use the selected release profile, hot list and link order. The legacy GitHub download route (`scripts/release_parts.py`
+   against the upstream) is gone with it. For LS take the profile from a registered donor's receipt
+   (`references/details.md`, "Donor builds") or a separately verified forge release, never a renamed old profile or an
+   assumed release. No credential extraction is authorized. Record the release tag or receipt you used.
 
 4. Make a new evidence directory. Run the full build through both locks, with an owned work/output directory and
    shader preparation disabled:
@@ -387,4 +381,3 @@ co-op runner described in `ls-scripted-play`.
 | Read log/faults | Run log and bounded kernel interval | `run_logs(run_id, last_lines=40)`, `run_faults(run_id)` (evidence; integrated) | Bounded cursors and signature classification; unknown coverage stays unknown. |
 | Capture/panel | Control client `shot`; `panels.sh` above | `session_shot(run_id)` (session; integrated); `evidence_panels(images, label, idempotency_key)` (evidence; integrated) | New paths and artifact metadata; inspection still required. |
 | Source/Windows checks | `hs-idle.sh ... tests/run_all.py`; fixture helper above | `checks_source(repo_id, commit, idempotency_key)`, `checks_windows_syntax(repo_id, commit, base, idempotency_key)` (checks; integrated) | Declared prerequisites, owned jobs and explicit Windows runtime not-run. |
-| Pre-push/CI read | `hs-pr-check.sh`; `hs-pr-ci.sh` | `checks_pr(repo_id, commit, branch, title_artifact, idempotency_key)`, `ci_read(repository, pull_request)` (checks; integrated) | Preserves imports/failures without pushing, posting or rerunning CI. |

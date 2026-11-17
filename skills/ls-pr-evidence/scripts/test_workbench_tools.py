@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Game-free tests for the read-only CI reader and fixture compiler capture."""
+"""Game-free tests for the fixture compiler capture."""
 import ast
 import importlib.util
 from pathlib import Path
@@ -14,22 +14,9 @@ def load(name):
     spec.loader.exec_module(module)
     return module
 
-ci = load('hs_pr_ci')
 win = load('hs_win_fixture_check')
 
 class Tests(unittest.TestCase):
-    def test_log_names_and_ansi(self):
-        parsed = ci.failures('2026-11-12T00:00:00Z \x1b[31mFAIL  1.2s  tests/test_a.py\x1b[0m\n==== FAIL tests/test_a.py\nFAIL: test_case (__main__.Class.test_case)\nTIMEOUT 90s nx2/test_b.py\n')
-        self.assertEqual(parsed['tests'], ['nx2/test_b.py', 'tests/test_a.py'])
-        self.assertEqual(parsed['cases'], ['test_case (__main__.Class.test_case)'])
-        self.assertFalse(parsed['release_race'])
-
-    def test_race_needs_exact_case_and_signature(self):
-        text = ci.RACE + '\nSHA256SUMS still differs from the files after 5 uploads'
-        self.assertTrue(ci.failures(text)['release_race'])
-        self.assertFalse(ci.failures(ci.RACE)['release_race'])
-        self.assertFalse(ci.failures('test_release_scripts.py failed')['release_race'])
-
     def test_compiler_flags_preserved(self):
         got = win.compile_args(['gcc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', 'headers', '-include', 'env.h', '-DNAME=1', 'a.c', 'host.c', 'x.o', '-o', 'test.exe', '-lws2_32'], Path('a.c'), 'clang', Path('/mingw'))
         self.assertIn('-Werror', got)
@@ -115,17 +102,6 @@ class Tests(unittest.TestCase):
         # child owns process state in production; restore cwd in this direct unit call.
         import os
         os.chdir(HERE)
-
-    def test_same_main_job_required(self):
-        class Fake(ci.Reader):
-            def gh(self, *args, **kwargs):
-                return {'number': 1, 'headRefOid': 'a', 'baseRefOid': 'b', 'reviewDecision': 'APPROVED', 'state': 'OPEN', 'statusCheckRollup': [{'name': 'Windows', 'conclusion': 'FAILURE', 'detailsUrl': 'https://github.com/a/b/actions/runs/1/job/2'}]}
-            def log(self, job):
-                return {'tests': ['tests/test_a.py'], 'cases': [], 'release_race': False}
-        row = Fake('a/b').pull(1, {('Linux', 'tests/test_a.py'): [{'sha':'b'}]})['failed_checks'][0]
-        self.assertEqual(row['also_main'], {})
-        row = Fake('a/b').pull(1, {('Windows', 'tests/test_a.py'): [{'sha':'b'}]})['failed_checks'][0]
-        self.assertIn('tests/test_a.py', row['also_main'])
 
 if __name__ == '__main__':
     unittest.main()
