@@ -91,7 +91,11 @@ the main session changes.
      the patch that already worked; apply only what changed since (`git diff --no-renames <old tip> HEAD -- skills
      docs/agent-brief.md`, paths and names mapped to the live ones); `git apply --check` there; compare the scratch tree
      with the checkout through `publish.normalise()`; the patch is the diff of the scratch tree against live.
-     `reports/SkillPublish-files/mklive.py` and `live_vs_repo.py` are a starting point.
+     `reports/SkillsNight-files/mklive2.py` does it end to end (a base commit per skill, `git apply -C0 --reject`, and
+     `live-manual.json` for the few hunks whose removed lines differ in the live prose: the ten older skills still use the
+     old project names where the published text says HS and LS, the others never did); an edit made straight to a live
+     skill (`SKILL.md.prev-*` beside it) moves that skill's base, so check which commit each live copy equals.
+     `reports/SkillPublish-files/mklive.py` and `live_vs_repo.py` are the earlier versions.
    - **While workers read the live skills, edit the repository directly** and let the live copies follow in one step:
      Main applies the reviewed patch built as above, with `reports/SkillsNight-files/apply-live-morning.sh`, which
      keeps a backup of the live skills first. Until then do not run `sync-from-live.sh`: it copies live over the
