@@ -82,9 +82,14 @@ line. A stand-in server (`--api-base http://127.0.0.1:<port>/v1`, `pilot/standin
 `pilot/caps.json` (yours to write; the pilot reads it before every request and stops asking when a limit is reached):
 
 ```json
-{"per_run_usd": 2.0, "per_night_usd": 50.0, "total_usd": 400.0, "planner_share_of_night": 0.4,
+{"per_run_usd": 3.0, "per_night_usd": 50.0, "total_usd": 4000.0, "planner_share_of_night": 0.4,
  "model": null, "planner_model": null, "vision_model": null, "vision_backend": null}
 ```
+
+The limits above are the ones the pilot is run with (3 USD a run, 50 USD a night, 4,000 USD in all): a run stops asking at its own
+cap, a night at the night's, whoever spent the rest. They sit above what the benchmark measured (about 0.003 USD a minute
+for the cheaper arms, 0.08 USD a minute for the flagship model, 1.64 USD for the dearest 13 minute run). There is no built-in
+default: a tree with no `pilot/caps.json` plays on the rules.
 
 Every request is one line of `pilot/ledger.jsonl` with the token counts the API reported and the cost computed from them
 at the prices in `openai_api.py` (named `Price`s; update them when the published prices change). `pilot.py ledger [--run <id>]`
