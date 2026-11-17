@@ -40,7 +40,9 @@ Recurring conflicts and their tools (all under `/home/mooki/Code/hookshot-wt/rep
   attempt; it exits 3 on a block it has no record for.
 - A branch that changes an input a generator turns into committed files (`tests/coop_vectors.txt`): leave no stale
   output; run each generator's `--check` (for example `tests/fuzz/make_seeds.py --check`) after every such pick.
-- Option ids, enum numbers and API numbers that two lines both claim: renumber in the commit that owns them.
+- Option ids, enum numbers and API numbers that two lines both claim: renumber in the commit that owns them. A test
+  that pins the version with `==` (`tests/test_audio_output_devices.py` pins `MKWVK_API_VERSION`) fails after a bump from
+  either side: move the pin in the commit that owns the bump.
 - `Replay18*-files/resolve-version-check.py`'s assertion ends in `or True`; do not rely on it.
 
 ## 3. Prove it
@@ -65,6 +67,8 @@ head and the new head are the files that differ between the old base and the new
    focused selection (`tests/run_all.py ... --strict --exact`; confirm `--exact` on the head's `run_all.py --help`).
    A textual merge hides the ones that cut functions or tables out of source by their text (`ls-workbench`, section 3):
    fix them in a test-only commit or a `--fixup` plus autosquash.
+   Start it, and every long run, from a throwaway worktree of the head (`git worktree add --detach <path> <head>`), not
+   the carry's own folder: other workers read and reset that folder while the run goes.
 2. A branch that "passes in its worktree" can depend on files `.gitignore` hides (a `*.bin` corpus did): run
    `git status --ignored` in the donor and the focused tests in a clean `git archive` checkout.
 3. The whole suite runs inside the hold on main, the base and the head (`reports/tools/verify_heads.py OUT.json
@@ -72,6 +76,12 @@ head and the new head are the files that differ between the old base and the new
    failing names only: read the two `suite.json` failing lists too.
 4. Run the other branches' fixtures on the merged head before anything is built on it: a clean merge and green branch
    tests do not mean the integrated head passes the older branches' tests.
+5. The guide pictures: `python3 -I -B scripts/check_guide_screenshots.py --review-sources` (the forge runs it on every
+   pull request) fails on a head whose menu inputs differ from the manifest's; run it on main first, which can fail it
+   too on another toolchain. If it fails on the head, render the Graphics view again with `scripts/screenshots/capture_menu.py --source
+   <tree> --output <new dir>` from the head and from main as a control on this machine: the difference to the control
+   is the change's, the control against the published picture is the toolchain. `reports/Carry68d-files/make-guide-commit.py`
+   does the whole guide commit (edit its constants).
 
 ## 5. The hold
 

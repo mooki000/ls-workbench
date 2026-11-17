@@ -10,7 +10,8 @@ description: >
 
 **LS / HS:** use the workbench's shared runtime/log-name selection. Published skill IDs use `ls-*`;
 existing live paths stay unchanged until a separate host cutover (see `ls-workbench`).
-The `gh` examples and MCP GitHub readers below remain **GitHub-only**. LS's public Forgejo API is
+The `gh` examples and MCP GitHub readers below remain **GitHub-only**: the legacy repository answered 404 on
+16 Nov 2026, signed in or not, so start from the forge. LS's public Forgejo API is
 `https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot`; page issue/PR bodies, comments, reviews and inline
 discussions separately (the issue-comments endpoint is **not paged**: `page=2` repeats the list; see "On the LS forge"
 in `skill://ls-pr-evidence`). GitHub query syntax is not portable. Proposed forge readers may refresh credentials and
@@ -40,6 +41,15 @@ Labelling the LS forge's pull requests (kind/, priority/, area/, platform/, gpu/
 When a report comes down to what the game itself does (a timer, a counter, a system that misbehaves above 60 fps),
 look the subject up in the function map first: `skill://ls-function-map`.
 
+On the forge: `$FORGE search WORD ... --state all` (pull requests and issues by title and description),
+`$FORGE issue list --state all --label <label>` and `$FORGE issue view N --comments`; `$FORGE` and `$API` are set in the
+forge reference of `skill://ls-pr-evidence`. Page the API with `curl` (Python's `urllib` gets 403):
+`$API/issues?type=issues&state=all&q=<words>&limit=50&page=N`, and `X-Total-Count` says how many. The `[Tracking]`
+families of `docs/workflow.md` (listed in `reports/HsSurvey.md`) were GitHub issues: a title search on the forge finds
+one (the rolling-benchmark issue), so group reports by label (`area/`, `gpu/`, `platform/`, `kind/`) and by `search`.
+`docs/worklist.md` is the GitHub era's list: its rows link GitHub issues and most `#N` in it are not forge numbers;
+resolve one with `search` before using it.
+
 ## The survey and how to refresh it
 
 Treat `reports/HsSurvey.md` and `reports/HsSurvey-files/` as an archived survey, not today's verdict.
@@ -67,8 +77,10 @@ PRs again before a claim.
 score = severity weight x reach x confidence. Severity: S0 8 (security; crash, hang, device lost, PC freeze; lost
 saves; the builder cannot build), S1 5 (cannot progress or start), S2 3 (wrong but playable; a frame-rate loss over
 20 %), S3 1 (polish, features). Reach is the affected share; refresh `scripts/hardware_report.py` and the current
-installed-base source rather than reusing an old percentage. Confidence: 1.0 reproduced by us or a maintainer with
-a log, 0.7 two or more reporters with logs, 0.4 one report or no log. State the three factors and their dated source.
+installed-base source rather than reusing an old percentage (the script reads the forge's issues signed in: a worker
+cannot run it, so ask Main or quote the worklist row's reach with its date). Confidence: 1.0 reproduced by us or a
+maintainer with a log, 0.7 two or more reporters with logs, 0.4 one report or no log. State the three factors and
+their dated source.
 A field count (`skill://ls-field-data`) may back reach or confidence when its report or session count stands beside
 it. It never replaces the installed-base source, and while the player senders are thin it is mostly developers' builds.
 A new problem becomes a row in `docs/worklist.md` through a pull request.

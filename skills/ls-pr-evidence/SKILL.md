@@ -5,16 +5,17 @@ description: >
   afterwards: the issue that claims it, the overlap search, the evidence to collect while working (result lines,
   per-run tables, labelled pictures), the body in the user's form (what it is for, what is measured, what is not;
   problem; what changed; how tested; risks), the checks before a push, review, and testing other people's pull
-  requests. Also the rules for every comment posted as the user. Use when asked to open, update, rebase or review an
-  LS or HS pull request, to collect evidence for one, or to post anything on its tracker.
+  requests. Also the rules for every comment posted as the user. Use when asked to open, update, rebase, review or
+  draft an LS or HS pull request (also the commit and draft of a tested branch), to collect evidence, or to post on a tracker.
 ---
 
 # LS pull requests and posts: evidence in, promises kept
 
 **LS / HS:** use the workbench's shared runtime-name resolver and keep live harness paths. Published skill IDs
 use `ls-*`; live skill folders stay unchanged until a separate host cutover (see `ls-workbench`).
-The `gh`, fork-CI, overlap and MCP GitHub routes below remain **GitHub-only**. For LS's Forgejo, verify the
-actual account, fork parent, remote, exact head, runner and complete check logs; do not relabel a GitHub record.
+The `gh`, `hs-pr-ci.sh`, `hs-pr-check.sh`, fork-CI, overlap and MCP GitHub routes below remain **GitHub-only** (the
+legacy repository answered 404 on 16 Nov 2026, signed in or not). For LS's Forgejo, verify the actual account, fork
+parent, remote, exact head, runner and complete check logs; do not relabel a GitHub record: `references/forge.md`.
 Waiting/cancelled/zero checks or unknown runners never pass. Do not run proposed login/read helpers to migrate
 credentials. The selected Forgejo CLI has no direct `gh --log-failed` or artifact-attestation equivalent; checksums
 are not signed provenance. Main retains all push/post/fork authority.
@@ -33,10 +34,15 @@ gh pr view <n> --repo NotRexed/Hookshot --json body,comments,reviews,headRefOid,
 "$H/hs-idle.sh" "$E/hs-win-fixture-check.sh" <worktree> <base-revision> --sysroot <llvm-mingw-sysroot>
 ```
 
-`$H/hs-win-fixture-check.sh` has no `hs_win_fixture_check.py` beside it, so the installed copy fails: use the pair in `$E`.
-The sysroot is the `llvm-mingw-<date>-ucrt-x86_64` folder under `deps/llvm-mingw/` of the work area (a fresh HOME hides the
-default discovery); `<base-revision>` is a git revision, not a path. Exit 2 (`INCOMPLETE`) is normal for a Linux-only
-driver: `ls-workbench`, section 3.
+`$H/hs-win-fixture-check.sh` has no `hs_win_fixture_check.py` beside it, so the installed copy fails: use the pair in `$E`
+(the workbench checkout's copy is the same pair). The sysroot is the folder that holds `include/windows.h` (else the
+checker stops at its usage line): under `deps/llvm-mingw/` of the work area, the `llvm-mingw-<date>-ucrt-x86_64` folder
+itself, but `<llvm-mingw>/x86_64-w64-mingw32` for the `-ubuntu-<n>-x86_64` build, whose root has no `include/windows.h`. A fresh
+HOME hides the default discovery: pass `--sysroot` (or `LS_MINGW=<that folder>`); `clang` and `clang++` come from `PATH`.
+`<base-revision>` is a git revision, not a path; the commit's parent as base selects only the drivers that commit
+changes (seconds). Run it **after** committing: the report names `HEAD`. `--output` must be a new directory: give an absolute
+path outside the checkout. Exit 2 (`INCOMPLETE`) is normal for a Linux-only driver and when only a Python test driver
+changed (`0 captured translation units, 1 unjudged driver`): `ls-workbench`, section 3.
 
 Read every comment/review page, including inline discussions:
 `gh api --paginate --slurp 'repos/NotRexed/Hookshot/pulls/<n>/comments?per_page=100'`.
@@ -70,7 +76,10 @@ descriptions, and put the evidence inside those sections, not in a replacement t
 literally, checklist included: `python -I scripts/check_pr_description.py --file <body> --diff <diff> [--title T]` in
 the checkout, or `--pr N` for a live pull request (exit 0 passes; a title starting `WIP:` is not checked). Run it on
 the **current live body** of every pull request you touch: one whose forge status still shows an old success can fail
-it now, and a kept "When it applies" box that is not ticked fails it. The form below is for the older GitHub workflow:
+it now, and a kept "When it applies" box that is not ticked fails it. Make `<diff>` with
+`git diff --src-prefix=a/ --dst-prefix=b/`: this PC's git prints `i/` and `w/` prefixes that neither the checker nor
+`git apply` reads. Its less obvious rules, a revert's form and the length limit: `references/forge.md`.
+The form below is for the older GitHub workflow:
 
 ```
 **What this is for:** who gains what, in a player's or developer's words, with the issue (#N). **What is measured:**
@@ -112,13 +121,14 @@ spread" is said as such, with the spread.
 
 ## Collect the evidence while you work, not afterwards
 
-Keep it under `reports/<Topic>-files/` as you go; a body written from memory fails the review. For every change:
+Keep it under `reports/<Topic>-files/` as you go (`reports/` sits beside the worktrees, not inside a branch's);
+a body written from memory fails the review. For every change:
 
 | What | How | Where it ends up |
 |---|---|---|
 | Environment | `uname -r`, `clang --version`, driver from `nvidia-smi` or the log's device line, `git rev-parse --short origin/main` and `git rev-parse --short HEAD` separately, `date`, `uptime` | the environment line |
 | The test both ways | branch output; then `--source <main-file>` only when that driver's help supports it, otherwise a pinned main worktree | exact failing case and result lines |
-| The whole suite | `"$H/hs-idle.sh" "$P" -I -B tests/run_all.py` from the reviewed worktree; use its declared dependencies | totals and every named failure; compare pinned main |
+| The whole suite | `"$H/hs-idle.sh" "$P" -I -B tests/run_all.py` from the reviewed worktree; use its declared dependencies; timing under load: `references/recipes.md` | totals and every named failure; compare pinned main |
 | Game runs | `hs-run.sh` summary lines kept whole (exit, frames, fatal, devlost, nocore, kernel, load before -> after); the log lines that prove the point, copied, not retyped | a fenced block and a table |
 | Comparisons | A B A B, each run one row; quiet, authorized exclusive holds only (`skill://ls-perf-compare`) | shared classifier output, settings, clock and retained rejected runs |
 | Reporters' logs | download every attachment, count by script (`N of M logs show line X`), keep the script | a table by reporter, version, card |
@@ -135,6 +145,7 @@ window, what the default is and who sets it, and what happens on Windows.
 A test for a new file has no base to fail against: break one line in a copy of the tree and show the test fails. A
 mutant that dies by a compile error is not killed (`-Wall -Wextra -Werror` rejects a dropped use): keep every variable
 used, and read the first failing line when every mutant dies in two seconds.
+Red before green without a second worktree, and mutation checks of source-text tests: `references/recipes.md`.
 
 ## Before work starts: the claim, the issue and the overlap search
 
@@ -173,6 +184,7 @@ The worklist score remains severity S0 8, S1 5, S2 3, S3 1, times reach, times c
    `reports/PR-INDEX.md`. The browser is only for Discord reads or a specifically named user-requested message.
 
 A claim is dropped out loud when the work stops.
+Designing from another project's behaviour, or text and kits for testers on other machines: `references/recipes.md`.
 
 ## Before any push (all must pass)
 
@@ -183,7 +195,10 @@ A claim is dropped out loud when the work stops.
    an issue or a comment: write what the change needs in your own words.
 2. **Licence**: only code that can be GPL-3.0-or-later. Nothing from the other port's repository (its additions are "all
    rights reserved"); the user's own earlier files only as `/home/mooki/Code/hookshot-wt/reports/OURS.md` allows.
-   Third-party code keeps its notice.
+   Third-party code keeps its notice. Code taken with its author's permission from another GPL project: a file that
+   project marks GPL-3.0-or-later keeps that line; an unmarked one is credited as from that project, GPL version 3 by its
+   `LICENSE`, whose other files are marked or-later, used with the author's permission, never as "or later". The credits
+   ledger has a row per file with a cell for the SPDX line at the source (`git show <commit>:<path> | head -3`).
 3. **One topic**, on a branch from current `main`; rebased before review is asked again.
 4. **Checks**: a game-free test that fails without the change, and the whole of `tests/run_all.py` (many tests cut
    functions out of the source by their text: a renamed function breaks one; fix it in the same change). A branch that
@@ -194,6 +209,8 @@ A claim is dropped out loud when the work stops.
    `tests/test_tested_configurations.py`): the table in `docs/tested-configurations.md` is frozen. Main's #2712 rule:
    when the game could not be run, say so and keep the PR a draft until someone has. Source-only/stand-in tests are not
    a replacement for the runtime evidence a change needs.
+   On the forge `pr create` refuses a branch touching `gpu/`, `host/`, `nx2/`, `assets/` or `third_party/` without
+   `--tested-in-game`, even for a game-free engine: plan that run before the series (`references/forge.md`).
 6. **Commits**: author `Michael Schienbein <7663497+mooki000@users.noreply.github.com>`; a new message ends with the two
    trailer lines the brief names for the model you are (since 2026-11-14 10:20 `Assisted-by: Claude Sonnet 5.5` and
    `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), directly under each other in the last paragraph:
@@ -227,12 +244,14 @@ A claim is dropped out loud when the work stops.
        gh pr create --repo NotRexed/Hookshot --head mooki000:<branch> --base main --title "$(cat <title file>)" --body-file <body file>
 
    An agent hands over three things: the branch with its head, `reports/drafts/<Topic>-title.txt`, and
-   `reports/drafts/<Topic>-body.md` with no placeholder left; then it stops editing them.
+   `reports/drafts/<Topic>-body.md` with no placeholder left; then it stops editing them. A draft that waits for a run
+   marks each open slot `PENDING:<neutral-slug>` (no worker or hold name); none may remain at the push.
 
 ### On the LS forge
 
 Posting, reading, paging and the overlap search differ from the `gh` routes above (issue comments are not paged;
-`--repo` goes before the subcommand; `pr create` demands `--tested-in-game`): read `references/forge.md` there first.
+`--repo` goes before the subcommand; `pr create` demands `--tested-in-game` and has no `--base`; `hs-pr-check.sh` and
+`hs-pr-ci.sh` read GitHub): read `references/forge.md` there first.
 
 ### Preserve imported authors
 
@@ -271,8 +290,10 @@ gist and records the immutable raw link; no MCP tool publishes it.
 "$E/panels.sh" <new-panel.jpg> 2 <frame1.png> "1. Before: <what to look at>" <frame2.png> "2. After: <what changed>"
 ```
 
-The helper needs ImageMagick and `fc-match`; `PANEL_W`/`PANEL_H` default to 1280/720. `PANEL_CROP=WxH+X+Y`
-crops each source before scaling. It overwrites its output: choose a new path, never a source frame.
+The helper needs ImageMagick and `fc-match`; `PANEL_W`/`PANEL_H` default to 1280/720 and every frame is fitted inside
+that box: a tall annotated frame (about 1280 x 1100) shrinks to a sliver, so set both near its size (`PANEL_W=1100
+PANEL_H=1010` for two per row). In a chat preview only colour cues read: the caption says what the colours mean.
+`PANEL_CROP=WxH+X+Y` crops each source before scaling. It overwrites its output: choose a new path, never a source frame.
 
 - A fix shows before and after from the same place; a feature shows its screen in each state; a menu change shows the
   rows, cropped (`PANEL_CROP`); a co-op change shows both games.
@@ -282,6 +303,9 @@ crops each source before scaling. It overwrites its output: choose a new path, n
   secret that is still in use.
 - Frames come from `hs-run.sh`'s `shots/` folder; a contact sheet finds the right ones quickly:
   `magick montage -label '%t' <every nth frame> -tile 6x -geometry 426x240+2+2 sheet.jpg`.
+- Cite single files (`shots/<frame>.png`), never a whole `shots/`, `auto/` or `runs/` folder: a folder cite pins every
+  frame below it against clean-up; copy the one picture into `reports/<Topic>-files/` instead. ImageMagick and ffmpeg
+  traps (annotation placement, `%`, clip length): `references/recipes.md`.
 - Intel can show pre-existing false colours. For generic feature illustrations prefer the RTX 4090; for an
   Intel-specific fix, keep the required **Intel before/after** pictures and label that unrelated colour defect.
   Never substitute another GPU's picture for the hardware behavior the test is meant to prove.
@@ -325,6 +349,8 @@ crops each source before scaling. It overwrites its output: choose a new path, n
   interaction. Carry earlier results with their actual tested heads; explicitly say “not rerun”.
   Rerun affected checks when changed lines, dependencies, workflow or integration behavior changed.
   Do not repeat a build/game/fork run solely because the SHA changed. After Main pushes, still read that PR's own CI.
+  A force-push changes every hash: map old to new once when a description names commits. For a rebase by someone
+  else, the trial merge before "Rebased on current main", and comparing two builds' lifts: `references/recipes.md`.
 - When new evidence arrives (an owed run, a picture), add it to the body with a dated line.
 - When it merges: move the row in `docs/worklist.md` to "Fixed, waiting for a release", and after the release ask the
   reporter to retest.
@@ -362,6 +388,8 @@ continue. Read `ls-pr-loop` for the full lane rule; author priority is not dayti
 1. Read the current thread/description, then fetch the head:
    `git -C /home/mooki/Code/Hookshot fetch origin +pull/<n>/head:refs/remotes/pr/<n>`.
    Main reads the executable diff before any build/test. Note what the author already measured.
+   On the forge (statuses, what CI covers for a fork pull request, why "skipped" is normal): `references/forge.md`.
+   Review recipes (a cache key, a boundary test broken on purpose, superseded pull requests): `references/recipes.md`.
 2. First check whether the result carries across an identical rebase (`ls-pr-loop`, `carry`); do not spend
    another build/hold on unchanged patches. Otherwise build separate owned head/base copies. Use the existing
    regression runner for an authorized paired speed comparison; ordinary runs prove logs/counts/pictures only.
@@ -373,37 +401,5 @@ continue. Read `ls-pr-loop` for the full lane rule; author priority is not dayti
 
 ## Workbench MCP routes
 
-After the operator setup linked in `ls-workbench` (private state root, catalogues, policy and registered roots),
-without an MCP client, run these from the installed workbench checkout:
-
-```sh
-uv run --project mcp ls-wb list --json
-uv run --project mcp ls-wb call workbench_status --args '{}'
-uv run --project mcp ls-wb read 'workbench://tools'
-```
-
-For a table tool, use `call <tool> --args '<JSON object>'`; add `--profile operate` for its local/run operations.
-Read the catalogue's **CLI broker** column: registry/file reads are one-shot, while live sessions and owned jobs
-use the private persistent broker. Submission returns a Job immediately, not its completion. Keep the same
-configured state root across calls; a CLI timeout does not cancel work or authorize replay. Do not stop a shared
-broker to clean up one task.
-
-Use registered IDs, not caller-selected scripts or paths. Check `workbench_status()` and the installed catalogue
-first; an integrated group can still lack its operator configuration. `observe` exposes READ tools; local checks/jobs
-need `operate` and current policy. A returned Job is not a result: use `job_wait(job_id=...)`, then
-`job_read(job_id=...)` and retain its receipt. Follow every cursor and truncation flag.
-Pushes, posts, uploads, fork-CI starts and claims remain Main's shell actions; MCP has no route for them.
-
-| Step | Shell route | MCP tool / group / integration | What it saves |
-|---|---|---|---|
-| Read the whole PR | `gh pr view` plus paginated comments/reviews | `github_thread_read(repository="NotRexed/Hookshot", number=N)` — knowledge, integrated | One bounded snapshot with head/hash and pagination state; fetch truncated text separately |
-| Find conflicting PRs | `"$P" -I -B "$E/pr_overlap.py" --branch <branch>` | No overlap tool exists | Keep the shell hunk review; thread facts do not prove merge conflicts |
-| Mechanical pre-push check | `"$H/hs-pr-check.sh" <branch> <title-file> [import options]` | `checks_pr(repo_id=..., commit=..., branch=..., title_artifact=..., idempotency_key=..., imported=[...])` — checks, integrated | Pinned reviewed checkout, parsed result and receipt; `--imported-files` remains shell-only |
-| Windows-target fixtures | `"$H/hs-idle.sh" "$H/hs-win-fixture-check.sh" <worktree> <base> --sysroot <sysroot>` | `checks_windows_syntax(repo_id=..., commit=..., base=..., idempotency_key=...)` — checks, integrated | Registered sysroot/gate and explicit unjudged/runtime-not-run result |
-| Read PR/fork checks | `"$H/hs-pr-ci.sh" <n> --repo <owner/repo>` | `ci_read(repository=..., pull_request=N)` — checks, integrated | Named failures and pinned main comparison; no CI rerun or fork starter |
-| Make panels / scan retained pixels | `"$E/panels.sh" ...`; `"$P" -I -B scripts/framelog.py <capture> <new.png>` from trusted current main | `evidence_panels(images=..., label=..., idempotency_key=...)`; `evidence_scan_frames(capture_artifact_id=..., idempotency_key=...)` — evidence, integrated | Source hashes, new outputs and candidate records; inspection still required |
-| Compare / bundle | Shared regression comparison and hand-built evidence table | `evidence_compare(pairing=...)`; `evidence_bundle(request=...)` — evidence, integrated | Existing-run pairs, clock/quiet rejection and private provenance-linked draft; no invented numbers |
-| Read reports / promises | Read registered report and `POSTED.md` | `knowledge_search(query=..., collection="reports")`; resources `workbench://reports/<id>` and `workbench://obligations` — knowledge, integrated | Bounded, revision-pinned text and follow-up rows; not a full-body search |
-| Inspect queue / start owned windowless session | GPU guard `--status`; `"$H/hs-run.sh" <owned-copy> <tag> <seconds>` | `queue_status()` — status, integrated; `session_launch(build_id=..., profile_id=..., wall_seconds=..., idempotency_key=...)` — session, integrated | Passive queue state; catalogue-bound disposable session, never permission for a hold |
-| Watch selected threads | Existing `hs-watch-threads.py` coordinator | `github_watch(threads=..., timeout_seconds=..., idempotency_key=...)` — knowledge, integrated | Owned bounded watch/cursor Job; it neither posts nor replaces a fresh full-thread read |
-
+The same steps through the registered MCP tools (`uv run --project mcp ls-wb ...`): `references/mcp-routes.md`. Pushes,
+posts, uploads, fork-CI starts and claims remain Main's shell actions; MCP has no route for them.
