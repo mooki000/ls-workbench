@@ -169,6 +169,7 @@ quantity or possession, and `names` aliases a caller may use instead of a flag n
 | `session_flags` (READ) | `run_id`, `names` (1 to 16 flag names, `0x` + 8 hex digit hashes, or game info aliases) | `flags` (name as given → integer, float, short text or null for an unknown flag), the present `frame`, the sampled `sample_frame` and `observed_at`. |
 | `session_flag_set` (Job) | `run_id`, `name`, `value` (integer, float or boolean), `idempotency_key`, optional `kind` (`bool`, `int`, `uint`, `float`), `timeout_seconds` | `name`, `hash`, `kind`, `before`, `written`, `after_memory`, `after_flag`, `effect` (`verified` or `not_applied`), `observed_at`. Never a guest address. |
 | `session_snapshot` (Job) | `run_id`, `idempotency_key` | `save_id` (a new registered clone), `file_count`, `copy_hash_manifest`, `state` (the sampled map, age, position, life, max life, rupees, frame, freshness and the bridge's slot listing), `slot_age_seconds`, `matches_state: null`, `validation_status: "copy_only_not_a_checkpoint"` and a `note`. |
+| `session_warp` (Job) | `run_id`, `x`, `y`, `z` (metres, -100000..100000), `idempotency_key`, `timeout_seconds` | `WarpResult`: `target`, `game_said`, `effect` verified / partial / not_applied, `samples` (`t`, `pos`, `dist`, `stale`), `before`, `after`, `note` | profile `debug` + `debug_tools`; Link controllable; a build with the Longshot `!place X Y Z` live-input command |
 
 **How `session_debug` works.** The game reads a live input file about every 30 ms and keeps only the last `!cheat <n>`
 line of a poll, acting on it at Link's next update in play. This server appends exactly one line (opened append-only and
@@ -209,6 +210,16 @@ game's own debug tools do for boolean flags, not a guarantee that the game keeps
 `forbidden`, reported as `refused_by_policy`; an address outside guest memory is `backend_failed`. A flag the game does not
 have is `not_found` and nothing is written. Memory reads and writes run on the game thread at a controller read, so the game
 must be running frames.
+
+**`session_warp`** puts Link at coordinates by the game's own return to mark: one `!place X Y Z` line in the owned live input file
+(the game keeps the last line of a poll and acts at Link's next update, as for `!cheat`), then the game's "returned to" line and the
+state sample's position for 2 seconds. The coordinates are metres in the frame of the map Link is in (the map name and his age belong
+to the coordinates; teleport first for another map). `verified`: every reading from the first one at the target (within 0.75 m) on stayed
+there; readings before it are marked `stale` (the sample is the previous update's). `partial`: he was there and the game moved him (a
+wall, the floor, a drop). `not_applied`: no "returned to" line (a build without the command says nothing; the Longshot patch is in the
+pilot's proposals) or his position never read back at the target. The facing is not set. Every precondition fails before a line is written;
+a failure after it is `uncertain_outcome`, never replayed. Proven against the real game through the command-line tool (three maps, 0.00 m);
+this tool is tested against the synthetic game only.
 
 **`session_snapshot`** copies `<run>/user` into a new registered clone exactly like `save_clone` (`save_<32 hex>` under the
 clone root, `clone-identity.json`, `copy-manifest.json` with SHA-256 per file) and adds `state.json` with what the
@@ -412,6 +423,7 @@ uv run python -m src.generate_readme --check
 | `session_stop` | session | WRITE_LOCAL | operate | yes | run_id, reason, idempotency_key | Owned input/game shutdown before gate release and final receipt |
 | `session_teleport` | session | WRITE_LOCAL | operate | yes | run_id, destination_id, idempotency_key | One listed debug teleport plus observed arrival checks |
 | `session_wait` | session | READ | observe, operate | yes | run_id, predicate, idempotency_key | Observed frame/state/map predicates, not guessed boot sleeps |
+| `session_warp` | session | WRITE_LOCAL | operate | yes | run_id, x, y, z, idempotency_key | One typed `!place` line into the owned live input file, then observed log and state read-back |
 | `system_telemetry` | telemetry | READ | observe, operate | no | run_id | Optional proposed perf.csv reader (#2915); no file means unavailable observation, not an error |
 | `team_read` | knowledge | READ | observe, operate | no | room | Attested GET-only existing-room read; unsafe stock CLI stays unavailable |
 | `test_requests_read` | knowledge | READ | observe, operate | no | none | Attested GET-only request list/show; unsafe stock CLI stays unavailable |

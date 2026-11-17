@@ -17,6 +17,7 @@ ItemName = Annotated[str, Field(min_length=1, max_length=80)]
 Count = Annotated[int, Field(ge=0, le=2**31 - 1)]
 Address = Annotated[int, Field(ge=0, lt=2**63)]
 Offset = Annotated[int, Field(ge=0, le=1 << 24)]
+Coordinate = Annotated[float, Field(ge=-100000, le=100000, allow_inf_nan=False)]   # metres, in the frame of the map Link is in
 
 
 class TimeAction(Record):
@@ -148,6 +149,25 @@ class DebugResult(Record):
     before: GameSample
     after: GameSample
     item: DebugItem | None = None
+    observed_at: str
+
+
+class WarpSample(Record):
+    t: float
+    pos: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    dist: float | None = None
+    stale: bool = False    # read before the game applied the warp (the state sample is the previous update's)
+
+
+class WarpResult(Record):
+    line_sent: Literal[True] = True
+    target: list[float] = Field(min_length=3, max_length=3)
+    game_said: list[Annotated[str, Field(max_length=200)]] = Field(max_length=8)
+    effect: Literal["verified", "partial", "not_applied"]
+    samples: list[WarpSample] = Field(max_length=64)
+    before: GameSample
+    after: GameSample
+    note: str | None = Field(default=None, max_length=300)
     observed_at: str
 
 

@@ -83,6 +83,10 @@ class FakeDebugGame(_BASE.FakeBridge):
         self.connections = 0
         self.streams = {}
         self.polls = []                           # every poll's `!cheat` numbers, in order
+        self.place_supported = True               # the build has the `!place X Y Z` live command (a Longshot patch)
+        self.pending_place = None
+        self.placed = []                          # every `!place` position the game applied
+        self.pull_after = None                    # seconds after a place at which the game puts Link back where he was
         self.applied = []
         self.watcher = None
         if info.get("layout"):
@@ -267,8 +271,19 @@ class FakeDebugGame(_BASE.FakeBridge):
             await asyncio.sleep(0.03)  # the game polls the live file about every 30 ms
             data = self.live.read_bytes()
             end = data.rfind(b"\n") + 1
-            lines = [line for line in data[offset:end].decode().split("\n") if line.startswith("!cheat ")]
+            text = data[offset:end].decode().split("\n")
+            lines = [line for line in text if line.startswith("!cheat ")]
+            places = [line for line in text if line.startswith("!place ")]
+            if places and self.place_supported:
+                self.pending_place = [float(v) for v in places[-1].split()[1:4]]
             offset = max(offset, end)
+            if self.pending_place is not None and not self.event and not self.loading:
+                xyz, self.pending_place, old = self.pending_place, None, list(self.pos)
+                self.pos = xyz
+                self.placed.append(xyz)
+                self.say("cheats: returned to " + self.triple(xyz))
+                if self.pull_after is not None:
+                    asyncio.get_running_loop().call_later(self.pull_after, lambda: setattr(self, "pos", old))
             if lines:
                 self.polls.append([int(line.split()[1]) for line in lines])
                 held = self.polls[-1][-1]  # only the LAST line of a poll is kept

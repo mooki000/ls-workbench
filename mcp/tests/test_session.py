@@ -120,7 +120,7 @@ async def test_session_catalogue(config, monkeypatch, profile, extras):
             "session_options_set": ["run_id", "values"], "session_teleport": ["run_id", "destination_id", "idempotency_key"],
             "session_age": ["run_id", "age", "idempotency_key"], "save_clone": ["save_id", "idempotency_key"],
             "session_stop": ["run_id", "reason", "idempotency_key"],
-            "session_debug": ["run_id", "action", "idempotency_key"], "session_flags": ["run_id", "names"],
+            "session_debug": ["run_id", "action", "idempotency_key"], "session_warp": ["run_id", "x", "y", "z", "idempotency_key"], "session_flags": ["run_id", "names"],
             "session_flag_set": ["run_id", "name", "value", "idempotency_key"],
             "session_snapshot": ["run_id", "idempotency_key"]}
         for spec in tools.SPECS:

@@ -23,7 +23,7 @@ from src.errors import WorkbenchError, fail
 from src.effects.names import LOG_NAMES
 from src.models import Job, utc_now
 from src.models.session_debug import (DebugItem, DebugResult, FlagsRead, FlagWritten, GameInfo, GameItem, SaveListing,
-    SnapshotResult, SnapshotState)
+    SnapshotResult, SnapshotState, WarpResult, WarpSample)
 
 MAX_GAME_INFO = 4 * 1024 * 1024
 SAMPLE_FIELDS = sorted(FIELDS)
@@ -34,6 +34,8 @@ LINE_PAUSE = 0.04            # the game polls its live input file every 30 ms an
 LOG_WAIT = 2.0               # seconds to wait for the game's own words
 COUNT_WAIT = 1.5             # seconds to wait for an asynchronous pickup to show in a count flag
 RETURN_TOLERANCE = 1.0       # position units; the bridge's own unit
+WARP_WATCH = 2.0             # seconds Link's position is read back after a warp
+WARP_TOLERANCE = 0.75        # metres from the target that still count as there
 FLAG_SETTLE_PRESENTS = 20
 SNAPSHOT_NOTE = ("A copy of this session's disposable user folder at one moment, not a checkpoint. The game saves on its "
     "own transitions: item, flag and position edits are not on disk until its next save. To restore, call "
@@ -130,20 +132,20 @@ def had_now(lines: list[str]) -> tuple[int | None, int | None]:
     return (int(found[1]), int(found[2])) if found else (None, None)
 
 
-def append_line(path: Path, code: int) -> None:
-    """Append one ``!cheat`` line, atomically for the game's reader; never through a symlink."""
-    line = f"!cheat {code}\n".encode()
+def append_line(path: Path, code: int, *, text: str | None = None, operation: str = "session_debug") -> None:
+    """Append one ``!cheat`` line (or ``text``), atomically for the game's reader; never through a symlink."""
+    line = (text if text is not None else f"!cheat {code}\n").encode()
     try:
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
     except OSError:
-        raise fail("backend_failed", "session_debug") from None
+        raise fail("backend_failed", operation) from None
     try:
         try:
             written = os.write(fd, line)
         except OSError:
-            raise fail("uncertain_outcome", "session_debug") from None
+            raise fail("uncertain_outcome", operation) from None
         if written != len(line):
-            raise fail("uncertain_outcome", "session_debug")
+            raise fail("uncertain_outcome", operation)
     finally:
         os.close(fd)
 
@@ -341,6 +343,85 @@ class SessionDebug:
             return "verified"
         # Read from the have flag alone, a removal cannot be seen: it stays set. The game's log line is all there is.
         return "requested" if have_only and count_before else "not_applied"
+
+    # ---- a coordinate warp: the game's own return to mark, with the asked position as the mark (`!place X Y Z`, a Longshot patch)
+
+    async def warp_impl(self, run_id: str, x: float, y: float, z: float, timeout_seconds: float, idempotency_key: str) -> Job:
+        target = [float(x), float(y), float(z)]
+        request = dict(run_id=run_id, target=target, timeout_seconds=timeout_seconds)
+        previous = self.deps.registry.find_job("session_warp", idempotency_key, request)
+        if previous is not None:
+            return previous
+        session = self.service.owned(run_id)
+        if not (session.profile.debug and session.profile.debug_tools):
+            raise self.deps.error("refused_by_policy", "session_warp")
+        if session.live_path is None or session.live_path.is_symlink() or not session.live_path.is_file():
+            raise self.deps.error("unavailable", "session_warp")
+        if not all(math.isfinite(v) and abs(v) <= 100000 for v in target):
+            raise self.deps.error("invalid_argument", "session_warp")
+
+        async def run(job_id):
+            if session.debug_lock.locked():
+                raise self.deps.error("busy", "session_warp")
+            async with session.debug_lock:
+                written = []
+                try:
+                    async with asyncio.timeout(timeout_seconds):
+                        return await self._warp(session, target, written)
+                except TimeoutError:
+                    raise self.deps.error("uncertain_outcome" if written else "timeout", "session_warp") from None
+        return await self.service._submit("session_warp", request, idempotency_key, run, run_id=run_id)
+
+    async def _warp(self, session: Session, target: list[float], written: list) -> WarpResult:
+        deps, bridge = self.deps, await self.service.connection(session)
+        before = sample_from(await bridge.request("status", timeout=2), max_age_ms=500, selected=SAMPLE_FIELDS)
+        if before.controllable is not True:
+            raise deps.error("unavailable", "session_warp", retryable=True)   # never queue a line behind a load or a cutscene
+        log = log_path(session)
+        offset = log_offset(log)
+        deps.paths.read(session.live_path)
+        append_line(session.live_path, 0, text="!place %.4f %.4f %.4f\n" % tuple(target), operation="session_warp")
+        written.append(1)
+        samples, said = [], []
+        try:
+            await asyncio.sleep(LINE_PAUSE)
+            await bridge.request("wait", timeout=5, event="present", frames=3)
+            deadline = time.monotonic() + LOG_WAIT
+            while not (said := [line for line in cheat_lines(log, offset) if "returned to" in line]) and time.monotonic() < deadline:
+                await bridge.request("wait", timeout=1, event="present", frames=1)
+            started = time.monotonic()
+            while said:
+                sample = sample_from(await bridge.request("status", timeout=2), max_age_ms=500, selected=SAMPLE_FIELDS)
+                pos = sample.game.pos
+                samples.append(WarpSample(t=round(time.monotonic() - started, 2), pos=pos,
+                                          dist=round(math.dist(pos, target), 2) if pos else None))
+                if time.monotonic() - started >= WARP_WATCH or len(samples) >= 64:
+                    break
+                await bridge.request("wait", timeout=2, event="present", frames=6)
+            after = sample_from(await bridge.request("status", timeout=2), max_age_ms=500, selected=SAMPLE_FIELDS)
+            said = cheat_lines(log, offset) or said
+        except WorkbenchError as exc:
+            if exc.envelope.code == "uncertain_outcome":
+                raise
+            raise deps.error("uncertain_outcome", "session_warp") from None
+        effect, note = "not_applied", ("the game gave no \"returned to\" line: this build has no `!place` command (the Longshot patch is not in it), "
+                                      "or Link was not being updated")
+        near = [s for s in samples if s.dist is not None and s.dist <= WARP_TOLERANCE]
+        if near:
+            first = samples.index(near[0])
+            for s in samples[:first]:
+                s.stale = True    # (the state sample is the previous update's: the old place, not a failure)
+            kept = samples[first:]
+            last = samples[-1]
+            if all(s.dist is not None and s.dist <= WARP_TOLERANCE for s in kept):
+                effect, note = "verified", None
+            else:
+                effect, note = "partial", (f"Link was at the target for {len(near)} of {len(kept)} samples and then {last.dist} m away: "
+                                           "the game put him back or moved him (a wall, the floor, a drop)")
+        elif said:
+            note = "the game said it returned him, but his position never read back within 0.75 m of the target"
+        return WarpResult(target=target, game_said=said[:8], effect=effect, samples=samples[:64], before=before.game, after=after.game,
+                          note=note, observed_at=utc_now())
 
     # ---- typed flag writes (memory opt-in)
 

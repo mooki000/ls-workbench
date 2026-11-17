@@ -6,7 +6,7 @@ from src.effects.session_debug import SessionDebug
 from src.models import Job
 from src.models.session import (Cursor, DestinationsPage, Idempotency, InputStep, Key, Label, Limit, LocalId, OptionsChanged,
     OptionsPage, Predicate, RunId, Sample, SavesPage, ShotResult, Timeout)
-from src.models.session_debug import DebugAction, FlagKind, FlagName, FlagsRead
+from src.models.session_debug import Coordinate, DebugAction, FlagKind, FlagName, FlagsRead
 from src.policy import Safety, ToolSpec
 
 SPECS = (
@@ -21,6 +21,7 @@ SPECS = (
     ToolSpec("session_age", Safety.WRITE_LOCAL, "Submit one age change on a disposable debug profile; unavailable commands never fall back to cheats. The result records the state before and the target map.", shell_route="Optional typed bridge age command, with no cheat fallback"),
     ToolSpec("session_destinations", Safety.READ, "Read the bridge's bounded teleport destination listing: index plus child and adult map names, as the game reports them.", shell_route="Bridge teleport listing without a destination", broker=True),
     ToolSpec("session_debug", Safety.WRITE_LOCAL, "Submit one Debug-tab action (time of day, item quantity or possession, mark, return to mark) as a line in the owned live input file, on a debug profile with debug tools and the build's game info. Reads back what it can; a game-acknowledged request is not verification. No replay on uncertain outcome.", shell_route="One typed cheat line into the owned live input file, then observed log and state read-back"),
+    ToolSpec("session_warp", Safety.WRITE_LOCAL, "Put Link at x, y, z (metres, in the frame of the map he is in) by the game's own return to mark: one `!place X Y Z` line in the owned live input file on a debug profile with debug tools (the build needs the Longshot `!place` patch). Reads his position back for 2 seconds: verified, partial (the game moved him) or not_applied (a build without the command says nothing). Facing is not set. No replay on uncertain outcome.", shell_route="One typed `!place` line into the owned live input file, then observed log and state read-back"),
     ToolSpec("session_flags", Safety.READ, "Read up to 16 game flags by name, hash or game-info alias through a one-shot subscription on a dedicated connection; unknown flags are null. Needs no memory opt-in.", shell_route="One-shot oot flag subscription on its own control connection", broker=True),
     ToolSpec("session_flag_set", Safety.WRITE_LOCAL, "Write one typed flag value through guest memory on a debug profile that opted into memory and has game-info layout; reads it back by memory and flag subscription. No replay on uncertain outcome.", shell_route="Typed flag lookup and write through the opt-in memory commands, then read-back"),
     ToolSpec("session_snapshot", Safety.WRITE_LOCAL, "Copy the running session's disposable user folder into a new registered clone with a hash manifest and a sampled state record. A copy, not a checkpoint; restore with session_launch(save_id=...).", shell_route="Fresh registered copy of the live disposable user folder with hashes and sampled state"),
@@ -90,6 +91,11 @@ def register(mcp, deps):
     async def session_debug(run_id: RunId, action: DebugAction, idempotency_key: Idempotency,
                             timeout_seconds: Timeout = 30) -> Job:
         return await debug.debug_impl(run_id, action, timeout_seconds, idempotency_key)
+
+    @deps.tool(mcp, "session_warp")
+    async def session_warp(run_id: RunId, x: Coordinate, y: Coordinate, z: Coordinate, idempotency_key: Idempotency,
+                           timeout_seconds: Timeout = 30) -> Job:
+        return await debug.warp_impl(run_id, x, y, z, timeout_seconds, idempotency_key)
 
     @deps.tool(mcp, "session_flags")
     async def session_flags(run_id: RunId, names: Annotated[list[FlagName], Field(min_length=1, max_length=16)]) -> FlagsRead:
