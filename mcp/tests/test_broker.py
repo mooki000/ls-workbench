@@ -108,6 +108,7 @@ class Sandbox:
         self.births = {}
         for name in ("state", "build", "harness", "clones", "seed", "protected", "home"):
             (root / name).mkdir(mode=0o700)
+        (root / "harness/hs_names.py").write_bytes((Path(__file__).parents[2] / "harness/hs_names.py").read_bytes())
         (root / "build/romfs").mkdir()
         (root / "build/image.bin").write_bytes(b"synthetic broker test image")
         (root / "build/hookshot").write_text(f"#!{sys.executable}\nraise SystemExit(99)\n")

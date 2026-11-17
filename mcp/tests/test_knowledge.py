@@ -346,6 +346,28 @@ async def test_knowledge_prompt_missing_source_refuses(kb):
     assert failure.value.envelope.code == "unavailable"
 
 
+def test_repository_prompt_sections_exist(tmp_path):
+    skills = Path(__file__).parents[2] / "skills"
+    names = tuple(sorted({name for sections in PLANS.values() for name, _ in sections}))
+    deps = Deps(Config(state_root=tmp_path / "state", read_roots=(skills,),
+        knowledge=KnowledgeConfig(skills_dir=skills, skill_names=names)))
+    for prompt in PLANS:
+        assert prompt_plan_impl(deps, prompt, {})["plan"]
+
+
+def test_large_retained_loop_snapshot_is_bounded_separately(kb):
+    state = json.loads((kb.loop / "state.json").read_text())
+    state["snapshot"]["retained_body"] = "x" * (3 * 1024 * 1024)
+    put(kb.loop / "state.json", state)
+    deps = Deps(kb.config)
+    assert load_snapshot(deps)[0] == state
+    state["snapshot"]["retained_body"] = "x" * (16 * 1024 * 1024)
+    put(kb.loop / "state.json", state)
+    with pytest.raises(WorkbenchError) as failure:
+        load_snapshot(deps)
+    assert failure.value.envelope.code == "unavailable"
+
+
 async def test_knowledge_watch_changes_cursors_and_deduplication(kb):
     deps = Deps(kb.config)
     async with Client(build_server(deps=deps)) as client:

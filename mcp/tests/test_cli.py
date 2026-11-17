@@ -118,6 +118,7 @@ def session(shell):
     root = shell.root
     for name in ("state", "build", "harness", "clones"):
         (root / name).mkdir()
+    (root / "harness/hs_names.py").write_bytes((Path(__file__).parents[2] / "harness/hs_names.py").read_bytes())
     (root / "build/romfs").mkdir()
     (root / "build/image.bin").write_bytes(b"synthetic image, not game data")
     executable = root / "build/hookshot"
@@ -198,7 +199,12 @@ def test_profile_override_preserves_other_configuration(shell):
     names = {row["name"] for row in rows}
     assert "job_cancel" in names and "session_launch" not in names
     status = success(shell("--profile", "observe", "call", "workbench_status", "--args", "{}"))
-    assert status["capabilities"]["harness"]["status"] == "configured"
+    assert status["capabilities"]["harness"]["status"] == "unavailable"
+    (harness / "hs-run.sh").write_text("#!/bin/sh\nexit 0\n")
+    (harness / "hs-run.sh").chmod(0o700)
+    (harness / "hs_names.py").write_text("# fixture resolver presence\n")
+    configured = success(shell("--profile", "observe", "call", "workbench_status", "--args", "{}"))
+    assert configured["capabilities"]["harness"]["status"] == "configured"
     failure(shell("call", "session_launch", "--profile", "observe", "--args", "{}"), "not_found")
     assert not paths(shell.config).socket.exists()
 
@@ -354,7 +360,9 @@ def test_launch_and_session_wait_return_jobs_without_waiting_for_lifetime(sessio
     run_id = launch.run_ids[0]
     observed(lambda: (session.root / "pids.json").exists())
     pids = json.loads((session.root / "pids.json").read_text())
-    socket = session.root / "build/runs" / run_id / "control.sock"
+    pointer = session.root / "build/runs" / run_id / "control-socket.json"
+    observed(pointer.exists)
+    socket = Path(json.loads(pointer.read_text())["socket"])
     observed(socket.exists)
     assert all(identity(pid) is not None for pid in pids.values())
 

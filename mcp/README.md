@@ -67,7 +67,7 @@ A generic host entry (replace the paths yourself; no server-side shell expansion
 
 Stdio inherits the trust of the account and host launching it. This entry opens no network listener. Do not expose it
 as an unauthenticated remote service. Missing optional backends are reported as `unavailable`, not silently emulated.
-`configured` means a path exists, not that connectivity, a binary, a save, or gameplay has been validated.
+`configured` means registered local paths and prerequisites passed validation, not that connectivity or gameplay was proved.
 
 ## Shell entry and owned sessions
 
@@ -175,6 +175,49 @@ They are operator registrations, not account files. Register their directories a
 READ_ROOTS; register STATE_ROOT explicitly in WRITE_ROOTS before using job/artifact producers. Missing components
 refuse without executing a substitute. Invalid optional knowledge configuration is unavailable, not a server crash.
 The stock team/request CLIs remain unavailable until a reviewed GET-only/no-save CLI contract exists.
+The configured harness must include its shared `hs_names.py` resolver. Session launch selects the executable and
+log from the owned copy; build planning selects profile/environment/output names from the pinned checkout.
+Both Longshot and historical Hookshot builds are supported; missing or mixed project identities refuse.
+Queue observation also verifies inherited flock ownership through the recorded holder's bounded `/proc/<pid>/fdinfo`
+records. The exited `flock` helper's PID in `/proc/locks` is not mistaken for a stale live gate holder.
+Session profiles may set the strict Boolean `precompile:false` for a bounded cold-start investigation.
+The default `true` leaves the build's startup behavior unchanged; only explicit `false` adds `RX_VK_PRECOMPILE=0`.
+The selected value is pinned in the request/plan and `startup_policy` event. This is operator configuration,
+not an arbitrary environment tool argument or evidence that a cold run is suitable for timing.
+Reviewed GET-only provider workers retain both set and unset HOME/XDG/GH configuration choices.
+An unset `XDG_CONFIG_HOME` must not become the worker's empty isolated config directory, hiding an existing login.
+Credential-token variables remain excluded; ordinary test/build workers keep their isolated environment.
+Prompt selectors are checked against the repository's actual skill sections, not only self-generated fake headings.
+Retained PR-loop state has a separate 16 MiB bound (ordinary knowledge documents remain bounded to 2 MiB);
+large initialized snapshots therefore remain readable without removing the input-size limit.
+`checks_pr` is bound to the exact `pr_check_checkout` recorded by its operator, which must be the checkout
+the installed helper actually uses; a different registered worktree refuses before executing the helper.
+Register the resolved Windows helper path (not a symlink crossing registered roots), and register `ci_reader`
+as the trusted `hs_pr_ci.py` parser module, not the `hs-pr-ci.sh` launcher.
+Whole-suite results include the runner's C++ fixtures and byte-compile check. The declared totals and every failing
+name remain in `result.json`; the first 100 row summaries are only a presentation cap, not table completeness.
+Follow `job_read` event cursors for all rows, or read an artifact URI through
+`workbench://artifacts/<id>?limit=8192` and continue with `cursor=<next_cursor>`.
+That resource serves complete registered JSON/plain/CSV text (at most 8 MiB), checks its digest, redacts local paths
+and secrets, and pages normalized text by at most 32768 characters. Binary/save contents and live files refuse.
+Source snapshots are intentionally retained; no automated pruning or MCP deletion operation exists. They consume
+disk space until an operator removes selected completed source-check snapshots after preserving the evidence.
+Never prune an active/queued job or a build donor's source/work tree; its hashes and receipts authorize later reuse.
+Configured capabilities require registered readable paths, executable tools where appropriate, valid catalogue
+schemas and local prerequisites; Windows syntax checks verify `include/windows.h` before joining the test gate.
+This remains a local configuration check, not a connectivity probe or proof that a game/backend runs.
+Registry contention during streaming progress does not terminate the check child: raw logs remain authoritative,
+optional progress can be omitted with a private diagnostic, and durable artifact/result writes retry only rolled-back
+busy transactions under a bounded deadline. Original worker exceptions are retained in private stderr before reporting.
+Game control sockets use a short private `${XDG_RUNTIME_DIR}/lswb/<12 hex>/c.sock`, or `/tmp/lswb-<uid>/<12 hex>/c.sock`
+when XDG_RUNTIME_DIR is unset. Existing namespace directories must belong to this user and have mode 0700;
+symlinks, foreign ownership and wider modes refuse. Socket pathnames are checked in encoded bytes (maximum 107,
+plus the NUL terminator); an overlong runtime path produces a bounded diagnostic naming the path and limit.
+Everything else remains in the registered run folder, including `control-socket.json`, the checked reconnect pointer.
+Normal shutdown removes the socket and its leaf directory only after observed child exit. Before a new authorized
+launch, stale cleanup removes only same-state-root directories with a proven-dead owner and no live or uncertain
+worker. The namespace directory remains. The CLI broker retains its already-working private relative-bind/procfs
+connection scheme, which handles long state roots without an external socket alias.
 
 Build evidence consumes the checks group's registered `build_start` manifests/results: full commit, binary hashes,
 and `completed_receipt` with a successful `builder_done` or `linked_outputs` receipt, linked to a completed build Run.
@@ -242,7 +285,7 @@ uv run python -m src.generate_readme --check
 |---|---|---|---|---|---|---|
 | `build_plan` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, profile_id | Pinned build/donor planning and compiler dry-run inspection |
 | `build_start` | checks | RUN | operate | yes | plan_id, idempotency_key | Gated full/reused build wrappers and completion bookkeeping |
-| `checks_pr` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, branch, title_artifact, idempotency_key | Repository-bound pre-push check; whole imported-commit attestations only |
+| `checks_pr` | checks | WRITE_LOCAL | operate | yes | repo_id, commit, branch, title_artifact, idempotency_key | Repository-bound pre-push check at pr_check_checkout; whole imported-commit attestations only |
 | `checks_source` | checks | RUN | operate | yes | repo_id, commit, idempotency_key | Idle-gated source test runner and failing-name comparison |
 | `checks_windows_syntax` | checks | RUN | operate | yes | repo_id, commit, base, idempotency_key | Windows-target fixture check wrapper (not Windows runtime) |
 | `ci_read` | checks | READ | observe, operate | no | repository | CI reader plus failed-job/log and matching-main inspection |
@@ -285,6 +328,7 @@ uv run python -m src.generate_readme --check
 
 | URI or template | Profiles | Purpose |
 |---|---|---|
+| `workbench://artifacts/{id}{?cursor,limit}` | observe, operate | Read complete registered JSON/plain/CSV text (8 MiB maximum), redacted and revision-pinned. limit is 1–32768 characters; follow next_cursor. Never binary/save contents. |
 | `workbench://evidence/analyzers` | operate | Approved analyzer IDs, measurements, units, clocks and required retained inputs; no probe. |
 | `workbench://jobs/{id}/events{?cursor,limit}` | observe, operate | Append-only events, at most 100 per page; continue with next_cursor. |
 | `workbench://nightly/{cycle}{?start,limit,revision}` | observe, operate | Retained nightly cycle status and bounded private report; no new work or database initialization. |
@@ -341,8 +385,9 @@ uv run python -m src.generate_readme --check
 ## Errors, permissions and cancellation
 
 Every tool failure uses a framework ToolError with JSON fields
-`code`, `operation`, `retryable`, `retry_after_seconds`, `operator_action`. No raw exception text or local path is put in
-that envelope. Validation failures use the same boundary. Codes:
+`code`, `operation`, `retryable`, `retry_after_seconds`, `operator_action`. Backend exception text never crosses
+that envelope. The socket-length diagnostic alone includes the server-chosen private runtime path and byte limit.
+Validation failures use the same boundary. Codes:
 
 | Code | Next safe action |
 |---|---|

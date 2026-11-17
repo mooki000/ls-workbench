@@ -8,7 +8,7 @@ from src.models.session import (Cursor, Idempotency, InputStep, Key, Label, Limi
 from src.policy import Safety, ToolSpec
 
 SPECS = (
-    ToolSpec("session_launch", Safety.RUN, "Submit a bounded disposable windowless session through the configured wrapper and gate. Returns a Job; no direct launch.", shell_route="Windowless wrapper setup, gate admission and bridge readiness journal"),
+    ToolSpec("session_launch", Safety.RUN, "Submit a bounded disposable windowless session through the configured wrapper and gate. The returned Job lasts until exit; use job_read.events.events[] kind=bridge_ready, then session_wait for stable menu/play before input or pictures. Bridge readiness alone is not gameplay.", shell_route="Windowless wrapper setup, gate admission and bridge readiness journal"),
     ToolSpec("session_input", Safety.WRITE_LOCAL, "Submit owned typed input. Frames are game presents; hos at is seconds and duration milliseconds, rounded half away from zero at 60 frames/s. Completion is effect_unverified.", shell_route="Typed control-client sequence or scoped release commands"),
     ToolSpec("session_state", Safety.READ, "Read bounded state with sample age and capability. Missing sampled-frame freshness remains unknown.", shell_route="Control status plus sampled-state age and freshness checks", broker=True),
     ToolSpec("session_wait", Safety.READ, "Submit a bounded observed predicate wait as a Job. Cancelling it never stops the game or resends input.", shell_route="Observed frame/state/map predicates, not guessed boot sleeps", broker=True),

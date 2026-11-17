@@ -20,8 +20,9 @@ Published skill directories/frontmatter/references, repository/package/server/CL
 settings, internal labels and prose have moved to LS. Existing `hs-*` helper names and `hs_names.py`
 remain established short identifiers, not the spelled-out names targeted by this cutover.
 
-Game name selection is centralized in `harness/hs_names.py`. The existing MCP adapter's fixed
-external contracts are in `mcp/src/game_literals.py`; this rename does not broaden its game support.
+Game name selection is centralized in `harness/hs_names.py`. The MCP adapter resolves the game's file and environment names at run time through that resolver
+(`mcp/src/effects/names.py`); the one fixed external name left is the frame-capture media type in
+`mcp/src/game_literals.py`; this rename does not broaden its game support.
 `harness/ls-port.py` separately names its historical source-commit references and preserves its
 existing game-branch prefix. `publish.py` owns the explicit live-to-public tables; `cutover.py`
 owns the deferred host paths and the shared locks it must never replace.
@@ -259,21 +260,31 @@ protection paths and coordination locks still name objects on this PC. No live m
 ["mcp/README.md", "https://github.com/NotRexed/Hookshot/pull/1025", 1, "Existing upstream/fork repository, public issue/PR URL or service API path; renaming the workbench does not rename that external repository."]
 ["mcp/README.md", "https://github.com/NotRexed/Hookshot/pull/2904", 1, "Existing upstream/fork repository, public issue/PR URL or service API path; renaming the workbench does not rename that external repository."]
 ["mcp/README.md", "scripts/hookshot_ctl.py", 1, "Exact external game executable, log, profile, settings, environment, client-source or telemetry spelling required by the existing runtime."]
+["mcp/README.md", "Hookshot", 1, "Prose naming the external game builds (current and historical) that the harness name resolver supports; not a workbench identity."]
+["mcp/README.md", "Longshot", 1, "Prose naming the external game builds (current and historical) that the harness name resolver supports; not a workbench identity."]
+["mcp/src/effects/names.py", "hookshot_log.txt", 1, "Exact external game executable, log, profile, settings, environment, client-source or telemetry spelling required by the existing runtime."]
+["mcp/src/effects/names.py", "longshot_log.txt", 1, "Exact external game executable, log, profile, settings, environment, client-source or telemetry spelling required by the existing runtime."]
 ["mcp/src/effects/system_telemetry.py", "https://github.com/NotRexed/Hookshot/issues/2915", 2, "Existing upstream/fork repository, public issue/PR URL or service API path; renaming the workbench does not rename that external repository."]
-["mcp/src/game_literals.py", "HOOKSHOT_KEEP_BUILD_FILES", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
-["mcp/src/game_literals.py", "HOOKSHOT_LIFT_JOBS", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
 ["mcp/src/game_literals.py", "application/x-hookshot-framelog", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
-["mcp/src/game_literals.py", "hookshot", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
-["mcp/src/game_literals.py", "hookshot_log.txt", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
-["mcp/src/game_literals.py", "hookshot_pieces.prof", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
-["mcp/src/game_literals.py", "hookshot_vk.so", 1, "Exact external HS executable, renderer, log, profile, build-switch or frame-capture MIME contract used by the existing adapter."]
 ["mcp/tests/fakes/broker_session.py", "hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
-["mcp/tests/fakes/checks_backend.py", "hookshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
-["mcp/tests/fakes/checks_backend.py", "hookshot_vk.so", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/checks_backend.py", "hookshot", 3, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/checks_backend.py", "hookshot_vk.so", 3, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/checks_backend.py", "HOOKSHOT_KEEP_BUILD_FILES", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/checks_backend.py", "HOOKSHOT_LIFT_JOBS", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/fakes/session_process.py", "hookshot_log.txt", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/session_process.py", "hookshot", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/fakes/session_process.py", "longshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_broker.py", "build/hookshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
-["mcp/tests/test_checks.py", "hookshot", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "hookshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_checks.py", "hookshot_vk.so", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "/longshot_pieces.prof", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "HOOKSHOT_", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "LONGSHOT_", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "LONGSHOT_KEEP_BUILD_FILES", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "LONGSHOT_LIFT_JOBS", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "longshot", 3, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "longshot_vk.so", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_checks.py", "test_longshot_build_names_and_environment", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_cli.py", "build/hookshot", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_core.py", "HOOKSHOT_KEEP_BUILD_FILES", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_core.py", "HOOKSHOT_LIFT_JOBS", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
@@ -286,8 +297,10 @@ protection paths and coordination locks still name objects on this PC. No live m
 ["mcp/tests/test_evidence.py", "hookshot_log.txt", 3, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_evidence.py", "journal-run/hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_evidence.py", "other/hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
-["mcp/tests/test_session.py", "build/hookshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_session.py", "build/hookshot", 4, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["mcp/tests/test_session.py", "hookshot_log.txt", 1, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_session.py", "hookshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
+["mcp/tests/test_session.py", "longshot", 2, "Independent synthetic fixture pinning an external game filename, environment, protocol, source or existing host-path contract."]
 ["name_policy.py", "?:hookshot", 1, "The names-policy matcher must spell the forbidden names to reject them in repository paths and contents."]
 ["name_policy.py", "hookshot", 1, "The names-policy matcher must spell the forbidden names to reject them in repository paths and contents."]
 ["name_policy.py", "longshot", 2, "The names-policy matcher must spell the forbidden names to reject them in repository paths and contents."]

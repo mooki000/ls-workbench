@@ -63,6 +63,12 @@ async def test_catalogue(config, profile, extra):
             assert tool.annotations.idempotent_hint == spec.idempotent
             assert tool.annotations.open_world_hint == spec.open_world
             assert set(tool.input_schema.get("required", [])) == set(REQUIRED[name])
+        wait_schema = tools["job_wait"].input_schema["properties"]["timeout_seconds"]
+        assert (wait_schema["minimum"], wait_schema["maximum"]) == (0, 30)
+        assert "0–30 seconds" in tools["job_wait"].description
+        if profile == "operate":
+            assert "bridge_ready" in tools["session_launch"].description
+            assert "pr_check_checkout" in tools["checks_pr"].description
         result = await client.call_tool("workbench_status")
         assert result.structured_content["protected_player_active"] is None
         assert result.structured_content["capabilities"]["harness"]["status"] == "unavailable"
@@ -74,6 +80,32 @@ async def test_catalogue(config, profile, extra):
         assert {p.name for p in await client.list_prompts()} == {
             "prove_fix", "compare_builds", "reproduce_issue", "test_requested_pr",
             "recover_or_cancel", "prepare_evidence_handoff"}
+
+
+async def test_completed_text_artifact_resource_pages_and_redacts(config):
+    deps = Deps(config)
+    async with Client(build_server(deps=deps)) as client:
+        path = config.state_root / "result.json"
+        path.write_text(json.dumps({"value": "é" * 70000, "token": "never-return", "path": "/private/source/file"}))
+        art = deps.registry.add_artifact(path, guards=deps.paths, mime="application/json",
+            producer=Producer(tool="checks_source"), complete=True)
+        uri = "workbench://artifacts/" + art.id
+        cursor = None
+        parts = []
+        while True:
+            page = json.loads((await client.read_resource(uri + "?limit=16384" + ("&cursor=" + cursor if cursor else "")))[0].text)
+            assert len(page["text"]) <= 16384
+            parts.append(page["text"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                assert page["complete"]
+                break
+        content = "".join(parts)
+        assert "never-return" not in content and "/private/source" not in content
+        assert json.loads(content)["value"] == "é" * 70000
+        path.write_text("changed after registration")
+        with pytest.raises(Exception):
+            await client.read_resource(uri)
 
 
 def test_unknown_profile_and_extras(config):
@@ -147,15 +179,7 @@ def test_config_explicit_environment(tmp_path):
 
 
 def test_external_game_literals_remain_exact():
-    assert HS_GAME == {
-        "executable": "hookshot",
-        "renderer": "hookshot_vk.so",
-        "log": "hookshot_log.txt",
-        "build_profile": "hookshot_pieces.prof",
-        "lift_jobs_env": "HOOKSHOT_LIFT_JOBS",
-        "keep_build_files_env": "HOOKSHOT_KEEP_BUILD_FILES",
-        "framelog_mime": "application/x-hookshot-framelog",
-    }
+    assert HS_GAME == {"framelog_mime": "application/x-hookshot-framelog"}
 
 
 def test_path_guards(config, tmp_path):
