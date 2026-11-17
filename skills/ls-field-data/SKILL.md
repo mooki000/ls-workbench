@@ -25,16 +25,18 @@ Two streams exist, both sent only with the player's consent:
 
 Both are shown on two Grafana dashboards, uids `longshot-crashes` and `longshot-performance`.
 
-**What the data holds today (read 16 Nov 2026): little, and not players'.** A player's game sends only from a build that
-has the senders (pull request 983, merged 16 Nov 2026; no release or nightly published before then has them), and only
-with the player's consent. So what is there comes from developers' own test, local and dirty builds (a signature first
-reported before the merge date cannot come from a published build). Release builds only: one test crash, no
-performance session. `--all-builds`: about ten crash signatures, most with one report, and about 25 short performance
-sessions; the one gameplay map in them has 2. Every procedure below works; no conclusion
-about players does. Until players' builds report: read the session and report counts first and quote them; say
-"developers' builds" when that is what you counted; use `--all-builds` to see anything at all; "no report" is nothing
-learned, not "no problem". Before relying on this paragraph, re-read the counts and check the forge's releases against
-the merge date (`releases` and `pulls/983` under the script's `FORGE_API`, public).
+**What the data holds (counts read 16 Nov 2026; read them again before you quote any): little, and not players' until a
+build with the senders is out.** The senders (pull request 983, and the launcher's 128 in its own repository) were
+merged on 16 Nov 2026. A player's game sends only from a build that contains the merge commit (`merge_commit_sha` of
+`pulls/983`; a release or nightly has it when its `target_commitish` descends from it) and only with the player's
+consent. Before that the data come from developers' own test, local and dirty builds (a signature first reported before
+the merge cannot come from a published build). On 16 Nov: release builds only, one test crash and no performance
+session; `--all-builds`, about ten crash signatures, most with one report, and about 25 short performance sessions, the
+one gameplay map in them with 2. Every procedure below works; no conclusion about players does until the counts show
+players' builds. Read the session and report counts first and quote them; say "developers' builds" when that is what
+you counted; use `--all-builds` to see anything at all; "no report" is nothing learned, not "no problem". Re-check with
+the counts and with `releases` and `pulls/983` under the script's `FORGE_API` (public); rewrite this paragraph once
+players' builds report: nothing else depends on it.
 
 ## 1. Get in
 
@@ -48,13 +50,16 @@ the merge date (`releases` and `pulls/983` under the script's `FORGE_API`, publi
 
 ```sh
 F=/home/mooki/.agents/skills/ls-field-data/scripts/ls_field.py
-python3 "$F" crashes --days 30                 # release builds only, as the dashboards default
+python3 "$F" crashes --days 30                 # release builds only (the script's default; the dashboards start at All)
 python3 "$F" crashes --days 30 --all-builds    # also local and modified builds
 python3 "$F" perf --days 30 --by gpu           # sessions, hours, average fps, 1% low, hitches per hour
 python3 "$F" hitches --days 30 --by map        # hitches by cause
 python3 "$F" events --days 30 --by driver      # device_lost, vram_over_budget, swapchain_recreated, ...
 python3 "$F" query 'PROMQL'                    # anything else; add --json to the others for machine reading
 ```
+
+`--by` takes one label (`gpu`, `driver`, `os`, `version`, `map`, ...). A split by two, such as map and version, needs
+`query` with your own PromQL, e.g. `sum by (map, version) (increase(<metric>[30d]))` (metric names: `docs/field-data.md`).
 
 The server wants a sign-in through Discord. **That approval is the user's:** `python3 "$F" login` prints a link, the
 user opens and approves it, and the token is kept in a private file (mode 600) outside every repository. Never ask a
@@ -78,20 +83,26 @@ for its hash; searching the `where` text matches far too much.
   `last_over_time(<metric>{...}[30d])`. Every metric name starts with the game's prefix, `longshot_`.
 - **Counts are estimates between samples** and can be off by one; a signature seen once may show 0 by `increase`.
   `last_over_time` gives the counter as kept by the relay, which is not "events inside the range" and can be lower
-  than the truth after a relay restart. The crash comment says "seen N times" and is the reference.
+  than the truth after a relay restart. The crash comment says "seen N times" and is the reference; the script's
+  `reports` column can sit well below it (13 against 18, 28% lower, seen once).
 - **A signature includes the version.** The same crash on three builds is three signatures. To count a crash across
   versions, group by exception and place (`code`, `where`) and say that you did. Reports are not players: three
   reports can be one person three times.
-- **Release builds only by default.** A crash from a local or modified build is marked `[not a release]` on the crash
-  issue and is its owner's business unless a release shows it too. Say which you counted.
+- **Release builds only is the script's default, not the dashboards':** both dashboards' `release` variable starts at
+  All, so a dashboard figure and the script's differ until you pick the same builds (`--all-builds`, or the variable).
+  A crash from a local or modified build is marked `[not a release]` on the crash issue and is its owner's business
+  unless a release shows it too. Say which you counted.
 - **Look at the session count before any performance number.** One card on one map may be one player's evening.
   Report sessions and hours beside every fps, low or hitch figure; below about ten sessions call it an anecdote.
   Sessions are not players, and per-map sessions must not be added up: one session visits several maps.
 - **"1% low" here is not the local readers' 1% low.** It is one over the 99th-percentile frame time, estimated from
   histogram buckets; the workbench's own readers average the slowest 1% of frames. Never put the two in one column.
-- **A hitch** is a frame over twice its target, put down to what it waited on most: `game_cpu`, `gpu_bound`,
-  `pipeline_wait`, `shader_translate`, `texture_upload`, `readback`, `memsync`, `pace`, `other`. Frame time is split
-  into `game`, `render`, `gpu_wait`, `pace`. These are the game's own attributions, not a profile.
+- **A hitch** is a frame over `max(2 x max(target, recent average frame), 25 ms)` (`is_hitch` and `add_frame` in
+  `gpu/vk/perf_report.h`), put down to what it waited on most: `game_cpu`, `gpu_bound`, `pipeline_wait`,
+  `shader_translate`, `texture_upload`, `readback`, `memsync`, `pace`, `other`. Frame time is split into `game`,
+  `render`, `gpu_wait`, `pace`. These are the game's own attributions, not a profile. Developers' earlier builds
+  counted against the target alone (`max(2 x target, 25 ms)`), so a hitches-per-hour figure over several versions can
+  mix two definitions: name the versions.
 - **Labels are coarse on purpose** (card, driver, OS, kernel, CPU, RAM and VRAM class, preset, upscaler, fps cap,
   map, version). There is no player identity; do not try to single one out, and do not publish a rare combination
   in a way that points at one person.

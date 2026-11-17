@@ -4,8 +4,9 @@ description: >
   Use before reading lifted game code and whenever a task meets an `f_<address>` function, a game structure or field
   offset, a `patch_*` hook in nx2/oot_*.py, a frame-rate site, or a game subsystem you do not know (jobs, physics,
   drawing, shaders, textures, input, audio, saves): look the address or the subject up in the function map first, weigh
-  the row by how sure it is, and hand back a row for what you worked out. Also for checking the map against the port's code, and
-  for a flag's hash or name in a co-op log (game data: section 6).
+  the row by how sure it is, and hand back a row for what you worked out. Also for checking the map against the port's code,
+  for the function that contains a backtrace's return address, for a flag's hash or name in a co-op log (section 6), and
+  for reading the game's own data files, not code (section 7).
 ---
 
 # The function map: look it up first, add what you learn
@@ -30,8 +31,12 @@ python3 $M/fnmap.py find BakeProbe         # a thread, class or job name from a 
 ```
 
 - Every function has **one row on one page**. `mentioned, no row` lists the lines that name what you searched for
-  without describing it: another function's row, or a page's prose (its *Notes* and *Open questions* often say more
-  than its rows).
+  without describing it (each cut at 240 characters: open the page for the rest): another function's row, or a page's
+  prose (its *Notes* and *Open questions* often say more than its rows). `find` stops after 20 hits, so do not pipe it
+  into `head`: that ends in a `BrokenPipeError` traceback, harmless but it looks like a failure.
+- `find` knows function **starts**. A place inside a function answers `nothing`: every line of a guest backtrace (those
+  are return addresses) and a fault's pc are such places. Find the containing function first (rules for lifted code
+  below), then look that function up.
 - No hit at all: find the subject instead. The index in `README.md` says which page covers which part of the game;
   read that page's "In short" before concluding the map has nothing.
 - Read the whole row and the page's first paragraph before the lifted code. A row that says `Hooked by patch_x` tells
@@ -51,8 +56,13 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
 `/home/mooki/Code/hookshot-wt/longshot-base-d3bd2805/work/build/sa/gen`). It is game-derived: it never leaves the PC.
 
 - A function starts at `void f_<address>(Ctx *__restrict A64_NOESC c) {` in exactly one file. The files are tens of
-  megabytes: find the file first (`grep -l -m1 '^void f_803edf70(Ctx' $G/code_0*.c`), then read that one function.
-  Searching many of these files in one call can silently miss matches; search one file at a time.
+  megabytes: find the file first (`G=<worktree>/work/build/sa/gen`, then
+  `grep -l -m1 '^void f_803edf70(Ctx \*__restrict' $G/code_*.c`; under a second), then read that one function. Search
+  `code_*.c`, not `code_0*.c`: it includes the `code_hot_*.c` files that hold the hot functions. Match the definition
+  with `\*__restrict`: a bare `f_<address>(Ctx` also hits the forward declaration (`void f_<address>(Ctx *A64_NOESC);`)
+  that a dozen files carry. Searching many of these files in one call for other patterns can silently miss matches;
+  search one file at a time for those, or loop over the files in a script (a scan of all of them for one register's
+  constants takes seconds).
   The link map names the file in one grep: `grep -m1 '(.text.f_803edf70)' <worktree>/work/build/sa/build/longshot.map`
   shows the object (`code_001.o` is `code_001.c`), which beats searching the code files.
 - The guest image is on disk too: `<worktree>/work/build/sa/image/image.bin` (its first byte is guest address
@@ -71,14 +81,45 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
   `0x80020000`. Their `0x57af30` is `f_8059af30`; their `0x33e4200` is `f_83404200` (`0x033e4200 + 0x80020000`), data
   converts the same way (their `0x4e94840` is `0x84eb4840`). Do not use `0x80000000` (the image file's base above): it
   lands `0x20000` too low, and their `0x33e4200` becomes `f_833e4200`, an address where no function starts (once
-  copied into reports as the HUD refresh, which is `f_83404200`). A converted address is a function only if a
-  `void f_<address>(Ctx` line exists for it: check that before you write a row. Every one checked by reading the
-  function was the one their comment names, but treat their name as a lead. An offset can land inside a function
-  (their `0x49dcb0` is a place inside `f_804bd8c0`, not a function: find the function that contains it and put the
-  place in its row as `at 0x...`), and a name can belong to the next class's function; read it before you trust it.
+  copied into reports as the HUD refresh, which is `f_83404200`). Convert in the shell:
+  `printf '%08x\n' $((0x57af30 + 0x80020000))`. A converted address is a function only if `$G/functions.txt` has a
+  line for it (`grep '^8059af30 ' $G/functions.txt`): check that before you write a row. Every one checked by reading
+  the function was the one their comment names, but a comment in their code is only a lead: a row built from it without
+  reading the function is **guess**. An offset can land inside a function (their `0x49dcb0` is a place inside
+  `f_804bd8c0`, not a function: find the function that contains it, below, and put the place in its row as `at 0x...`),
+  and a name can belong to the next class's function; read it before you trust it.
+- Another project's **code** cannot be dropped in, only translated: `host/` is C only (no `.cpp`; the C++ is the
+  renderer's), and the game is recompiled from its lifted C, so the only way to hook it is at lift time: a `patch_*` text
+  patch over the lifted C in `nx2/oot_patches.py` (found by a function's head or an anchor line) or a hook in the
+  lifter's `after[pc]` (`nx2/oot_fov.py` is the short example). Two patches on one function must coexist: each adds its
+  line after the head or anchor, or appends to what `after[pc]` already holds, and neither rewrites text the other
+  anchors on.
+- `$G/functions.txt` lists every function of the build sorted by address, one `<8 hex digits> <instruction count>`
+  line each (written by the lifter; the same set as the definition lines): the quick test whether an address starts a
+  function, and the index for the next bullet.
+- **Which function contains an address** (a place inside a function): the last `functions.txt` line at or below it. A
+  backtrace's lines are return addresses, so look up each one minus 4, the call itself (a call that ends a function
+  returns to the next one's first address). The link map is not in address order, so it cannot say. Then `find` the
+  function's `f_<start>` for its row, and put the place in a row as `at 0x...`. Without a `functions.txt`, list the
+  starts file by file: `grep -o '^void f_[0-9a-f]\{8\}(Ctx \*__restrict' $G/code_001.c`.
+
+  ```sh
+  python3 -I -B - $G/functions.txt 0x803edf74 <<'PY'      # any number of addresses
+  import bisect, sys
+  rows = [(int(a, 16), int(n)) for a, n in (l.split() for l in open(sys.argv[1]))]
+  starts = [a for a, _ in rows]
+  for arg in sys.argv[2:]:
+      pc = int(arg, 16)
+      a, n = rows[bisect.bisect_right(starts, pc) - 1]
+      print("%#x  f_%08x +%#x%s" % (pc, a, pc - a, "" if pc < a + 4 * n else "  (past its end)"))
+  PY
+  ```
+- A flag or a struct member is named in code by the hash of its name, a 32-bit constant built in a register. In the
+  lifted C that is three statements: `c->x[N] = 0x<low half>ULL;`, `c->x[N] &= 0xFFFFFFFFULL;`, then
+  `c->x[N] = (c->x[N] & ~(0xFFFFULL<<16)) | (0x<high half>ULL<<16);`. Grep the low half and read the next two lines for
+  the high half, or scan every file per register in a script. A flag can also be read as a member of a struct, by the
+  plain hash of its name instead of the flat `Struct.member` hash: scan for both (`docs/oot/game-data.md`).
 - What you work out this way is exactly what section 4 is for: hand the rows back.
-- A function start is exactly an address with a `void f_<address>(Ctx` line; the owner of a place inside a function is
-  the nearest start before it in the link map. `fnmap.py find` prints `nothing` for a place written as `f_<address>`.
 
 ## 2. Weigh the row before you build on it
 
@@ -162,6 +203,44 @@ python3 -I -B $W/flagdata.py build --romfs <RomFS> --repo <LS clone> --rev <comm
 says how to make one. **The names are game data**: they stay in that table, in `--out` and in your report's files folder, never in a skill,
 a pull request, an issue or a comment. Say "a played event of the room's data" or give the hash, not the name; the exceptions are names LS's
 own source already quotes. A hash with no name is normal (about a quarter of the flags have none): say so, and say the family.
+
+**A value the game re-writes every frame itself** (seen once: an Int whose own code queues it each frame) cannot be set
+from outside by a flag set: the applier `f_80bb9980` walks each ring in slot order, so the last slot wins, and the
+game's slot is queued after yours. A scan of the pending ring at present time misses the game's slots, because the
+drain empties the ring before the next present. Find what the game itself writes each frame and change that source,
+as the game's own pickup does (`docs/oot/game-data.md`, "Setting values: the rings").
+
+## 7. Reading the game's data (not code)
+
+The map holds code addresses only. The game's data names (actors, events, flags, maps), its text and its option values
+are not in it, in a skill or in anything public: a scenario author reads them from the player's own files, and keeps
+the results in the report's files folder (section 6); a skill or a pull request gets the procedure, not the names. The
+readers are `$W/fd_romfs.py` (`W` as in section 6; standard library; zstd with the game's own dictionaries, SARC,
+BYML, the game's hash): `Romfs(<RomFS folder>).read(<path>)` decodes a `.zs` file, `sarc()` lists a SARC's members,
+`byml()` reads a BYML.
+
+```sh
+python3 -I -B - $W <RomFS folder> <<'PY'      # every actor pack, one member-path test: seconds
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import fd_romfs as f
+r = f.Romfs(sys.argv[2])
+for pack in sorted(os.listdir(r.root / "Pack/Actor")):
+    if any(m.startswith("<member folder>/") for m in f.sarc(r.read("Pack/Actor/" + pack))):
+        print(pack)
+PY
+```
+
+- **Flag names:** the game stores hashes only. `flagdata.py build` already hashes every identifier of the `AI`, `Logic`,
+  `Event/EventFlow` and other files against the `GameDataList` (`docs/oot/flag-names.md`); `--names FILE` adds names you
+  found. A one-off over other files: `f.murmur3(<string>)` of each string of the decoded file against the `Hash` of
+  each entry in `f.byml(r.read("GameData/GameDataList.Product.<n>.byml.zs"))["Data"]["Bool"]`.
+- **Game text:** `Mals/<language>.Product.<n>.sarc.zs` is a SARC of `.msbt` files. No reader is in the repository:
+  parse each file's `TXT2` section by hand (a count, then each string's offset from the section's data start). The
+  strings are NUL-terminated UTF-8 (the encoding byte at offset 12 is 0), not UTF-16.
+- **Option values:** `python3 $H/tools/hs_make_save.py --from <save> --flag OptionData.<Name>=?` prints the type and,
+  for an enum, the names of its values (`H` as in `skill://ls-workbench`; an option-file value says `not saved in
+  progress.sav`: its value is in `option.sav`).
 
 ## When this skill let you down
 

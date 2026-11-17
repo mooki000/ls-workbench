@@ -43,6 +43,10 @@ the main session changes.
    ```
    FAIL lines are broken references; WARN `path not found` is the usual sign of a stale skill. Each WARN is either
    fixed or is a deliberate example; do not leave ones you have not read.
+   `check_skills.py` takes a backticked path that starts with `scripts/`, `references/` or `assets/` for a script the
+   skill ships, and warns when it is in neither the skill's folder nor the port: for anything else write prose ("the
+   port's scripts folder") or another first folder. A `*` in an absolute path ends the checked part there: stop such a
+   path at a whole folder name.
    For the published tree, run `python3 skills/ls-skill-upkeep/check_skills.py --root skills` from the
    workbench checkout. The live command above deliberately includes the still-installed older prefix.
 3. **Change the smallest thing that fixes the note.** Correct the line; add the missing step where a reader would look
@@ -57,19 +61,45 @@ the main session changes.
    skill**, and ask it to end with Skill notes and to say which skills it read and when. It passed if the worker found
    the skill from the catalogue, the steps worked as written, and it needed nothing the skill did not say. Fix and
    repeat with a new worker; a worker that has already read the old text proves nothing.
+   Not for a live skill that is a symlink into a system package (`ls -l ~/.agents/skills`: `diagnose-crash` is one): it
+   is not ours and is not in `SKILL_MAP`, so it cannot be tested by editing and re-running a worker or published, and
+   replacing the link with a copy cuts it off from the package's updates. Put the pointer a worker needs into one of our
+   skills and leave the link.
 7. **Publish.** Add a new skill to `SKILL_MAP` in the workbench's `publish.py` (an identity entry when its live name
    already starts with `ls-`). `sync-from-live.sh` copies **live → repository**, not the reverse: reconcile both
    versions first so an older live skill cannot overwrite a newer repository edit. It stages the proposed tree and
    checks `docs/names-kept.md` before replacing any checkout file; a names failure leaves the checkout untouched.
-   `sync-from-live.sh --check` compares without writing. The legacy live folder names are mapped, not renamed.
+   `sync-from-live.sh --check` compares without writing, but its names stage runs first: with excess old-name literals
+   it stops there and prints no differences. To compare anyway, run `publish.files()` and `publish.normalise()` over the
+   live files and diff against the checkout (`reports/SkillPublish-files/live_vs_repo.py` does it). The legacy live
+   folder names are mapped, not renamed.
    A new skill also needs its row in the README's table and the counts in `tests/test_publication.py`; any literal that
    contains an old project name (a lock path, an options file, a repository URL) needs a counted record in
    `docs/names-kept.md` or `name_policy.py` fails. Write the old names in prose as LS or HS and keep them to code spans.
    Run `publish-check.sh`, the skill check above and the workbench-repository tests in `ls-workbench`, read the diff,
-   then commit and push. Main alone synchronises live copies when no queued/running worker depends on them: as a
-   reviewed patch of the changed lines (`git apply --check`, then `git apply`, with the old files kept), followed by
-   the skill check; never by copying the published tree over the live folders, whose names and unrelated text differ.
-   Nothing game-derived goes into a skill: commands, paths and procedure only.
+   then commit and push. A branch that renames a skill or removes a name is rewritten (rebase or squash) **before** its
+   first push: pushed history keeps the old name.
+   Nothing game-derived goes into a skill: commands, paths and procedure only. A machine's SSH alias, key or address
+   goes in no skill or brief: write `<win>` or `<relay>`. The alias is written once, in the section "Hosts" of
+   `$H/LOCAL-NOTES.md` (`H` as in `skill://ls-workbench`; never published), and `.private/publish-forbidden.txt` lists
+   it, so `publish-check.sh` fails if it ever reaches a published file.
+   Main alone synchronises live copies when no queued/running worker depends on them: as a reviewed patch of the
+   changed lines (`git apply --check`, then `git apply`, with the old files kept), followed by the skill check; never by
+   copying the published tree over the live folders, whose names and unrelated text differ.
+   - **Build the live patch from a scratch copy, not from the branch's diff:** live prose differs in the context lines
+     (names, rename paragraphs), so a repository diff does not apply. Copy the live skills to a scratch folder; apply
+     the patch that already worked; apply only what changed since (`git diff --no-renames <old tip> HEAD -- skills
+     docs/agent-brief.md`, paths and names mapped to the live ones); `git apply --check` there; compare the scratch tree
+     with the checkout through `publish.normalise()`; the patch is the diff of the scratch tree against live.
+     `reports/SkillPublish-files/mklive.py` and `live_vs_repo.py` are a starting point.
+   - **While workers read the live skills, edit the repository directly** and let the live copies follow in one step:
+     Main applies the reviewed patch built as above, with `reports/SkillsNight-files/apply-live-morning.sh`, which
+     keeps a backup of the live skills first. Until then do not run `sync-from-live.sh`: it copies live over the
+     repository.
+   - **The brief** exists twice, live `reports/AGENT-BRIEF.md` and published `docs/agent-brief.md`, and both get edits.
+     Merge them; where the same passage differs, the live text wins (workers read it and the next sync copies it),
+     except the LS/HS name wording, which the published copy keeps. An edit made only in the published copy is lost at
+     the next sync: carry it into the live brief too.
 
 ## What the check cannot see
 
