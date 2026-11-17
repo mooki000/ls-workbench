@@ -5,8 +5,8 @@ the save list shows of each slot (place, date, screenshot, hearts, medallions). 
 2026).
 
 **LS code:** `host/nn_fs.c` (the `save:` mount)
-**See also:** [save-list.md](save-list.md), [game-data.md](game-data.md) (what is in the files),
-[master-quest.md](master-quest.md) (its slots), `docs/saves.md` (where LS keeps saves)
+**See also:** [save-list.md](save-list.md), [game-data.md](game-data.md) (what declares the values in the files),
+[save-format.md](save-format.md) (the files' bytes), [master-quest.md](master-quest.md) (its slots), `docs/saves.md` (where LS keeps saves)
 
 ## The caption manager
 
@@ -29,7 +29,7 @@ A singleton (`[0x84e98e38]`) holding each slot's caption.
 ## Save files and slots
 
 The file names are not in the code: they come from the game data's `SaveDirectory` ([game-data.md](game-data.md)):
-`slot_%02d/progress.sav`, `option.sav`, `slot_%02d/caption.sav`, `account.sav`.
+`slot_%02d/progress.sav`, `option.sav`, `slot_%02d/caption.sav`, `account.sav`. What is inside them, byte by byte: [save-format.md](save-format.md).
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|

@@ -3,12 +3,15 @@
 How the game's flags get their names (they have none on disk), how a player can recover most of them from their own game files,
 what stays unnamed and why, and how LS's co-op progress sync sorts the flags it shares. Worked out while reproducing, offline, the
 line each game logs when a save is played: `playing a save: N progress flags (M of them story scenes ...), N items, N songs, ...`
-(November 2026). The tools are in `flagdata/`; this page is the method. It holds no list of the game's flags: the names live in the
-player's own game files and in the output of `flagdata/flagdata.py build`, which stays on the player's machine.
+(November 2026). The tools are in `flagdata/`; this page is the method. The list itself, every flag with the name recovered for it, is
+the flag map ([flags/README.md](flags/README.md), made from the tools' output by `flagmap.py`): the owner of this repository decided
+that the names may be published here, in this repository only, never in LS's repository, an issue or a pull request. The tools'
+own output (`flags.csv` and the rest) stays on the player's machine; only the map's pages are published.
 
 **LS code:** `host/oot_coop.c` (`classify`, `build_table` and the lists above them), `host/coop_scenes.c`, `docs/coop.md` ("What is shared",
-"Story scenes"); in this repository `flagdata/` and `tests/test_flagdata.py`
-**See also:** [game-data.md](game-data.md), [save-data.md](save-data.md)
+"Story scenes"); in this repository `flagdata/`, `docs/oot/flagmap.py` and `tests/test_flagdata.py`, `tests/test_flagmap.py`
+**See also:** [game-data.md](game-data.md), [save-data.md](save-data.md), [save-format.md](save-format.md) (where a flag sits in a save
+file), [flags/README.md](flags/README.md) (the flag map)
 
 ## In short
 
@@ -19,6 +22,8 @@ player's own game files and in the output of `flagdata/flagdata.py build`, which
 - The co-op layer reads only the **Bool** and **Int** containers (about 12,500 flags) and keeps about **9,700** of them: the numbers the
   game logs. `flagdata.py build` reproduces them from the player's files and the LS source, and `--compare-log` fails when a log's
   numbers differ. **tested** (every figure of the log line, and the story-scene list's stamp, matched on the build the first run used)
+- The list holds **26,654 entries of 26 kinds** (11,292 Bool, 11,657 per-object keys, 1,259 Int, 884 BoolExp, 874 Struct and the rest). The
+  tools enumerate every one and the flag map has a row for each; 11,168 have a recovered name. **tested** (`flagmap.py check` hashes every name)
 
 ## How a flag is named in the data
 
@@ -126,9 +131,19 @@ python3 flagdata/flagdata.py lookup <hash> ...            # name, family, catego
 python3 flagdata/coop_log.py game.log [--summary]         # a co-op log, each flag line with its flag
 ```
 
-`build` writes `flags.csv`, `excluded.csv`, `flags.md` and a **private cache** under the user's state folder
-(`$XDG_STATE_HOME/ls-workbench/flagdata`, mode 0600) that the log annotator reads. All of it holds names read from the player's files:
-it is never written under this checkout, and never committed, posted or sent. `flagdata/README.md` has the details.
+`build` writes `flags.csv` (the flags co-op keeps), `excluded.csv` (the Bool and Int flags it leaves out, with the reason),
+`others.csv` (every entry of the other containers: structs, per-object keys, enums, strings, arrays, expressions), `flags.md` and a
+**private cache** under the user's state folder (`$XDG_STATE_HOME/ls-workbench/flagdata`, mode 0600) that the log annotator reads. The
+files hold names read from the player's files: they are never written under this checkout, and never committed, posted or sent.
+What is published is the flag map, made from them:
+
+```sh
+python3 docs/oot/flagmap.py build --from <the folder build wrote> --made-from "<game build, list revision, LS revision>"
+python3 docs/oot/flagmap.py check        # every name against its hash, every hash once
+python3 docs/oot/flagmap.py find 4d77f1cb
+```
+
+`flagdata/README.md` has the tools' details, `flags/README.md` the map's columns and how to refresh it.
 
 ## Open questions
 

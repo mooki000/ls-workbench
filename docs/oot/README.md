@@ -12,6 +12,13 @@ these pages were started; LS's are written "LS #N".
 To find a function, search for its address: every function has one row, on one page. `python3 docs/oot/fnmap.py find
 f_833ec800` (or words) prints the page and the row.
 
+**The flags have a map of their own**, beside this one: [flags/README.md](flags/README.md), one row for every flag of the game's
+list (about 26,700: the Bool and Int flags co-op looks at or leaves out, the structs, the per-object keys and every other kind), with
+the game's own name where it was recovered by hashing, how it was recovered, its kind, default, reset kind, the save file and group
+it sits in, what co-op does with it, and what it is where we know. `python3 docs/oot/flagmap.py find 4d77f1cb` (a hash, a name or
+words) prints the row. How the names are recovered is [flag-names.md](flag-names.md); where a flag sits in a save file is
+[save-format.md](save-format.md).
+
 **LS** is the port these pages were written for and **HS** the project it grew out of. Paths such as
 `nx2/oot_patches.py`, `host/` and `gpu/` are in the port's repository, not in this one.
 
@@ -23,7 +30,9 @@ f_833ec800` (or words) prints the page and the row.
 | [layout.md](layout.md) | Layout panes, text panes and the letter animation, animations, capture panes |
 | [menus.md](menus.md) | The menu screens' focus and update, the pause menu's pages, Key Items |
 | [save-data.md](save-data.md) | The caption manager, save files and slots |
-| [game-data.md](game-data.md) | Game data (the game's flags and values by hash), the save files' format, `account.sav` |
+| [game-data.md](game-data.md) | Game data (the game's flags and values by hash), the save files' header, `account.sav` |
+| [save-format.md](save-format.md) | The save files' byte layout: the header, the table of 32 type groups, the data section's layouts, strings, the key run of placed objects, slots and Master Quest's slots, what the game checks on load, and how a flag of the flag map is found in a file |
+| [flags/README.md](flags/README.md) | The flag map: every flag of the game's list by hash, with its name, kind, save file and group, what co-op does with it, and what it is; made by `flagdata/` and `flagmap.py` |
 | [flag-names.md](flag-names.md) | How a flag's name is recovered from its hash, the families of flags and what stays unnamed, and how co-op's progress sync sorts them; the tools are in `flagdata/` |
 | [master-quest.md](master-quest.md) | The Master Quest add-on check, Master Quest mode and how its dungeons load, and its saves |
 | [maps.md](maps.md) | How a map loads: the map index (`GameBancParam`), the layouts, collision and terrain, preloading, the per-map tables |
@@ -62,6 +71,12 @@ These pages describe behaviour, for interoperability. Apart from identifiers the
 quote the game's code or data, and they hold none of its files, assets or keys; anything copied from the game file belongs
 in the port's `work/` folder, which never leaves the PC. A row needs an address, a name of ours and a description in our
 own words, and nothing more from the game.
+
+**The flag map is the exception that has its own rule.** The owner of this repository decided that [the flag map](flags/README.md)
+may hold, for every flag of the game's list, its hash and the name recovered from it by hashing (the game's own identifier, checked
+against its hash), with the facts of the list (kind, default, reset kind, save file) and our own words about it. That is all it holds:
+no file, no lifted code, no value from a save, no position. These names stay in this repository and never go into LS's repository,
+an issue or a pull request.
 
 ## Conventions
 
@@ -173,6 +188,10 @@ and against the port's code (`LS_REPO` names the clone when `--repo` is left out
 
 It also notes, without failing, each function `nx2/oot_patches.py` patches whose row does not say `Hooked by`. Run it
 after pulling the port's main: a function the code names without a row is the usual way these pages fall behind.
+
+The flag map has its own check, `python3 docs/oot/flagmap.py check` (no clone needed): the format of every row, each hash once, every
+recovered name against its hash, the descriptions against the pages, every page below the publication limit
+([flags/README.md](flags/README.md), "Making the pages"). `tests/test_flagmap.py` runs it on the real pages too.
 
 ## Where these pages come from
 

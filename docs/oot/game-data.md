@@ -4,7 +4,7 @@ How the game keeps its flags and values ("game data"), how code reads them, and 
 looking for a way to try Master Quest (November 2026), and for the debug tools' flag reads and writes.
 
 **LS code:** `host/hos_main.c` (`oot_gamedata_bool`, `oot_gamedata_set_bool`)
-**See also:** [save-data.md](save-data.md), [master-quest.md](master-quest.md), [flag-names.md](flag-names.md)
+**See also:** [save-data.md](save-data.md), [save-format.md](save-format.md) (the save files' bytes), [master-quest.md](master-quest.md), [flag-names.md](flag-names.md)
 
 ## How the game declares its values
 
@@ -39,7 +39,10 @@ dictionary in `Pack/ZsDic.pack.zs`. **tested**
   | 3 | `account.sav` |
 
 - **`MetaData`** holds `SaveDirectory`, the file names (`slot_%02d/progress.sav`, `option.sav`, `slot_%02d/caption.sav`,
-  `account.sav`), plus `SaveDataSize` (703884, 44660, 42356, 320 bytes) and the files' offsets.
+  `account.sav`), `SaveTypeHash` (each file's last table entry), `SaveDataOffsetPos` (95704, 672, 672, 320: where each kind of
+  file's table ends and its data section begins, the third word of its header), `SaveDataSize` (703884, 44660, 42356, 320 bytes:
+  the largest each kind can be), two `AllData…` numbers and a `FormatVersion`. The numbers come out of the list's own entries,
+  see [save-format.md](save-format.md).
 - **Flag names are not in the game.** A flag is known only by the murmur3 (x86, 32-bit, seed 0) hash of its name; the hash
   function was checked against a known name, `SelectedCaptionIndex` → `0x1a49c4f6`. Hashing every identifier in the
   executable (163,375 strings) matched neither account flag below, so the names live in data, if anywhere: in the game's other files, as
@@ -136,7 +139,7 @@ Every setter queues a write on its container's ring and the applier (below) does
 | `0x58131bc2` | Struct | `DebugParam`, not saved (SaveFileIndex −1). Fields found: `IsEnterMQScene` (0x3c3171e5; the full name `DebugParam.IsEnterMQScene` is 0x11b16e68), `IsSetChildhoodManually` (0x078ef520), IsSkipForceResetGameData, IsGameDataAllResetOnSceneDestroy, IsOverturnTerrainSetupAndLoadBanc, IsRequestedResetGimmick, IsOverrideTraversePos, IsKeepLoading | tested |
 | `0xdd80b066` | Struct | `AutogenGameDataLogicNode` (murmur3 checked): 191 members in the game's list, 190 of them Bools saved in `progress.sav` (reset type 8, file 0). The list gives its members by hash only: the 15 looked at (room and dungeon state, for example a refill's respawn marker in a Bottom of the Well room) have no name in the game's data | read |
 | `0xf5a32cdc` | Struct | `DungeonInfo` (murmur3 checked): the per-dungeon values. Members: the Bools `IsGetMap` (0x58aeb8fb), `IsGetCompass` (0xc7692e3f) and `IsGetBossKey` (0x5fb83617), which the HUD's getters read (`f_80ec0210`, `f_80eaa260`, `f_80ec0350`, [menus.md](menus.md)), and `SmallKeyNum` (0x1af87831), the small key count. The hashes were computed from the names, not seen in a run | read |
-| `0xbe9f04bd` | | `Account`: GameDataList's SaveTypeHash for `account.sav` (`Option` is 0xa60ba395, `Caption` 0x26f3523b) | tested |
+| `0xbe9f04bd` | | `Account`: GameDataList's SaveTypeHash for `account.sav` (`Option` is 0xa60ba395, `Caption` 0x26f3523b, and `Game` 0xa3db7114 is `progress.sav`'s: each is the murmur3 of that word) | tested |
 
 ## Data
 
@@ -156,7 +159,7 @@ Made by `f_8121cf90` (heap "GameDataMgr"). Typed containers sit 0x60 bytes apart
 | `+0x008` | Bool container (type 0); BoolArray `+0x068` (1), Int `+0x0c8` (2), IntArray `+0x128` (3), Float `+0x188` (4), FloatArray `+0x1e8` (5), Enum `+0x248` (6), EnumArray `+0x2a8` (7), String64 `+0x608` (16), UInt `+0x788` (20), UIntArray `+0x7e8` (21): the types seen | read |
 | `+0xc58` | The 64-bit key container (below) | read |
 | `+0xca8` | The key container's dirty save-file mask | read |
-| `+0xcb8` | A file mask: when non-zero the key applier resets the live keys of those files, and the applier makes a mask pass over the 128-byte records at `+0xcc8` (count `+0xcc0`); meaning not determined | read |
+| `+0xcb8` | A file mask: when non-zero the key applier resets the live keys of those files, and the applier makes a mask pass over the 128-byte records at `+0xcc8` (count `+0xcc0`); the records are the save files' own, one per file index (the file's buffers and the result of its load, [save-format.md](save-format.md)); what the mask does is not determined | read |
 | `+0xd0c` | When non-zero the applier marks an entry dirty instead of copying its saved value; meaning not determined | read |
 | `+0xd10` | A byte; when 1 the applier first makes a virtual call (slot `+0x48`) on the object at `+0xce0`; meaning not determined | read |
 
@@ -192,12 +195,17 @@ An entry (the live value of a Bool at `+0x16` with its saved copy at `+0x17`; th
 
 Each profile folder holds `account.sav`, `option.sav` and `slot_00 … slot_NN` with `progress.sav` and `caption.sav` in each
 (see `docs/saves.md`). The files are flat lists of values keyed by hash, in the same family as Tears of the
-Kingdom's saves:
+Kingdom's saves. Their bytes, a table of every type of value and how a flag is found in a file are in
+[save-format.md](save-format.md); in short each file is:
 
-- A header: `04 03 02 01`, then a version word (`0x002d80eb`) and the file's size.
-- The values: a u32 hash followed by its u32 value, for the simple types.
+- A header: `04 03 02 01`, then the flag-list revision (`0x002d80eb`, 2,982,123) and the **offset where the table ends and the
+  data section begins** (the third word is not the file's size: it equals the size only in `account.sav`, which has no data
+  section), then zeros to `0x28`.
+- A table of 8-byte entries in 32 groups: a u32 hash followed by its u32 value for the simple types (for the others, the offset
+  of the bytes in the data section), each group closed by a `{0, k}` marker, and a last entry holding the file kind's hash.
+- A data section for the other types and, in `progress.sav`, a run of 64-bit keys (the `Bool64bitKey` flags that are true).
 
-**tested** (account.sav)
+**tested** (account.sav here; the others on 144 files in [save-format.md](save-format.md))
 
 ### account.sav (320 bytes)
 
@@ -208,8 +216,10 @@ GameDataList declares only two values for it (`SaveFileIndex` 3), both Bool, bot
 | `0x28` | `0x605e5df8` | 0 |
 | `0x30` | `0x5526db84` | 0 |
 
-Then an array of 33 entries (0 … 32), each `{0, index}`: an account-wide array whose purpose is unknown. The file ends with
-`0xbe9f04bd` followed by 0: `Account`, the file's SaveTypeHash in GameDataList (murmur3 checked), not a value. **tested**
+Then the table's 32 group markers `{0, k}` for k = 1 … 32, one per group, all empty here but group 1, which holds the two flags
+(every file has the same 32 markers). The file ends with `0xbe9f04bd` followed by 0: `Account`, the file's SaveTypeHash in
+GameDataList (murmur3 checked: it is the hash of that word), not a value. The 2 flags, the 32 markers and that last entry are
+35 entries of 8 bytes after the header's 40, which makes the 320 bytes. **tested**
 
 **The two bools are `IsLastSelectedMQMode` (0x605e5df8) and `IsGameClearAtLeastOnce` (0x5526db84)** (murmur3 checked against
 names from the game's data). Setting either or both to 1 in a test copy changed nothing on the title screen, and no Master
@@ -248,4 +258,3 @@ The capacity of each ring is data, not code: the module's setup (`f_83b6f570`, s
 - `f_8059af30` adds and `f_8059bcc0` assigns: call each once on a UInt holding 2 with the value 3 and read the entry's `+0x1c` after the next applier run; expected 5 and 3.
 - What `mgr+0xd0c`, `+0xcb8` and the object at `+0xce0` (called when byte `+0xd10` is 1) do; the Int and Float add pushers (mode 1), the String64 ring's pusher and slot size (the kit assumes 12), and the container kinds the applier handles beyond the typed ones (a flag-driven loop over the 128-byte records at `+0xcc8`; struct, vector, BoolExp). The applier was read in full for Bool and Int and in part for the other typed containers, which are taken to follow the same walk.
 - The ChallengeMgr: that its update turns `+0xa4` into `+0x10` through `f_82d12910` (the read of `+0xa4` was not found); the two terminal step hashes' names; `f_828de1a0`'s argument handling. One observation: read entry `+0x10` and `+0xa4` before and after the next frame's update following one `f_82d154a0` call; expected `+0xa4` at once, `+0x10` later.
-- What the 33-entry array in `account.sav` holds.
