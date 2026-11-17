@@ -1,6 +1,6 @@
 # On the LS forge
 
-The `gh` routes in `SKILL.md` are the GitHub-era ones. LS's pull requests live on the team's forge:
+LS's pull requests live on the team's forge; the GitHub-era `gh` routes and scripts are gone (the upstream answers 404):
 
 ```sh
 REPO=MagicBeanDev/Longshot
@@ -33,11 +33,12 @@ FORGE="python -I /home/mooki/Code/hookshot-wt/Tooling/scripts/forge.py --repo $R
 - **The issue-comments endpoint is not paged**: `page=2` returns the same list, so a `page` loop never ends. Count
   unique ids against the `X-Total-Count` header, and read `pulls/N/reviews` and the inline discussions separately. The
   list endpoints are paged (`pulls?state=open&limit=50&page=N`, at most 50 a page; 242 were open on 2026-11-15).
-- **Overlaps**: `pr_overlap.py` is GitHub-only and fetches from the remote. On the forge take each open pull request's
-  `pulls/N/files`, fetch its head (`git fetch forge +refs/pull/N/head:refs/remotes/pr/N`) and run
+- **Overlaps**: take each open pull request's `pulls/N/files`, fetch its head (`git fetch forge
+  +refs/pull/N/head:refs/remotes/pr/N`) and run
   `git merge-tree --write-tree --name-only <base> <head>` against your branch **and** against forge main: only a conflict
   that appears with your branch is an overlap (21 of 38 already conflicted with main). Without Git against the forge
-  remote, apply each public `.diff` with `git apply --check` to pinned main and to your branch and compare.
+  remote, apply each public `.diff` with `git apply --check` to pinned main and to your branch and compare. A page list
+  that stops at its limit, or a Git error, is an incomplete answer, not a clean one.
 - **The description** is checked by `scripts/check_pr_description.py` of the checkout (see `SKILL.md`, "The body"); a
   pull request is work in progress (`WIP:` title) until `pr ready N` passes it.
 - **Another person's pull request**: body, comments, reviews and `pulls/N/files` from the API; the head with
@@ -46,10 +47,9 @@ FORGE="python -I /home/mooki/Code/hookshot-wt/Tooling/scripts/forge.py --repo $R
 - **What CI covers**: read `.forgejo/workflows/ci.yml` before saying. A pull request runs the title check, the
   description check and the guide-screenshot check; the Python source checks are `workflow_dispatch` only ("off for
   now") and no Windows runner exists. A fork pull request gets CircleCI only after a maintainer adds the label
-  `ci: approved` (`docs/ci.md`). "Skipped" and "no CircleCI status" are normal, not a result. `hs-pr-ci.sh`,
-  `hs-fork-ci.sh`, `gh` and `hs-pr-check.sh` read GitHub (`hs-pr-check.sh` fetches `origin` and compares `origin/main`:
-  on a forge stack it fails for every other author's commit); the forge's pre-push check is the description checker plus
-  `pr create`.
+  `ci: approved` (`docs/ci.md`). "Skipped" and "no CircleCI status" are normal, not a result. The forge's pre-push check
+  is the description checker plus `pr create`; no script compares a branch with main (read `git merge-tree`), and none
+  of the GitHub-era readers (`hs-pr-ci.sh`, `hs-fork-ci.sh`, `hs-pr-check.sh`) works any more.
 - **The checker's less obvious rules**: a before column that is not main, or an after column that is not this PR,
   needs a `Baseline:` line; each `Must be tested` item reads `<where>: <steps>, expecting <result>` and says who
   (`@Beanstalk ...` or by hand); a line starting with `#` inside a fenced block (a shell comment) ends the section it is

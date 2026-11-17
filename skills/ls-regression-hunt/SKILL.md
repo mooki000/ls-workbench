@@ -201,7 +201,7 @@ Neither `--profile operate` nor `broker status` grants a hold; `broker stop` end
 
 | Step | Shell route | MCP tool (group; integration) | What it saves |
 |---|---|---|---|
-| Read request and prior proof | Current thread, posted-work record, report sections | `github_thread_read(repository, number)`, `knowledge_search(query, collection="reports")`, `workbench://reports/{id}` (knowledge; integrated) | Head/snapshot, bounded pagination and revision-pinned resource reads. |
+| Read request and prior proof | Current thread, posted-work record, report sections | `knowledge_search(query, collection="reports")`, `workbench://reports/{id}` (knowledge; integrated) | Bounded revision-pinned resource reads. |
 | Plan/build candidate | `regress.py plan`; `build_case.py` | `build_plan(repo_id, commit, profile_id)`, `build_start(plan_id, idempotency_key)` (checks; integrated) | Registered pinned build plans and receipts, not a history hunt. |
 | Game-free/base checks | `hs-idle.sh ... tests/run_all.py`; Windows helper | `checks_source(repo_id, commit, idempotency_key, compare_with_base=base)`, `checks_windows_syntax(repo_id, commit, base, idempotency_key)` (checks; integrated) | Exact test selections, retained failures and explicit unjudged Windows execution. |
 | Observe gate | Ticket/lock/process inspection | `queue_status(device="gpu")`, `job_read(job_id)` (status; integrated) | Observed queue/hold clocks and receipt, not an ETA. |
@@ -209,4 +209,4 @@ Neither `--profile operate` nor `broker status` grants a hold; `broker stop` end
 | Hunt/held worker | `regress.py hunt` / `_hold` | **None** | Keep the existing worker and authorization boundary. |
 | Analyse/compare retained pair | `run_case.py`/shared paired readers and raw logs | `run_logs(run_id)`, `run_faults(run_id)`, `evidence_analyze(run_id, analyzer_id, arguments, idempotency_key)`, `evidence_compare(pairing)` (evidence; integrated) | Bounded inputs, clock/settings/quiet validation and exactly two explicit pairs. |
 | Scan/panel retained visuals | `scripts/framelog.py`; labelled `panels.sh` | `evidence_scan_frames(capture_artifact_id, idempotency_key)`, `evidence_panels(images, label, idempotency_key)` (evidence; integrated) | Idle-gated scans and panels; human inspection remains required. |
-| Pre-push/CI/private draft | Existing pre-push/CI readers and evidence table | `checks_pr(repo_id, commit, branch, title_artifact, idempotency_key)`, `ci_read(repository, pull_request)` (checks; integrated); `evidence_bundle(request)` (evidence; integrated) | Retains imports, failing names and private evidence without publishing. |
+| Private draft | Evidence table | `evidence_bundle(request)` (evidence; integrated) | Retains failing names and private evidence without publishing. |

@@ -19,7 +19,7 @@ the scripts were written by them under those rules, then run and checked here. T
 | Folder | What | Start with |
 |---|---|---|
 | `skills/ls-workbench` | Owned builds, windowless runs, name selection, checks and registered MCP routes | `SKILL.md` |
-| `skills/ls-pr-evidence` | The standard for a pull request and for anything posted: the claim, the overlap search, the evidence to collect while working, the body's form | `SKILL.md`, `scripts/pr_overlap.py`, `scripts/panels.sh` |
+| `skills/ls-pr-evidence` | The standard for a pull request and for anything posted on the forge: the claim, the overlap search, the evidence to collect while working, the body's form | `SKILL.md`, `references/forge.md`, `scripts/panels.sh` |
 | `skills/ls-perf-compare` | Comparing two builds or settings honestly: runs in turn, a quiet machine, per-run tables, what counts as a difference | `SKILL.md` |
 | `skills/ls-perf-monitor` | Read sampled CPU/GPU/memory context and `perf.csv`; suspicions and gauge comparisons are not speed verdicts | `SKILL.md` |
 | `skills/ls-scripted-play` | Playing without a controller: inputs and state samples through the control bridge, the file driver for older builds, saves at story points | `SKILL.md` |
@@ -63,11 +63,6 @@ the scripts were written by them under those rules, then run and checked here. T
   at a time, never beside a timing run, and with core dumps switched off.
 - **`harness/hs-nocore.sh <command>`**: runs one command with core dumps off. HS's checks crash three fixture
   programs on purpose; on a desktop with a crash notifier each one raised a notification.
-- **`harness/hs-pr-check.sh <branch> [title file]`**: the mechanical checks before a branch is pushed: based on current
-  `main`, the commit identity and trailers, no game file or build output among the changed files, a test changed or
-  added, a Conventional Commit title. Prints PASS or FAIL.
-- **`skills/ls-pr-evidence/scripts/pr_overlap.py [numbers | --branch name]`**: which open pull requests touch the
-  same files as yours, and which of them really conflict with your change (not just with `main`).
 - **`skills/ls-pr-evidence/scripts/panels.sh <out.jpg> <per row> <frame> "<caption>" ...`**: several frames as
   one labelled picture for a pull request.
 - **`harness/hs-watch-threads.py [numbers]`**: waits until someone comments on, reviews, merges or closes one of your

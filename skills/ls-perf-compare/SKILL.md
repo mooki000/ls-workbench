@@ -149,7 +149,7 @@ reviewed repository root. Read Job receipts; CLI timeout is not cancellation. `b
 
 | Step | Shell route | MCP tool (group; integration) | What it saves |
 |---|---|---|---|
-| Read current request | `gh pr view --comments` plus current description | `github_thread_read(repository, number)` (knowledge; integrated) | Pinned head/snapshot and explicit pagination; follow every page. |
+| Read current request | The forge: `pulls/N` with its comments and reviews (`skill://ls-pr-evidence/references/forge.md`) | No forge reader exists (`github_thread_read` reads GitHub) | Read every page. |
 | Pin/build arms | `regress.py plan`; approved build adapters | `build_plan(repo_id, commit, profile_id)`, `build_start(plan_id, idempotency_key)` (checks; integrated) | Pinned owned build jobs; no automatic timing authorization. |
 | Observe queue | Gate files and live lock/process checks | `queue_status(device="gpu")` (status; integrated) | Structured queue/hold state without joining it. |
 | Warm/collect ordinary evidence | Bounded `hs-run.sh`; control client | `session_launch(build_id, profile_id, wall_seconds, idempotency_key)`, `session_state(run_id)`, `session_stop(run_id, reason, idempotency_key)` (session; integrated) | Disposable gated lifecycle, not a performance hold. |

@@ -139,7 +139,7 @@ Pushes, posts, claims, renewals and request completion remain Main's shell actio
 |---|---|---|---|
 | Read coordination | Main's `team_chat.py read --limit 30`; worker snapshot | `team_read(room=<registered-room>, limit=30)` — knowledge, integrated; stock backend unavailable | Bounded GET-only room snapshot, no join/config write |
 | Read test requests / next work | Supplied cards; `pr_loop.py next` | `test_requests_read(card_id=...)`; `prloop_next()` — knowledge, integrated | Typed card/queue data, no claim; request reader needs the safe backend |
-| Read current PR and checks | `gh pr view` plus paginated discussions; `hs-pr-ci.sh <pr>` | `github_thread_read(repository="NotRexed/Hookshot", number=N)` — knowledge, integrated; `ci_read(repository="NotRexed/Hookshot", pull_request=N)` — checks, integrated | Head/completeness plus named failures, not authority to post |
+| Read current PR and checks | The forge: `pulls/N`, its comments and reviews, the head's statuses (`skill://ls-pr-evidence/references/forge.md`) | No forge reader exists (`github_thread_read` and `ci_read` read GitHub) | Not authority to post |
 | Reconcile promises / report | Read `POSTED.md` and the retained report | `knowledge_search(query=..., collection="reports")`; resources `workbench://obligations`, `workbench://reports/<id>` — knowledge, integrated | Registered bounded text and owed rows; full draft still read before publication |
 | Prepare evidence for draft | Retained table, logs and labelled pictures | `evidence_bundle(request=...)` — evidence, integrated | Private provenance-linked draft/artifacts, never a published or approved message |
 

@@ -10,19 +10,20 @@ description: >
 
 **LS / HS:** use the workbench's shared runtime/log-name selection. Published skill IDs use `ls-*`;
 existing live paths stay unchanged until a separate host cutover (see `ls-workbench`).
-The `gh` examples and MCP GitHub readers below remain **GitHub-only**: the legacy repository answered 404 on
-16 Nov 2026, signed in or not, so start from the forge. LS's public Forgejo API is
+Everything starts from the forge: the GitHub repository answers 404 (16 Nov 2026, signed in or not), so the `gh`
+examples, `hs-pr-ci.sh` and the MCP GitHub readers are gone. LS's public Forgejo API is
 `https://git.magicbean.dev/api/v1/repos/MagicBeanDev/Longshot`; page issue/PR bodies, comments, reviews and inline
 discussions separately (the issue-comments endpoint is **not paged**: `page=2` repeats the list; see "On the LS forge"
 in `skill://ls-pr-evidence`). GitHub query syntax is not portable. Proposed forge readers may refresh credentials and
 are not approved login, claim or posting routes.
 
-**Use for:** issue/PR surveys, reproduction and reply drafts. Read workbench first. Three frequent commands:
+**Use for:** issue/PR surveys, reproduction and reply drafts. Read workbench first. Three frequent commands (`$FORGE`
+and `$API` are set in `skill://ls-pr-evidence/references/forge.md`):
 
 ```sh
-gh issue view <n> --repo NotRexed/Hookshot --comments
-gh pr list --repo NotRexed/Hookshot --state all --search "<words>" --json number,title,state,headRefOid
-/home/mooki/Games/.hookshot-harness/hs-pr-ci.sh <pr>
+$FORGE issue view <n> --comments
+$FORGE search <words> --state all
+curl -s "$API/commits/<sha>/statuses?limit=100"
 ```
 
 Read `reports/POSTED.md` and the **whole** thread, including its latest description, reviews and attachments,
@@ -57,17 +58,16 @@ Its `tables.py` freezes judgements. Its `fetch.py` has no `--out` and creates sh
 do not import it merely to redirect output. Use bounded read-only commands and retain outputs in a new task folder.
 
 ```sh
-gh search issues '[Tracking]' --repo NotRexed/Hookshot --match title --limit 100 --json number,title,state
-gh issue list --repo NotRexed/Hookshot --state all --search '<explicit date query>' --limit 100 --json number,title,state,updatedAt
-gh pr list --repo NotRexed/Hookshot --state all --search '<explicit date query>' --limit 100 --json number,title,state,headRefOid
-gh label list --repo NotRexed/Hookshot --limit 500 --json name,description,color
+$FORGE search '[Tracking]' --state all --limit 100
+$FORGE issue list --state all --label <label>
+curl -s "$API/issues?type=issues&state=all&q=<explicit query>&limit=50&page=N"      # X-Total-Count says how many
+curl -s "$API/labels?limit=50&page=N"
 ```
 
-For a bounded cohort, use `gh issue list --search "<explicit date/state query>"` and a lean PR index
-(`number,title,state,headRefOid`); fetch full bodies/comments/reviews only for selected threads. If the old rich
-PR query fails, retain stderr and switch to lean metadata plus paginated REST
-(`gh api --paginate --slurp 'repos/NotRexed/Hookshot/issues/<n>/comments?per_page=100'`), not another heavyweight query.
-Do not diagnose the unknown failure as a GitHub limit. Reaching the requested limit is not a complete inventory:
+For a bounded cohort, page `issues` and `pulls` with an explicit query and a lean index (number, title, state, head);
+fetch full bodies, comments and reviews only for selected threads, and read the unpaged comments endpoint by unique ids
+against `X-Total-Count` (`skill://ls-pr-evidence/references/forge.md`).
+Do not diagnose an unknown failure as a rate limit. Reaching the requested limit is not a complete inventory:
 raise the bound or split disjoint date ranges, deduplicate by number, and verify all comment pages. Distinguish
 new openings, updated-only threads and actually new comments. Date your own verdicts; search open **and merged**
 PRs again before a claim.
@@ -87,7 +87,7 @@ A new problem becomes a row in `docs/worklist.md` through a pull request.
 
 ## One report, start to finish
 
-1. Read the whole thread with its logs (`gh issue view <n> --repo NotRexed/Hookshot --comments`; download attached
+1. Read the whole thread with its logs (`$FORGE issue view <n> --comments`; download attached
    logs); read the tracking issue it belongs to; search open and merged pull requests for it.
    A reporter's `source <hex>` is a content fingerprint (`nx2/version.py`), not a Git revision; pin the release tag
    or reported head separately. Read a moved PR's description before a test: “parked/hold off” stops that work.
@@ -142,10 +142,10 @@ access. Follow cursors; truncated bodies/attachments still need the original rea
 
 | Step | Shell route | MCP tool / group / integration | What it saves |
 |---|---|---|---|
-| Read selected issue/PR | `gh issue view` / `gh pr view` plus paginated comments/reviews | `github_thread_read(repository="NotRexed/Hookshot", number=N)` — knowledge, integrated | One typed head/thread snapshot and completeness flags; no tracker-wide search |
+| Read selected issue/PR | `$FORGE issue view N --comments`; `$API/pulls/N` plus `pulls/N/reviews` | No forge reader exists (`github_thread_read` reads GitHub) | Keep the shell read |
 | Check prior reports and posts | Read report and `POSTED.md` | `knowledge_search(query=..., collection="reports")`; resources `workbench://reports/<id>`, `workbench://obligations?pr=N` — knowledge, integrated | Registered report headings and bounded promise rows; follow the returned report URI |
-| Check overlapping fixes | `pr_overlap.py <pr>` from the evidence skill | No overlap tool exists | Keep shell conflict-hunk inspection |
-| Read CI / request card | `hs-pr-ci.sh <pr>`; supplied request snapshot | `ci_read(repository="NotRexed/Hookshot", pull_request=N)` — checks, integrated; `test_requests_read(card_id=...)` — knowledge, integrated | Named failures and bounded cards; stock chat reader is unavailable without GET-only/no-save support |
+| Check overlapping fixes | the forge route in `skill://ls-pr-evidence/references/forge.md` | No overlap tool exists | Keep shell conflict-hunk inspection |
+| Read CI / request card | the head's statuses (`curl -s "$API/commits/<sha>/statuses?limit=100"`); supplied request snapshot | `test_requests_read(card_id=...)` — knowledge, integrated | Bounded cards; stock chat reader is unavailable without GET-only/no-save support |
 | Pick work / inspect gate | `pr_loop.py next`; GPU guard `--status` | `prloop_next()` — knowledge, integrated; `queue_status()` — status, integrated | Existing queue state, no claim or permission to run |
 | Reproduce windowlessly | `hs-run.sh <owned-copy> <tag> <seconds>` under workbench rules | `session_launch(build_id=..., profile_id=..., wall_seconds=..., idempotency_key=...)` — session, integrated | Registered disposable profile/save and owned lifetime, not a new runner |
 | Inspect / package evidence | Read log, `panels.sh`, shared comparison | `run_faults(run_id=...)`; `evidence_panels(images=..., label=..., idempotency_key=...)`; `evidence_compare(pairing=...)`; `evidence_bundle(request=...)` — evidence, integrated | Structured faults and retained provenance; image review and publication remain separate |
