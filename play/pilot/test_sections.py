@@ -710,8 +710,10 @@ def cmd_run_checks(tmp):
 
 # What the chapter planner was given and sent before lessons existed, for lessons_probe's made-up state: the sha256 of plan_data's data (compact JSON) and of the request body
 # (json.dumps). A change to either is a change of these numbers, on purpose.
-PLAN_DATA_PIN = 'c12c7ae79e44c2ef56f699f73cc605fcc27c2364d4582a33e5387d799eb2b835'
-REQUEST_PIN = '016c555907e052fa1823293858a8d236fc2722f5d76e22b45d401bab6d3da881'
+# They are for a pilot with no private watch list (PILOT_WATCH names a file that is not there: the plan data carries the flags the chapter itself watches, and a private
+# chapters/watch.json adds its own to that list); computed on the code before lessons existed (1a2d2b7) and on this one: the same two numbers.
+PLAN_DATA_PIN = '3fd20a2651c084064a89940b49a522a251a320fc1f052337d950f9a37844830b'
+REQUEST_PIN = '744be3e934f5d2aad4f87848c43b48f71c67a30422ce9d612a87921bd015b435'
 
 
 def lessons_probe(tmp, less):
@@ -737,8 +739,9 @@ def lessons_checks(tmp):
     book.add_block(map='Fake_A', age='child', at=[10.2, 0.0, 5.1], cause='wall', tried=['sidestep', 'angle'], worked='angle', how='recovered', target='chest', run='r1', source='live')
     book.add_block(map='Fake_A', age='child', at=[26.0, 0.0, 0.0], cause='ledge-up', tried=['sidestep', 'hop'], worked=None, how='marked-bad', target='bank', run='r1', source='live')
     off_row = {'on': False, 'n': 0, 'tokens_est': 0, 'ids': []}
-    saved = pilot.world_plan
+    saved, saved_watch = pilot.world_plan, os.environ.get('PILOT_WATCH')
     pilot.world_plan = lambda: None   # (the data of a made-up world, whatever a private world model may add)
+    os.environ['PILOT_WATCH'] = str(Path(tmp) / 'no-watch.json')   # (and whatever a private watch list adds: the pins are for none)
     try:
         with WithWorld():
             cp, client, run_dir, data_sha = lessons_probe(tmp, None)
@@ -789,6 +792,10 @@ def lessons_checks(tmp):
                   'and the sentence is in the first request, not in the second')
     finally:
         pilot.world_plan = saved
+        if saved_watch is None:
+            os.environ.pop('PILOT_WATCH', None)
+        else:
+            os.environ['PILOT_WATCH'] = saved_watch
 
 
 def tactics_summary_checks():
