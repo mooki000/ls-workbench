@@ -55,7 +55,7 @@ member of the same struct, or a hierarchy of children that all agree). The numbe
 billion candidates against two target hashes give about five; two targets that agree are not chance.
 
 Patterns that found names which no file spells: a struct name made of a few words (a prefix and a CamelCase word list), a member family
-numbered `<Word>NNN` (`DungeonRoom000` and the like), and a struct name seen only as the first half of a member ("a hit for the
+numbered `<Word>NNN` (a word and a three-digit index; `--names` expands `Word{000..127}`), and a struct name seen only as the first half of a member ("a hit for the
 first member of a struct, then for a second"). The tools do not search by themselves; `flagdata.py hash NAME` prints a name's hash and
 `--names` takes what a search finds.
 
