@@ -47,7 +47,10 @@ def main():
     out = case('hsap.py --help (what pilot.py and probe.py start under -I)', HERE / 'hsap.py', '--help')
     check('copy' in out and '--live' in out, 'hsap.py --help prints its usage')
     case('hsap_file.py --help', HERE / 'hsap_file.py', '--help')
-    case('probe.py --help', HERE / 'probe.py', '--help')
+    if (HERE / 'probe.py').is_file():
+        case('probe.py --help', HERE / 'probe.py', '--help')
+    else:
+        print('note: no probe.py here (a publishable tree): its check is skipped')
     case('pilot/pilot.py --help', HERE / 'pilot' / 'pilot.py', '--help')
     case('pilot/pilot.py run --help', HERE / 'pilot' / 'pilot.py', 'run', '--help')
     chapters = sorted((HERE / 'pilot' / 'chapters').glob('*.toml'))
