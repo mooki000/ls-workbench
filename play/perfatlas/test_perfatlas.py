@@ -16,7 +16,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, families, model, parse, plan as planner, profile as profmod, scene, timing  # noqa: E402
+from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, families, model, parse, plan as planner, profile as profmod, scene, sleeps, timing  # noqa: E402
 from perfatlas.bridge import BridgeError  # noqa: E402
 
 PRE = '[hos host] '
@@ -1055,6 +1055,26 @@ class Rehearsal(unittest.TestCase):
             self.assertTrue(win4[0]['go_outputs']['chain.bin'] > 0, win4[0]['go_outputs'])
             affinities = [(p.read_text().strip()) for p in (Path(copy) / 'runs').glob(f"*{meta4['tag']}*/affinity.txt")]
             self.assertEqual(affinities, [str(cpu0)])   # (the launch ran under taskset: the game inherited the one CPU)
+            # the timer slack a launch asks for reaches the game; a launch that asks for none leaves the kernel's own
+            plan5 = tmp / 'plan5.json'
+            self.assertEqual(atlas.main(['plan', str(lib3), '--save-proof', '--area', 't', '--tod', 'day', '--viewpoints', 'tv', '--dwell', '4', '--timerslack', '1234',
+                                         '--prefix', 's', '--out', str(plan5)]), 0)
+            self.assertIn('timer slack 1234 ns', planner.summary(json.loads(plan5.read_text())['holds']))
+            out5 = tmp / 'out5'
+            rc = atlas.main(['hold', str(plan5), '--hold', 'h1', '--copy', str(copy), '--out', str(out5), '--hs-run', str(HERE / 'rehearsal' / 'fake_hs_run.sh'),
+                             '--saves', str(saves), '--wall', '120'])
+            self.assertEqual(rc, 0)
+            meta5 = json.loads((out5 / 's1' / 'run.json').read_text())
+            self.assertEqual(meta5['timerslack_ns'], 1234)
+            slacks = [p.read_text().strip() for p in (Path(copy) / 'runs').glob(f"*{meta5['tag']}*/timerslack.txt")]
+            self.assertEqual(slacks, ['1234'])
+            own = Path('/proc/self/timerslack_ns').read_text().strip()
+            others = {p.read_text().strip() for p in (Path(copy) / 'runs').glob('*/timerslack.txt') if meta5['tag'] not in str(p)}
+            self.assertEqual(others, {own})   # (the earlier launches ran with this process's own slack)
+            self.assertEqual(atlas.wrap_launch(['x', 'y']), ['x', 'y'])
+            wrapped = atlas.wrap_launch(['x', 'y'], pin='0-3', slack_ns=1)
+            self.assertEqual(wrapped[:3], ['taskset', '-c', '0-3'])
+            self.assertEqual(wrapped[-2:], ['x', 'y'])
             # the plan's own socket folder is gone after the run
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
 
@@ -1147,6 +1167,56 @@ class Families(unittest.TestCase):
             self.assertAlmostEqual(rows['physics']['cpu_ms'], 0.0)        # the other family's samples are outside the window
             self.assertAlmostEqual(rows['cloth']['chain_ms'], 16.0)       # the main thread waits at every instant, one thread runs
             self.assertAlmostEqual(res['main_blocked_share'], 1.0)
+
+
+
+class Sleeps(unittest.TestCase):
+    """sleeps against what was asked, from a made-up recording (the recorder's own layout)"""
+    @staticmethod
+    def write_chain(path, recs):
+        import struct
+        with open(path, 'wb') as f:
+            f.write(b'HOSCHAIN1\nthread 0 Worker1\nthread 1 Main\nrecords %d\n' % len(recs))
+            for r in recs:
+                f.write(struct.pack('<qQQHB5x', *r))
+
+    def test_buckets_and_floor(self):
+        recs = []
+        t = 1_000_000_000
+        for i in range(100):   # a 20 us poll that lasts 73 us (a 50 us slack), 100 times, on thread 0; one present each 1 ms
+            recs += [(t, 20_000, 0x1000, 0, 4), (t + 73_000, 20_000, 0x1000, 0, 5), (t + 500_000, 0, 0, 1, 6)]
+            t += 1_000_000
+        recs += [(t, 16_000_000, 0x2000, 1, 4), (t + 16_400_000, 16_000_000, 0x2000, 1, 5)]   # one 16 ms sleep that lasts 16.4
+        recs += [(t + 17_000_000, 500_000, 0x3000, 0, 4)]                                        # a sleep that never woke: left out
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'chain.bin'
+            self.write_chain(path, recs)
+            names, got = sleeps.read_chain(path)
+            self.assertEqual(names, {0: 'Worker1', 1: 'Main'})
+            self.assertEqual(len(got), len(recs))
+            res = sleeps.analyze(got, sites=2, names=names)
+            self.assertEqual([(t['group'], t['sleeps'], t['slept_median_us']) for t in res['threads']], [('Worker', 100, 73.0)])   # (thread 0 'Worker1' sleeps 100 times under 100 us)
+            b = {r['bucket']: r for r in res['buckets']}
+            self.assertEqual(res['presents'], 100)
+            self.assertEqual(b['under 100 us']['sleeps'], 100)
+            self.assertAlmostEqual(b['under 100 us']['slept_median_us'], 73.0)
+            self.assertAlmostEqual(b['under 100 us']['asked_median_us'], 20.0)
+            self.assertAlmostEqual(b['under 100 us']['overshoot_ms_per_frame'], 100 * 53.0 / 1000.0 / 100)   # 53 us over, 100 sleeps, 100 presents
+            self.assertEqual(b['100 us to 1 ms']['sleeps'], 0)
+            self.assertAlmostEqual(b['1 ms to 20 ms']['slept_median_us'], 16400.0)
+            self.assertEqual(res['sites'][0]['caller'], '0x2000')   # (16.4 ms in all against 7.3 ms: the long sleep costs most)
+            md = sleeps.to_markdown(res)
+            self.assertIn('no speed claim', md)
+            self.assertIn('| Worker | 100 | 73.0 |', md)
+            self.assertAlmostEqual(b['under 100 us']['per_s'], 100 / res['seconds'])
+            self.assertIn('| under 100 us | %.0f | 20.0 | 73.0 |' % b['under 100 us']['per_s'], md)
+            out = Path(td) / 'out.json'
+            self.assertEqual(sleeps.main([str(path), '--json', str(out)]), 0)
+            self.assertEqual(json.loads(out.read_text())['buckets'][0]['sleeps'], 100)
+            bad = Path(td) / 'bad.bin'
+            bad.write_bytes(b'nope\n')
+            with self.assertRaises(ValueError):
+                sleeps.read_chain(bad)
 
 
 if __name__ == '__main__':

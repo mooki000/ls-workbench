@@ -10,6 +10,7 @@
   atlas.py table RUNDIR... [--library LIB.json] [--md out.md] [--json out.json]
   atlas.py profile RUNDIR --script .../scripts/profile_report.py --maps <game folder> [--run]   a HOS_PROFILE run's window as the report's --from-s/--to-s
   atlas.py families PROFILE --scripts .../scripts --maps <game folder> --families f.json --frame-ms N   CPU and chain time by family (made-up markers in the tests)
+  atlas.py sleeps CHAIN [--sites N]   the length the game's sleeps really had against the length asked (a timer slack shows as a floor)
   atlas.py coverage --field field.json --areas areas.json [--cells cells.json] [--next N]
 
 `hold` runs the plan's hold: for each run a private control folder, the game through the workbench's run wrapper (`hs-run.sh`, which asks
@@ -90,7 +91,8 @@ def cmd_plan(a):
     over = {k: v for k, v in (('dwell_s', a.dwell), ('settle_s', a.settle), ('min_frames', a.min_frames)) if v is not None}
     if a.save_proof:
         go = {'after_s': a.go_after, 'for_s': a.go_for} if a.go_for else None
-        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix, env=parse_env(a.env), go=go, pin=a.pin)
+        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix, env=parse_env(a.env), go=go, pin=a.pin,
+                                       timerslack_ns=a.timerslack)
     elif a.sweep:
         yaws = [float(x) for x in a.yaws.split(',') if x]
         runs = planner.plan_sweep(lib, ids, yaws, run_budget_s=a.run_budget, dwell_s=a.dwell or 3.0, prefix=a.prefix)
@@ -117,6 +119,22 @@ def cmd_merge(a):
     Path(a.out).write_text(json.dumps({'schema_version': 1, 'kind': 'perfatlas-plan', 'holds': holds, 'families': fams, 'fixed_env': FIXED_COST_ENV}, indent=1) + '\n')
     print(planner.summary(holds))
     return 0
+
+
+# PR_SET_TIMERSLACK is 29; the setting survives execve and every thread the game makes inherits it
+SLACK_EXEC = ("import ctypes, os, sys\n"
+              "if ctypes.CDLL(None, use_errno=True).prctl(29, int(sys.argv[1]), 0, 0, 0): sys.exit('prctl(PR_SET_TIMERSLACK) failed')\n"
+              "os.execvp(sys.argv[2], sys.argv[2:])")
+
+
+def wrap_launch(cmd, pin=None, slack_ns=None):
+    """the run wrapper's argv under what the run asks of its launch: pinned to a CPU list (taskset: the wrapper and the game inherit the mask) and a timer
+    slack (a few lines of Python that set it and exec the rest: no new program)"""
+    if slack_ns:
+        cmd = [sys.executable, '-I', '-c', SLACK_EXEC, str(int(slack_ns))] + list(cmd)
+    if pin:
+        cmd = ['taskset', '-c', str(pin)] + list(cmd)
+    return list(cmd)
 
 
 def find_log(run_dir, wait_s=900, proc=None):   # (the wrapper may wait for the GPU gate first: the game's wall counts from its start, the log's first line)
@@ -159,9 +177,8 @@ def run_one(a, run, outdir, cap_s=None):
     if cap_s is not None:
         wall = min(wall, max(60, int(cap_s)))   # (the hold's own end: the game is over before its waiter's timeout)
     cmd = [a.hs_run, a.copy, tag, str(wall), '--user', save] + [f'{k}={v}' for k, v in env]
-    pin = run.get('pin')
-    if pin:
-        cmd = ['taskset', '-c', str(pin)] + cmd   # (the wrapper and the game inherit the mask)
+    pin, slack = run.get('pin'), run.get('timerslack_ns')
+    cmd = wrap_launch(cmd, pin, slack)
     go_files = [dict(env)['HOS_CHAIN'] + '.go'] if 'HOS_CHAIN' in dict(env) else []
     say(f"run {run['id']}: {tag} wall {wall}s save {Path(save).name}; env " + ' '.join(f'{k}={v}' for k, v in run['env']))
     (out / 'launch.txt').write_text(' '.join(cmd) + '\n')
@@ -220,7 +237,7 @@ def run_one(a, run, outdir, cap_s=None):
                         shutil.copy2(run_dir / 'present.csv', dest / 'presents.csv')
         shutil.rmtree(ctl, ignore_errors=True)
     meta = {'id': run['id'], 'tag': tag, 'copy': a.copy, 'save': run['save'], 'env': env, 'area': run['area'], 'tod': run['tod'], 'wall_s': wall,
-            'plan_est_s': run['est_s'], 'pin': pin, 'label': 'ordinary run, no speed claim', **result}
+            'plan_est_s': run['est_s'], 'pin': pin, 'timerslack_ns': slack, 'label': 'ordinary run, no speed claim', **result}
     (out / 'run.json').write_text(json.dumps(meta, indent=1) + '\n')
     return meta
 
@@ -294,6 +311,11 @@ def cmd_families(a):
     return families.main(a.rest)
 
 
+def cmd_sleeps(a):
+    from perfatlas import sleeps
+    return sleeps.main(a.rest)
+
+
 def cmd_coverage(a):
     field = read_json(a.field)
     areas = read_json(a.areas)
@@ -331,6 +353,8 @@ def main(argv=None):
     p.add_argument('--go-after', type=float, default=0.0, help="save-proof stands: the recorder's go file (HOS_CHAIN=<path>.go) is made this many seconds into the window")
     p.add_argument('--go-for', type=float, help='... and kept this long (the recorder writes its file when it goes away); with --env HOS_CHAIN={run}/chain/chain.bin')
     p.add_argument('--pin', help="save-proof stands: launch the game under taskset -c <cpu list> (a small CPU's contention; both arms of a pair are pinned alike)")
+    p.add_argument('--timerslack', type=int, help="save-proof stands: launch the game with this timer slack in ns (prctl PR_SET_TIMERSLACK; the kernel's default is 50000, "
+                   "which makes a 20 us sleep last about 70 us); a launch-switch arm on one build")
     p.add_argument('--save-proof', action='store_true', help="runs that boot each viewpoint's own save and check where Link stands (no !pos)")
     p.add_argument('--yaws', default='0,60,120,180,240,300')
     p.add_argument('--prefix', default='r', help="the runs' ids start with this (so that plans can be merged)")
@@ -368,6 +392,9 @@ def main(argv=None):
     p = sub.add_parser('families', help='a profile folder charged to named families: CPU a frame and time on the frame chain (see families.py)')
     p.add_argument('rest', nargs=argparse.REMAINDER)
     p.set_defaults(fn=cmd_families)
+    p = sub.add_parser('sleeps', help="how long the game's sleeps really last, from a HOS_CHAIN recording (see sleeps.py)")
+    p.add_argument('rest', nargs=argparse.REMAINDER)
+    p.set_defaults(fn=cmd_sleeps)
     p = sub.add_parser('coverage')
     p.add_argument('--field', required=True)
     p.add_argument('--areas', required=True)

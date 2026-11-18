@@ -178,6 +178,7 @@ def chain_thread():
 
 
 (run_dir / 'affinity.txt').write_text(','.join(str(c) for c in sorted(os.sched_getaffinity(0))) + '\n')   # (a taskset-wrapped launch: the mask the game inherited)
+(run_dir / 'timerslack.txt').write_text(Path('/proc/self/timerslack_ns').read_text())   # (a launch under the timer-slack wrapper: the value the game inherited)
 if env.get('HOS_CHAIN'):
     threading.Thread(target=chain_thread, daemon=True).start()
 threading.Thread(target=frames_thread, daemon=True).start()

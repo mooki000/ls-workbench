@@ -224,6 +224,8 @@ def summary(holds):
             env = ' '.join(f'{k}={v}' for k, v in r['env']) or '(no extra switches)'
             if r.get('pin'):
                 env += f" pinned to CPUs {r['pin']}"
+            if r.get('timerslack_ns'):
+                env += f" timer slack {r['timerslack_ns']} ns"
             if any(o.get('go') for o in ops):
                 env += ' with a go window'
             lines.append(f"  run {r['id']}: {n_pos} viewpoint visits, {n_walk} walks, {n_rel} area reloads, about {r['est_s']:.0f} s; {env}")
@@ -266,12 +268,13 @@ def plan_sweep(lib, vp_ids, yaws, run_budget_s=420.0, dwell_s=3.0, costs=None, p
     return runs
 
 
-def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=(), go=None, pin=None):
+def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=(), go=None, pin=None, timerslack_ns=None):
     """one run that boots each viewpoint's own save and checks where Link stands (no `!pos`): the proof that a save made for a viewpoint reaches
     play at that place. Each viewpoint needs its own area (its own save) in the library; one run for each, in the order given. Estimates only.
     `env` ((name, value) pairs) goes on every run's launch line: a long stand with HOS_PROFILE=1 is a profile run; `{run}` in a value is the run's output
     folder (a recorder's path). `go` ({'after_s', 'for_s'}): the stand makes the recorder's go file (HOS_CHAIN's `<path>.go`) for that part of its window.
-    `pin`: a CPU list ('0-11') the game is launched under (taskset): a small CPU's contention, an arm of its own."""
+    `pin`: a CPU list ('0-11') the game is launched under (taskset): a small CPU's contention, an arm of its own. `timerslack_ns`: the kernel's timer slack
+    (default 50000) the game is launched with (inherited by every thread it makes): a short sleep then lasts what it asked, as on Windows."""
     costs = {**DEFAULT_COSTS, **(costs or {})}
     runs = []
     for i, vid in enumerate(vp_ids, 1):
@@ -288,5 +291,5 @@ def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=(), g
                 raise PlanError(f'the go window ({go["after_s"]} + {go["for_s"]} s) does not fit the dwell of {dwell_s} s')
             ops[1]['go'] = dict(go)
         runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [list(e) for e in env], 'ops': ops,
-                     'est_s': round(seconds_of(ops, costs), 1), 'pin': pin})
+                     'est_s': round(seconds_of(ops, costs), 1), 'pin': pin, 'timerslack_ns': timerslack_ns})
     return runs
