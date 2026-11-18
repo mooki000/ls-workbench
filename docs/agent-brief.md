@@ -74,7 +74,7 @@ Their rules bind you as they bind everyone. The ones that matter most:
    one was recovered by hashing, kind, save file and group, what co-op does with it, and what it is). **The two maps never
    leave the workbench repository**: the flag names, their rows and anything copied from them still never enter the LS or
    HS repository, an issue, a pull request, a comment or a post (say the hash and the family there).
-   **A map of the game's lifted functions exists** (about 1,400 rows: what each `f_<address>` we have looked at does,
+   **A map of the game's lifted functions exists** (about 2,000 rows: what each `f_<address>` we have looked at does,
    its data and structures, and how sure each row is), by dyst, in the workbench repository:
    `/home/mooki/Code/hookshot-workbench/docs/oot/` (published at https://github.com/mooki000/ls-workbench). Before
    reading lifted code, look the address up: `python3 /home/mooki/Code/hookshot-workbench/docs/oot/fnmap.py find
@@ -208,8 +208,10 @@ Their rules bind you as they bind everyone. The ones that matter most:
   `setsid --wait nohup env --default-signal=HUP bash script`, or without `nohup`. In the tool shell a backgrounded
   `( ... "$t" ... ) &` inside a `for` loop expands `$t` late: use a script that takes the argument.
 - Keep at most one waiter of yours in a gate. Record owned process identities at launch; a `pgrep -f` name match,
-  `kill -0` on a zombie, or a gap between holds is not proof a chain ended, and never `pkill -f` a lock command line
-  (it matches every worker's). End owned games before releasing the gate;
+  `kill -0` on a zombie, or a gap between holds is not proof a chain ended. **Never `pkill` or `killall` anything**, by
+  name or pattern: kill only pids you recorded when you started them (`kill <pid>`, or the job's own stop). On
+  17 Nov one `pkill -f 'h.py|python3 -'` ended 14 other workers' queued holds, the idle-gate waiters and the GPU
+  dispatcher, because nearly every worker's command line has `python3 -`. End owned games before releasing the gate;
   `timeout` may put the game in a different process group from its shell wrapper.
 - Use `date` for timestamps. Never edit a running/queued script in place. Stage, test, then replace atomically only
   when no active process depends on it; otherwise leave a patch. `/tmp` is a tmpfs and is lost at reboot; it and
