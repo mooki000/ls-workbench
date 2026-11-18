@@ -123,11 +123,13 @@ def serve(conn):
         rep = {'id': rid, 'ok': True, 'frame': frame()}
         with lock:
             if cmd == 'status':
-                rep.update(state='loading' if S['loading'] else S['state'], map=S['map'] if S['state'] == 'play' else None, fps=60.0,
+                rep.update(state='loading' if S['loading'] else S['state'], map=S['map'] if S['state'] == 'play' else None, fps=60.0, draws=900.0,
                            game={'pos': S['pos'], 'facing': S['facing'], 'camera': S['camera'], 'camera_pitch': S['pitch'], 'event': False,
                                  'loading': S['loading'], 'age': 'child', 'frame': frame(), 'map': S['map']} if S['state'] == 'play' else None)
             elif cmd == 'press':
                 S['a'] = True
+            elif cmd == 'stick' and req.get('stick') == 'R':
+                S['camera'] = (S['camera'] - req.get('x', 0) * 1.5 * req.get('frames', 8) + 180.0) % 360.0 - 180.0
             elif cmd == 'stick':
                 want = math.atan2(req.get('x', 0), req.get('y', 0))
                 heading = math.radians(S['camera']) - want

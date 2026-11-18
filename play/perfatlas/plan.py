@@ -13,7 +13,8 @@ Ops (what `driver.py` executes; each is a plain dict, the plan is JSON):
     {"op": "actors_clear", "area": "<map>", "reload": true}
     {"op": "option", "name": "...", "value": ...}    live, through the menu's setter; the first-seen value is remembered
     {"op": "option_restore", "name": "..."}
-    {"op": "pos", "cond": id, "vp": id, "visit": n, "settle_s": 3, "dwell_s": 15, "min_frames": 0, "line": "!pos ...", "shot": true}
+    {"op": "pos", "cond": id, "vp": id, "visit": n, "settle_s": 3, "dwell_s": 15, "min_frames": 0, "line": "!pos x y z", "aim": [yaw, pitch] | null, "shot": true}
+    {"op": "sweep", "vp": id, "line": "!pos x y z", "yaws": [0, 60, ...], "dwell_s": 3}   look each way and read the draws (a scout)
     {"op": "walk", "cond": id, "walk": id, "points": [[x, z], ...], "start": [x, y, z] | null, "radius": 1.5, "timeout_s": 90, "shot": true}
     {"op": "quit"}
 
@@ -25,8 +26,10 @@ import math
 
 from . import model
 
-DEFAULT_COSTS = {'boot_s': 60.0, 'reload_s': 25.0, 'arrive_s': 3.0, 'shot_s': 1.5, 'option_s': 2.0, 'time_s': 1.0, 'quit_s': 12.0,
-                  'gap_between_runs_s': 25.0, 'walk_extra_s': 6.0, 'margin': 1.15, 'fps_floor': 60.0}
+# Seconds, calibrated on the first hold (17 Nov, Castle Town, a loaded PC): boot 34 to 39, an area reload 9 to 10, a standing window 26 for a
+# 15 s dwell and a 3 s settle (so about 8 s of arrival, polling and picture beyond them). The camera turn (aim_s) is a first guess.
+DEFAULT_COSTS = {'boot_s': 45.0, 'reload_s': 14.0, 'arrive_s': 5.0, 'shot_s': 2.5, 'option_s': 2.0, 'time_s': 1.0, 'quit_s': 12.0,
+                  'gap_between_runs_s': 25.0, 'walk_extra_s': 6.0, 'margin': 1.1, 'fps_floor': 60.0, 'aim_s': 4.0}
 
 
 class PlanError(ValueError):
@@ -44,7 +47,10 @@ def op_seconds(op, costs):
     if k == 'time':
         return costs['time_s']
     if k == 'pos':
-        return costs['arrive_s'] + op['settle_s'] + max(op['dwell_s'], op.get('min_frames', 0) / costs['fps_floor']) + (costs['shot_s'] if op.get('shot') else 0)
+        return (costs['arrive_s'] + (costs['aim_s'] if op.get('aim') else 0) + op['settle_s'] + max(op['dwell_s'], op.get('min_frames', 0) / costs['fps_floor'])
+                + (costs['shot_s'] if op.get('shot') else 0))
+    if k == 'sweep':
+        return costs['arrive_s'] + op.get('settle_s', 1.0) + len(op['yaws']) * (costs['aim_s'] + op.get('look_s', 1.0) + op.get('dwell_s', 3.0) + 1.0)
     if k == 'walk':
         return min(op['timeout_s'], 60.0 + op['timeout_s'] * 0.5) + costs['walk_extra_s'] + (costs['shot_s'] if op.get('shot') else 0)
     if k == 'quit':
@@ -65,7 +71,7 @@ def pos_ops(lib, cond_id, vp_ids, visit, shot=True, over=None):
         vp = lib.viewpoints[vid]
         ops.append({'op': 'pos', 'cond': cond_id, 'vp': vid, 'visit': visit, 'settle_s': over.get('settle_s', vp.settle_s),
                     'dwell_s': over.get('dwell_s', vp.dwell_s), 'min_frames': over.get('min_frames', vp.min_frames), 'line': vp.pos_line(),
-                    'shot': shot, 'tod': vp.tod})
+                    'aim': vp.aim(), 'shot': shot, 'tod': vp.tod})
     return ops
 
 
@@ -209,9 +215,45 @@ def summary(holds):
         lines.append(f"hold {h['id']}: {len(h['runs'])} run(s), about {h['est_s']:.0f} s")
         for r in h['runs']:
             ops = r['ops']
-            n_pos = sum(1 for o in ops if o['op'] == 'pos')
+            n_pos = sum(1 for o in ops if o['op'] in ('pos', 'sweep'))
             n_walk = sum(1 for o in ops if o['op'] == 'walk')
             n_rel = sum(1 for o in ops if o['op'] in ('actors', 'actors_clear') and o.get('reload'))
             env = ' '.join(f'{k}={v}' for k, v in r['env']) or '(no extra switches)'
             lines.append(f"  run {r['id']}: {n_pos} viewpoint visits, {n_walk} walks, {n_rel} area reloads, about {r['est_s']:.0f} s; {env}")
     return '\n'.join(lines)
+
+
+def plan_sweep(lib, vp_ids, yaws, run_budget_s=420.0, dwell_s=3.0, costs=None, prefix='s'):
+    """scout runs: each viewpoint of the list (its position only) looked at in each yaw, as many places to a run as fit the budget.
+    Returns runs like plan_runs'; a time of day needs its own plan (the save differs)"""
+    costs = {**DEFAULT_COSTS, **(costs or {})}
+    items = [lib.viewpoints.get(i) for i in vp_ids]
+    if any(i is None for i in items):
+        raise PlanError('a viewpoint id is not in the library')
+    areas, tods = {i.area for i in items}, {i.tod for i in items}
+    if len(areas) != 1 or len(tods) != 1:
+        raise PlanError(f'the items span areas {sorted(areas)} and times of day {sorted(tods)}: plan one of each')
+    area, tod = next(iter(areas)), next(iter(tods))
+    a = lib.areas[area]
+    save = lib.save_for(area, tod)
+    runs, cur = [], None
+
+    def start(n):
+        return {'id': f'{prefix}{n}', 'area': area, 'map': a.map, 'tod': tod, 'save': save, 'env': [], 'ops': [{'op': 'boot', 'map': a.map}]}
+
+    def close(r):
+        r['ops'].append({'op': 'quit'})
+        r['est_s'] = round(seconds_of(r['ops'], costs), 1)
+        return r
+
+    cur = start(1)
+    for vp in items:
+        op = {'op': 'sweep', 'vp': vp.id, 'line': vp.pos_line(), 'yaws': list(yaws), 'dwell_s': dwell_s, 'settle_s': 1.0, 'look_s': 1.0, 'tod': tod}
+        if seconds_of(cur['ops'] + [op, {'op': 'quit'}], costs) > run_budget_s and len(cur['ops']) > 1:
+            runs.append(close(cur))
+            cur = start(len(runs) + 1)
+        if seconds_of(cur['ops'] + [op, {'op': 'quit'}], costs) > run_budget_s:
+            raise PlanError(f'one place with {len(yaws)} yaws needs {seconds_of([op], costs):.0f} s: more than the run budget {run_budget_s:.0f} s')
+        cur['ops'].append(op)
+    runs.append(close(cur))
+    return runs

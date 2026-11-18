@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import atlas, costtable, coverage, driver, model, parse, plan as planner  # noqa: E402
+from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner  # noqa: E402
 from perfatlas.bridge import BridgeError  # noqa: E402
 
 PRE = '[hos host] '
@@ -37,6 +37,10 @@ PASS_BLOCK = [
     PRE + 'vk:   the 20 programs whose runs of draws took the most (RX_VK_PASS_TIMING=2: a timestamp at each change of program):',
     PRE + 'vk:   0.800 ms    10.0 runs     80.0 us a run     120.0 draws    6.67 us a draw  prog 00ff',
 ]
+
+
+def wrap_deg(d):
+    return (d + 180.0) % 360.0 - 180.0
 
 
 def lines_with_offsets(texts):
@@ -110,9 +114,11 @@ def library_obj():
 class Model(unittest.TestCase):
     def test_library_and_pos_lines(self):
         lib = model.load_library(library_obj())
-        self.assertEqual(lib.viewpoints['v1'].pos_line(), '!pos 10.000 5.000 20.000 90.000 45.000 10.000')
+        self.assertEqual(lib.viewpoints['v1'].pos_line(), '!pos 10.000 5.000 20.000')   # (the position only: the angles of the long form did not take effect)
         self.assertEqual(lib.viewpoints['v2'].pos_line(), '!pos -3.000 5.000 8.000')
-        self.assertEqual(lib.viewpoints['v3'].pos_line(), '!pos 1.000 2.000 3.000 30.000 30.000 0.000')   # (a camera yaw alone: Link faces it)
+        self.assertEqual(lib.viewpoints['v1'].aim(), [45.0, 10.0])
+        self.assertIsNone(lib.viewpoints['v2'].aim())                                    # (no facing, no camera: the camera stays where the game puts it)
+        self.assertEqual(lib.viewpoints['v3'].aim(), [30.0, None])
         self.assertEqual(lib.save_for('a', 'night'), 'save-night')
 
     def test_library_faults(self):
@@ -243,6 +249,9 @@ class FakeBridge:
         self.sticks = 0
         self.map = None
         self.played_at = None
+        self.cam_rate = 1.5       # (degrees a frame at full push; the sign is the game's, unknown to the driver)
+        self.cam_sign = -1.0
+        self.draws_by_yaw = lambda yaw: 1000 + int(abs(wrap_deg(yaw)))   # (a made-up scene: more draws looking toward +-180)
 
     def frame(self):
         return int((self.c.t - self.t0) / 1e9 * 60)
@@ -271,6 +280,7 @@ class FakeBridge:
         loading = self.c.t < self.loading_until
         playing = self.state == 'play'
         return {'ok': True, 'frame': self.frame(), 'state': 'loading' if loading else self.state, 'fps': 60.0, 'map': 'AreaA' if playing else None,
+                'draws': self.draws_by_yaw(self.camera) if playing else 0.0,
                 'game': {'pos': self.pos, 'facing': self.facing, 'camera': self.camera, 'event': False, 'loading': loading, 'age': 'child',
                          'frame': self.frame(), 'map': 'AreaA'} if playing else None}
 
@@ -281,6 +291,9 @@ class FakeBridge:
 
     def stick(self, x, y, frames=8, which='L', wait=False):
         self._guard('stick')
+        if which == 'R':
+            self.camera = wrap_deg(self.camera + self.cam_sign * x * self.cam_rate * frames)
+            return {'ok': True}
         self.sticks += 1
         want = math.atan2(x, y)
         heading = math.radians(self.camera) - want
@@ -346,15 +359,18 @@ class Driver(unittest.TestCase):
         self.assertEqual([w['kind'] for w in wins].count('walk'), 4)
         w1 = wins[0]
         self.assertTrue(w1['arrived'] and w1['camera_ok'])
+        self.assertLessEqual(abs(wrap_deg(w1['status0']['camera'] - 45.0)), 10.0)   # (the camera was turned to the viewpoint's camera yaw, 45)
+        self.assertGreater(w1['aimed_pushes'], 0)
         self.assertEqual(w1['status0']['pos'], [10, 5, 20])
         self.assertGreaterEqual((w1['t1_ns'] - w1['t0_ns']) / 1e9, 6.0)
         self.assertTrue(Path(w1['shot']).exists())
         self.assertEqual(w1['moved_m'], 0.0)
         walk = [w for w in wins if w['kind'] == 'walk'][0]
         self.assertEqual((walk['result'], walk['points_reached']), ('reached', 2))
+        self.assertTrue(all(w['cpu'] is None for w in wins))   # (no sampler was given)
         # the live file carries what the plan asked for, in order
         lines = live.read_text().splitlines()
-        self.assertEqual(lines[0], '!pos 10.000 5.000 20.000 90.000 45.000 10.000')
+        self.assertEqual(lines[0], '!pos 10.000 5.000 20.000')
         self.assertIn('!actors clear AreaA', lines)
         self.assertIn('!actors off AreaA Npc_*', lines)
         self.assertEqual(lines.count('!actors reload'), 2)   # (the people block's, and the clear before res-50)
@@ -365,6 +381,43 @@ class Driver(unittest.TestCase):
         self.assertTrue(reload['ok'])
         self.assertIn('4 left out', reload['actors_line'])
         self.assertEqual(res[-1]['op'], {'op': 'quit'})
+
+    def test_aim_learns_the_stick_whichever_way_it_turns(self):
+        for sign in (1.0, -1.0):
+            with tempfile.TemporaryDirectory() as tmp:
+                clock = FakeClock()
+                bridge = FakeBridge(clock)
+                bridge.cam_sign = sign
+                drv, _, _ = make_driver(tmp, bridge, clock)
+                drv.run([{'op': 'boot', 'map': 'AreaA'}])
+                for want in (90.0, -120.0, 170.0, 0.0):
+                    ok, cam, pitch, pushes = drv.aim(want)
+                    self.assertTrue(ok, (sign, want, cam))
+                    self.assertLessEqual(abs(wrap_deg(cam - want)), 10.0)
+                self.assertEqual(drv.cam_sign, sign)
+                drv.close()
+
+    def test_aim_gives_up_when_the_camera_does_not_turn(self):
+        self.bridge.cam_rate = 0.0
+        drv, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
+        drv.run([{'op': 'boot', 'map': 'AreaA'}])
+        ok, cam, pitch, pushes = drv.aim(120.0)
+        self.assertFalse(ok)
+        self.assertLessEqual(pushes, 8)
+
+    def test_sweep_reads_draws_in_each_view(self):
+        drv, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
+        runs = planner.plan_sweep(self.lib, ['v1', 'v2'], [0, 90, 180], run_budget_s=900)
+        self.assertEqual(len(runs), 1)
+        res = drv.run(runs[0]['ops'])
+        sweeps = [r for r in res if r['op']['op'] == 'sweep']
+        self.assertEqual(len(sweeps), 2)
+        views = sweeps[0]['result']['views']
+        self.assertEqual([round(v['yaw']) for v in views], [0, 90, 180])
+        self.assertEqual([v['draws'] for v in views], [1000 + int(abs(wrap_deg(v['camera']))) for v in views])   # (made-up scene: 1000 + |camera read|)
+        rows = costtable.sweep_rows([costtable.Run(Path(self.tmp.name) / 'out')])
+        self.assertEqual(rows[0]['draws'], max(v['draws'] for v in views))
+        self.assertIn('Scout', costtable.sweep_markdown(rows))
 
     def test_boot_presses_a_through_the_title(self):
         drv, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
@@ -395,6 +448,84 @@ class Driver(unittest.TestCase):
         r = drv.op_walk({'op': 'walk', 'cond': 'baseline', 'walk': 'w1', 'visit': 1, 'points': [[50, 50]], 'start': None, 'radius': 1.5, 'timeout_s': 30, 'shot': False})
         self.assertEqual(r['result'], 'stuck')
         drv.close()
+
+
+class Cpu(unittest.TestCase):
+    def fake_proc(self, root, game_ticks_a, game_ticks_b, busy_a, busy_b):
+        """a /proc tree with a game of 3 threads and the machine's totals; returns (snapshot reader)"""
+        root = Path(root)
+        (root / '42' / 'task').mkdir(parents=True)
+        (root / '42' / 'environ').write_bytes(b'A=1\0HOS_CONTROL=/tmp/pa-x/c.sock\0B=2\0')
+        (root / '43').mkdir()
+        (root / '43' / 'environ').write_bytes(b'HOS_CONTROL=/tmp/other.sock\0')
+        (root / 'abc').mkdir()
+        return root
+
+    def write(self, root, ticks, busy, total=100000):
+        root = Path(root)
+        names = {'1': 'BaseProcExecutor3', '2': 'Module System (Worker)2', '3': 'Presentation'}
+        for tid, name in names.items():
+            d = root / '42' / 'task' / tid
+            d.mkdir(exist_ok=True)
+            # fields after the name: state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime ...
+            u, sy = ticks[tid]
+            (d / 'stat').write_text(f'{tid} ({name}) S 1 1 1 0 -1 0 0 0 0 0 {u} {sy} 0 0\n')
+        (root / 'stat').write_text(f'cpu  {busy} 0 0 {total - busy} 0 0 0 0 0 0\n')
+
+    def test_find_pid_by_control_socket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.fake_proc(tmp, 0, 0, 0, 0)
+            self.assertEqual(cpumod.find_game_pid('/tmp/pa-x/c.sock', proc=str(root)), 42)
+            self.assertIsNone(cpumod.find_game_pid('/tmp/none.sock', proc=str(root)))
+
+    def test_thread_names_with_spaces_and_groups(self):
+        self.assertEqual(cpumod.parse_task_stat('7 (Module System (Worker)2) S 1 1 1 0 -1 0 0 0 0 0 30 12 0 0'), ('Module System (Worker)2', 42))
+        self.assertEqual(cpumod.group_name('BaseProcExecutor3'), 'BaseProcExecutor')
+        self.assertEqual(cpumod.group_name('Presentation'), 'Presentation')
+        self.assertIsNone(cpumod.parse_task_stat('garbage'))
+
+    def test_window_cores_others_and_quiet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.fake_proc(tmp, 0, 0, 0, 0)
+            t = [0]
+            sampler = cpumod.Sampler(42, proc=str(root), clock=lambda: t[0])
+            hz = cpumod.HZ
+            # 10 s: the game's three threads use 200 + 100 + 100 ticks a second (4 cores); the machine is busy 6 cores: 2 others
+            snaps = []
+            for sec in range(0, 11, 1):
+                t[0] = sec * 10**9
+                self.write(root, {'1': (200 * sec * hz // 100, 0), '2': (100 * sec * hz // 100, 0), '3': (50 * sec * hz // 100, 50 * sec * hz // 100)}, 6 * hz * sec)
+                s = sampler.snapshot()
+                if 0 < sec < 10:
+                    s['game_ticks'] = sum(x[1] for x in s['threads'].values())
+                    s['threads'] = {}
+                snaps.append(s)
+            c = cpumod.window_cpu(snaps)
+            self.assertAlmostEqual(c['game_cores'], 4.0)
+            self.assertAlmostEqual(c['machine_cores'], 6.0)
+            self.assertAlmostEqual(c['others_mean'], 2.0)
+            self.assertAlmostEqual(c['others_peak'], 2.0)
+            self.assertTrue(c['quiet'])
+            self.assertEqual(c['groups'], {'BaseProcExecutor': 2000, 'Module System (Worker)': 1000, 'Presentation': 1000})
+            # the same game on a machine busy with 12 cores: 8 others, not quiet
+            for sec, s in zip(range(11), snaps):
+                s['sys_busy'] = 12 * hz * sec
+            c = cpumod.window_cpu(snaps)
+            self.assertAlmostEqual(c['others_mean'], 8.0)
+            self.assertFalse(c['quiet'])
+            self.assertIsNone(cpumod.window_cpu(snaps[:1]))
+
+    def test_a_peak_stretch_breaks_the_quiet_rule_though_the_mean_is_low(self):
+        hz = cpumod.HZ
+        snaps = []
+        busy = 0
+        for sec in range(0, 21):
+            busy += (10 if 5 <= sec <= 10 else 1) * hz    # 1 other core, 10 for six seconds in the middle
+            snaps.append({'t_ns': sec * 10**9, 'sys_busy': busy, 'sys_total': 1, 'threads': {}, 'game_ticks': 0})
+        c = cpumod.window_cpu(snaps)
+        self.assertLess(c['others_mean'], cpumod.QUIET_MEAN * 2)
+        self.assertGreater(c['others_peak'], cpumod.QUIET_PEAK)
+        self.assertFalse(c['quiet'])
 
 
 class CostTable(unittest.TestCase):
@@ -473,6 +604,22 @@ class CostTable(unittest.TestCase):
             self.assertIn('| r1 | v1 | 4.0% | yes |', md)
             data = json.loads(costtable.to_json(rows))
             self.assertEqual(len(data), 3)
+
+    def test_cpu_row_per_frame_and_groups(self):
+        hz = cpumod.HZ
+        snaps = [{'t_ns': 0, 'sys_busy': 0, 'sys_total': 1, 'threads': {'1': ['BaseProcExecutor0', 0], '2': ['BaseProcExecutor1', 0], '3': ['Presentation', 0]}},
+                 {'t_ns': 5 * 10**9, 'sys_busy': 4 * hz * 5, 'sys_total': 1, 'game_ticks': 3 * hz * 5, 'threads': {}},
+                 {'t_ns': 10 * 10**9, 'sys_busy': 4 * hz * 10, 'sys_total': 1,
+                  'threads': {'1': ['BaseProcExecutor0', hz * 10], '2': ['BaseProcExecutor1', hz * 10], '3': ['Presentation', hz * 10]}}]
+        row = costtable.cpu_row(snaps, 300)   # 300 frames in 10 s
+        self.assertAlmostEqual(row['game_cores'], 3.0)
+        self.assertAlmostEqual(row['cpu_ms_frame'], 3 * 10 * 1000 / 300)
+        self.assertEqual(row['groups'][0][0], 'BaseProcExecutor')
+        self.assertAlmostEqual(row['groups'][0][1], 2 * 10 * 1000 / 300)
+        self.assertAlmostEqual(row['others_mean'], 1.0)
+        self.assertTrue(row['quiet'])
+        self.assertIsNone(costtable.cpu_row(None, 300))
+        self.assertIsNone(costtable.cpu_row(snaps[:1], 300))
 
     def test_missing_files_give_none_not_zero(self):
         with tempfile.TemporaryDirectory() as root:
@@ -556,8 +703,29 @@ class Rehearsal(unittest.TestCase):
                 self.assertAlmostEqual(r['parts']['game_ms'] / r['frame']['mean'], 0.6, delta=0.01)
                 self.assertEqual(r['log']['draws'], 900)
             self.assertTrue(all(r['flags'] == [] for r in rows), [r['flags'] for r in rows])
+            for r in rows:   # (the CPU record: the fake game is a real process found by its HOS_CONTROL; it burns a little CPU)
+                self.assertIsNotNone(r['cpu'], r['vp'])
+                self.assertGreaterEqual(r['cpu']['game_cores'], 0.0)
+                self.assertIsNotNone(r['cpu']['others_mean'])
+            self.assertIsNotNone(run['game_pid'])
             self.assertEqual(atlas.main(['table', str(rd), '--md', str(tmp / 'table.md')]), 0)
-            self.assertIn('Cost table', (tmp / 'table.md').read_text())
+            md = (tmp / 'table.md').read_text()
+            self.assertIn('Cost table', md)
+            self.assertIn('the quiet record', md)
+            # a scout: each place looked at in two yaws, the draws read from the bridge's status
+            plan2 = tmp / 'plan2.json'
+            self.assertEqual(atlas.main(['plan', str(lib), '--sweep', '--area', 'a', '--tod', 'day', '--viewpoints', 'v1,v2', '--yaws', '0,90', '--dwell', '3',
+                                         '--run-budget', '300', '--prefix', 's', '--out', str(plan2)]), 0)
+            out2 = tmp / 'out2'
+            rc = atlas.main(['hold', str(plan2), '--hold', 'h1', '--copy', str(copy), '--out', str(out2), '--hs-run', str(HERE / 'rehearsal' / 'fake_hs_run.sh'),
+                             '--saves', str(saves), '--wall', '120'])
+            self.assertEqual(rc, 0)
+            rd2 = out2 / 's1'
+            sw = costtable.sweep_rows([costtable.Run(rd2)])
+            self.assertEqual(len(sw), 4)
+            self.assertTrue(all(r['draws'] == 900.0 and r['arrived'] and r['camera_ok'] for r in sw), sw)
+            self.assertEqual(atlas.main(['table', str(rd2), '--md', str(tmp / 'sweep.md'), '--json', str(tmp / 'sweep.json')]), 0)
+            self.assertIn('Scout', (tmp / 'sweep.md').read_text())
             # the plan's own socket folder is gone after the run
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
 

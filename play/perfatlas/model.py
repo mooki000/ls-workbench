@@ -3,9 +3,10 @@
 catalogue of conditions (what is switched off or changed to price a part of the frame). Pure: no game, no files but the
 library JSON a caller hands over.
 
-A viewpoint is a place to stand still: map position, Link's facing, the camera's yaw and pitch, the time of day, how long to
-dwell. `pos_line` is the live-input line that puts Link there (`!pos X Y Z [FACING [CAM_YAW CAM_PITCH]]`: metres and degrees in
-the numbers and order of the control bridge's `status.game`). A walk is a list of ground points walked in a closed loop.
+A viewpoint is a place to stand still: map position, the camera's yaw (and Link's facing, which only gives the yaw when none is
+named), the time of day, how long to dwell. `pos_line` is the live-input line that puts Link there: `!pos X Y Z` (metres, the numbers
+of the control bridge's `status.game`). The facing and camera angles of the longer `!pos` form did not take effect in the game
+(PosCommand's run and the atlas's first hold, 17 Nov), so the camera is turned by the right stick, closed loop (`driver.aim`). A walk is a list of ground points walked in a closed loop.
 A condition is a change to one run: actor rules (`!actors off ...`), settings (`option set`), a launch switch (an environment
 variable: a new game process) or the time of day.
 
@@ -75,17 +76,14 @@ class Viewpoint:
     note: str = ''
 
     def pos_line(self):
-        """the live-input line for this viewpoint: 3 numbers, or 4 with a facing, or 6 with the camera as well (a camera aim
-        without a facing turns Link to face where the camera looks)"""
-        x, y, z = self.pos
-        nums = [x, y, z]
-        facing = self.facing if self.facing is not None else self.cam_yaw
-        if self.cam_yaw is not None or self.cam_pitch is not None:
-            nums += [facing if facing is not None else 0.0, self.cam_yaw if self.cam_yaw is not None else facing or 0.0,
-                     self.cam_pitch if self.cam_pitch is not None else 0.0]
-        elif facing is not None:
-            nums.append(facing)
-        return '!pos ' + ' '.join(f'{n:.3f}' for n in nums)
+        """the live-input line for this viewpoint: the position only"""
+        return '!pos ' + ' '.join(f'{n:.3f}' for n in self.pos)
+
+    def aim(self):
+        """[camera yaw, pitch] to turn the camera to, or None when the library names neither a camera yaw nor a facing (the camera stays
+        where the game puts it). Pitch is carried for the record; the right stick turns the yaw."""
+        yaw = self.cam_yaw if self.cam_yaw is not None else self.facing
+        return None if yaw is None else [yaw, self.cam_pitch]
 
 
 @dataclass(frozen=True)

@@ -14,10 +14,10 @@ import json
 import math
 from pathlib import Path
 
-from . import parse
+from . import cpu as cpumod, parse
 
 LABEL = 'ordinary run, no speed claim'
-TRACE_MEANS = ('game_ms', 'render_ms', 'gpu_wait_ms', 'pace_ms', 'wait_render_ms', 'wait_gpu_ms', 'wait_main_ms', 'main_cpu_ms', 'main_blocked_ms',
+TRACE_MEANS = ('game_ms', 'render_ms', 'gpu_wait_ms', 'pace_ms', 'wait_render_ms', 'wait_gpu_ms', 'wait_main_ms', 'main_cpu_ms', 'main_blocked_ms', 'main_vcore_ms',
                'draw_ms', 'desc_ms', 'cmds_ms', 'memsync_ms', 'slot_wait_ms', 'gpu_behind_ms', 'translate_ms', 'pipe_wait_ms', 'pipelines_ms',
                'uploads_ms', 'tex_lookup_ms', 'readback_wait_ms', 'late_wait_ms', 'left_out', 'uploads', 'upload_mb', 'textures_gone')
 SCENE_MEDIANS = ('draws', 'skipped', 'dispatches', 'passes', 'barriers', 'submits', 'upload_mb', 'ub_updates', 'textures', 'texture_mb')
@@ -138,17 +138,62 @@ def window_row(run, w):
     ps = pass_summary(run.records, w)
     if ps and ps['partial']:
         flags.append('pass timing: one block only (it covers earlier frames)')
+    cpu = cpu_row(w.get('cpu'), st['n'])
     return {'run': run.id, 'n': w['n'], 'kind': w['kind'], 'cond': w['cond'], 'vp': w['vp'], 'visit': w.get('visit', 1), 'tod': w.get('tod'),
             'dwell_s': round((w['t1_ns'] - w['t0_ns']) / 1e9, 1), 'source': source, 'frame': st, 'parts': parts,
             'bound': classify_bound(parts, st['mean']) if source == 'trace' else None, 'log': log, 'pass': ps,
-            'shot': w.get('shot'), 'flags': flags, 'status0': w.get('status0'), 'status1': w.get('status1')}
+            'cpu': cpu, 'shot': w.get('shot'), 'flags': flags, 'status0': w.get('status0'), 'status1': w.get('status1')}
+
+
+def cpu_row(snaps, frames):
+    """the window's CPU record: cores the game used, CPU ms a frame (all threads and by thread group), the machine's other work (mean and
+    the worst 5-second stretch) and whether the window met the quiet rule; None when the run sampled no CPU"""
+    c = cpumod.window_cpu(snaps) if snaps else None
+    if c is None:
+        return None
+    ms_per_tick = 1000.0 / cpumod.HZ
+    per = (lambda ticks: ticks * ms_per_tick / frames) if frames else (lambda ticks: None)
+    groups = sorted(((g, per(t)) for g, t in c['groups'].items()), key=lambda kv: -(kv[1] or 0))
+    return {'game_cores': c['game_cores'], 'cpu_ms_frame': per(c['game_ticks']), 'others_mean': c['others_mean'], 'others_peak': c['others_peak'],
+            'quiet': c['quiet'], 'groups': groups[:6]}
 
 
 def build_rows(runs):
     out = []
     for run in runs:
-        out += [window_row(run, w) for w in run.windows]
+        out += [window_row(run, w) for w in run.windows if w.get('kind') != 'sweep']
     return out
+
+
+def sweep_rows(runs):
+    """the scout's views: [{run, vp, yaw, camera, pitch, draws, draws_max, fps, arrived, camera_ok}], most draws first"""
+    out = []
+    for run in runs:
+        for w in run.windows:
+            if w.get('kind') != 'sweep':
+                continue
+            out.append({'run': run.id, 'vp': w['vp'], 'yaw': (w.get('aim') or [None])[0], 'camera': w.get('camera'), 'pitch': w.get('pitch'),
+                        'draws': w.get('draws_median'), 'draws_max': w.get('draws_max'), 'fps': w.get('fps_median'), 'arrived': w.get('arrived'),
+                        'camera_ok': w.get('camera_ok'), 'pos': (w.get('status1') or {}).get('pos')})
+    out.sort(key=lambda r: -(r['draws'] or -1))
+    return out
+
+
+def sweep_markdown(rows, top=20):
+    lines = ['## Scout: draws a frame by place and view (counts: they do not move with the machine\'s load)', '',
+             '| place | yaw asked | camera read | pitch | draws (median) | max | arrived | camera ok |', '|---|---|---|---|---|---|---|---|']
+    for r in rows[:top]:
+        lines.append(f"| {r['vp']} | {fmt(r['yaw'], 0)} | {fmt(r['camera'], 0)} | {fmt(r['pitch'], 0)} | {fmt(r['draws'], 0)} | {fmt(r['draws_max'], 0)} | "
+                     f"{'yes' if r['arrived'] else 'NO'} | {'yes' if r['camera_ok'] else 'NO'} |")
+    byplace = {}
+    for r in rows:
+        if r['draws'] is not None and r['camera_ok']:
+            byplace.setdefault(r['vp'], []).append(r['draws'])
+    if byplace:
+        lines += ['', '| place | views | least | most | spread |', '|---|---|---|---|---|']
+        for vp, d in sorted(byplace.items(), key=lambda kv: -max(kv[1])):
+            lines.append(f'| {vp} | {len(d)} | {min(d):.0f} | {max(d):.0f} | {max(d) - min(d):.0f} |')
+    return '\n'.join(lines) + '\n'
 
 
 def reference_rows(rows):
@@ -234,6 +279,17 @@ def markdown(rows, families=None, title='Cost table'):
                                         fmt(p.get('game_ms'), 2), fmt(p.get('render_ms'), 2), fmt(p.get('gpu_wait_ms'), 2), fmt(p.get('pace_ms'), 2), r['bound'] or '-',
                                         fmt(lg['draws'], 0), fmt(lg['gpu_ms'], 1), fmt(lg['replay'].get('submit'), 1),
                                         signed(dl.get('frame_ms'), 2) + mark if dl else '-', signed(dl.get('draws'), 0) if dl else '-', '; '.join(r['flags']) or '-']) + ' |')
+    cpus = [r for r in rows if r['cpu']]
+    if cpus:
+        lines += ['', '### CPU and the quiet record (the game\'s CPU time a frame barely moves with the machine\'s load; wall frame ms does)', '',
+                  '| run | cond | viewpoint | v | frame ms | game cores | CPU ms/frame | others mean | others peak | quiet rule | main on CPU | main blocked | main waits for a core | top thread groups (ms/frame) |',
+                  '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+        for r in cpus:
+            c, p = r['cpu'], r['parts']
+            top = ', '.join(f'{g} {v:.1f}' for g, v in c['groups'][:4])
+            lines.append('| ' + ' | '.join([r['run'], r['cond'], r['vp'], str(r['visit']), fmt(r['frame']['mean'], 1), fmt(c['game_cores'], 1), fmt(c['cpu_ms_frame'], 1),
+                                            fmt(c['others_mean'], 1), fmt(c['others_peak'], 1), 'met' if c['quiet'] else 'NOT met', fmt(p.get('main_cpu_ms'), 1),
+                                            fmt(p.get('main_blocked_ms'), 1), fmt(p.get('main_vcore_ms'), 2), top]) + ' |')
     passes = [r for r in rows if r['pass']]
     if passes:
         lines += ['', '### GPU pass timing (RX_VK_PASS_TIMING: every span waits for the GPU, so the spans add up to more than an unprofiled frame; read the shares)', '']

@@ -37,7 +37,7 @@ class RunAborted(RuntimeError):
 
 class Driver:
     def __init__(self, bridge, live_path, log_path, out_dir, run_id='r1', clock=None, deadline_ns=None, poll_s=0.5, on_live=None,
-                 boot_timeout_s=240.0, log=None):
+                 boot_timeout_s=240.0, log=None, cpu=None):
         self.bridge = bridge
         self.live_path = Path(live_path)
         self.log_path = Path(log_path)
@@ -52,6 +52,8 @@ class Driver:
         self.options_before = {}
         self.n = 0
         self.aborted = None
+        self.cpu = cpu                      # (cpu.Sampler: the game's and the machine's CPU, for the quiet record and CPU ms a frame)
+        self.cam_sign, self.cam_rate = None, 1.2   # (the right stick's handedness, learned by the first push; degrees a frame at full push, a first guess)
         (self.out / 'shots').mkdir(parents=True, exist_ok=True)
         self.windows_f = open(self.out / 'windows.jsonl', 'a', buffering=1)
         self.ops_f = open(self.out / 'ops.jsonl', 'a', buffering=1)
@@ -89,7 +91,8 @@ class Driver:
         if not r.get('ok'):
             return {'ok': False, 'frame': r.get('frame'), 'state': None, 'map': None, 'game': {}}
         g = r.get('game') or {}
-        return {'ok': True, 'frame': r.get('frame'), 'state': r.get('state'), 'map': r.get('map') or g.get('map'), 'game': g, 'fps': r.get('fps')}
+        return {'ok': True, 'frame': r.get('frame'), 'state': r.get('state'), 'map': r.get('map') or g.get('map'), 'game': g, 'fps': r.get('fps'),
+                'draws': r.get('draws')}
 
     def controllable(self, st, expect_map=None):
         g = st.get('game') or {}
@@ -118,7 +121,7 @@ class Driver:
         g = st.get('game') or {}
         return {'frame': st.get('frame'), 'state': st.get('state'), 'map': st.get('map'), 'pos': g.get('pos'), 'facing': g.get('facing'),
                 'camera': g.get('camera'), 'camera_pitch': g.get('camera_pitch'), 'event': g.get('event'), 'loading': g.get('loading'),
-                'age': g.get('age'), 'fps': st.get('fps')}
+                'age': g.get('age'), 'fps': st.get('fps'), 'draws': st.get('draws')}
 
     # ---------------------------------------------------------------- ops
     def run(self, ops):
@@ -239,23 +242,59 @@ class Driver:
         res['rules'] = op['rules']
         return res
 
-    def arrive(self, target, cam_yaw, timeout_s=8.0, tol_m=0.6, tol_deg=6.0):
-        """wait until Link reads at (x, z) and, when asked, the camera at cam_yaw; returns (ok, camera_ok, last status)"""
+    def arrive(self, target, timeout_s=8.0, tol_m=0.6):
+        """wait until Link reads within tol_m of (x, z); returns (ok, last status)"""
         end = self.now() + int(timeout_s * 1e9)
         st = None
-        pos_ok = cam_ok = False
+        pos_ok = False
         while self.now() < end:
             st = self.status()
-            g = st.get('game') or {}
-            p = g.get('pos')
+            p = (st.get('game') or {}).get('pos')
             if p:
                 pos_ok = math.hypot(p[0] - target[0], p[2] - target[2]) <= tol_m
-                cam = g.get('camera')
-                cam_ok = cam_yaw is None or (cam is not None and abs(wrap(cam - cam_yaw)) <= tol_deg)
-                if pos_ok and cam_ok:
+                if pos_ok:
                     break
             self.sleep(0.25)
-        return pos_ok, cam_ok, st
+        return pos_ok, st
+
+    def push_camera(self, x, frames):
+        """the right stick: x in -1..1 for `frames` presents (the reply comes when the input is over); then a short wait for the camera to
+        stop easing, and a fresh status"""
+        self.bridge.stick(x, 0.0, frames=frames, which='R', wait=True)
+        self.sleep(0.4)
+        return self.status()
+
+    def aim(self, yaw, tol=10.0, tries=8):
+        """turn the camera to `yaw` degrees (the bridge's camera heading: 0 toward +z, 90 toward +x) with the right stick, closed loop
+        on the game's own reading: the first push learns the stick's handedness and rate (as hsap's `camera to` does). Link's own
+        heading is not touched: `!pos`'s facing and camera angles did not take effect in the game (their run, 17 Nov). Returns
+        (camera_ok, camera yaw, pitch, pushes)"""
+        st = self.status()
+        pushes = 0
+        for _ in range(tries):
+            g = st.get('game') or {}
+            cam = g.get('camera')
+            if cam is None:
+                return False, None, g.get('camera_pitch'), pushes
+            err = wrap(yaw - cam)
+            if abs(err) <= tol:
+                return True, cam, g.get('camera_pitch'), pushes
+            if self.cam_sign is None:   # (calibrate: a short push to the right, read what it did)
+                before = cam
+                st = self.push_camera(1.0, 12)
+                pushes += 1
+                after = (st.get('game') or {}).get('camera')
+                if after is not None and abs(wrap(after - before)) >= 1.0:
+                    self.cam_sign = 1.0 if wrap(after - before) > 0 else -1.0
+                    self.cam_rate = max(0.2, abs(wrap(after - before)) / 12.0)
+                continue
+            direction = 1.0 if err * self.cam_sign > 0 else -1.0
+            frames = int(max(2, min(120, round(abs(err) / self.cam_rate * 0.85))))
+            st = self.push_camera(direction, frames)
+            pushes += 1
+        g = st.get('game') or {}
+        cam = g.get('camera')
+        return (cam is not None and abs(wrap(yaw - cam)) <= tol), cam, g.get('camera_pitch'), pushes
 
     def shot(self, name):
         path = (self.out / 'shots' / name).resolve()
@@ -265,6 +304,7 @@ class Driver:
     def dwell(self, dwell_s, min_frames):
         """stand for dwell_s wall seconds and at least min_frames presents (at most 4 x dwell_s); sample the status each poll"""
         t0 = self.now()
+        cpu = self.cpu_start()
         st0 = self.status()
         f0 = st0.get('frame') or 0
         samples = [self.snapshot(st0)]
@@ -273,10 +313,40 @@ class Driver:
             self.sleep(self.poll_s)
             st = self.status()
             samples.append(self.snapshot(st))
+            self.cpu_mid(cpu)
             elapsed = (self.now() - t0) / 1e9
             frames = (st.get('frame') or f0) - f0
             if (elapsed >= dwell_s and frames >= min_frames) or self.now() >= hard:
-                return t0, self.now(), samples, st0, st
+                self.cpu_end(cpu)
+                return t0, self.now(), samples, st0, st, cpu
+
+    # ---- CPU: snapshots with the threads at the window's two ends, the machine's and the game's totals between
+    def cpu_start(self):
+        if self.cpu is None:
+            return None
+        try:
+            return [self.cpu.snapshot()]
+        except OSError:
+            return None
+
+    def cpu_mid(self, snaps):
+        if snaps is None:
+            return
+        try:
+            s = self.cpu.snapshot()
+        except OSError:
+            return
+        s['game_ticks'] = sum(t[1] for t in s['threads'].values())
+        s['threads'] = {}   # (kept at the two ends only)
+        snaps.append(s)
+
+    def cpu_end(self, snaps):
+        if snaps is None:
+            return
+        try:
+            snaps.append(self.cpu.snapshot())
+        except OSError:
+            pass
 
     def write_window(self, **rec):
         self.n += 1
@@ -284,27 +354,57 @@ class Driver:
         self.windows_f.write(json.dumps(rec, separators=(',', ':')) + '\n')
         return rec
 
-    def op_pos(self, op):
-        line = op['line']
+    def go_to(self, line, attempts=2):
+        """send the `!pos` line and wait for Link to read there; one more ask when it did not take (the update that takes a `!pos` can
+        pass a pending cheat by)"""
         nums = [float(x) for x in line.split()[1:]]
         target = (nums[0], nums[1], nums[2])
-        cam_yaw = nums[4] if len(nums) == 6 else None
         self.send_live(line)
-        pos_ok, cam_ok, st = self.arrive(target, cam_yaw)
-        if not pos_ok:   # (one more ask: the update that takes a !pos can pass a pending cheat by)
+        ok, st = self.arrive(target)
+        for _ in range(attempts - 1):
+            if ok:
+                break
             self.send_live(line)
-            pos_ok, cam_ok, st = self.arrive(target, cam_yaw)
+            ok, st = self.arrive(target)
+        return ok, st
+
+    def op_pos(self, op):
+        pos_ok, st = self.go_to(op['line'])
+        aim = op.get('aim')
+        cam_ok, cam, pitch, pushes = (True, None, None, 0)
+        if aim is not None:
+            cam_ok, cam, pitch, pushes = self.aim(aim[0])
         self.sleep(op.get('settle_s', 3.0))
         log0 = self.log_size()
         name = f"{self.run_id}-{self.n + 1:03d}-{op['cond']}-{op['vp']}-v{op['visit']}.png" if op.get('shot') else None
-        t0, t1, samples, st0, st1 = self.dwell(op['dwell_s'], op.get('min_frames', 0))
+        t0, t1, samples, st0, st1, cpu = self.dwell(op['dwell_s'], op.get('min_frames', 0))
         log1 = self.log_size()
         shot = self.shot(name) if name else None   # (after the window: the picture's own frame stays out of the numbers)
         rec = self.write_window(kind='viewpoint', cond=op['cond'], vp=op['vp'], visit=op['visit'], tod=op.get('tod'), t0_ns=t0, t1_ns=t1,
                                 log0=log0, log1=log1, frame0=st0.get('frame'), frame1=st1.get('frame'),
-                                status0=self.snapshot(st0), status1=self.snapshot(st1), arrived=pos_ok, camera_ok=cam_ok, shot=shot,
-                                moved_m=self.moved(samples), event_seen=any(s.get('event') for s in samples), samples=len(samples))
-        return {'ok': pos_ok, 'window': rec['n'], 'camera_ok': cam_ok}
+                                status0=self.snapshot(st0), status1=self.snapshot(st1), arrived=pos_ok, camera_ok=cam_ok, aim=aim, aimed_pushes=pushes,
+                                shot=shot, moved_m=self.moved(samples), event_seen=any(s.get('event') for s in samples), samples=len(samples), cpu=cpu)
+        return {'ok': pos_ok, 'window': rec['n'], 'camera_ok': cam_ok, 'camera': cam}
+
+    def op_sweep(self, op):
+        """stand at one place and look in each of `yaws` in turn, reading the bridge's draws a frame while standing (no picture, no scene
+        lines: a scout for where the heavy views are; draws are counts, they do not move with the machine's load)"""
+        pos_ok, st = self.go_to(op['line'])
+        self.sleep(op.get('settle_s', 1.0))
+        out = []
+        for yaw in op['yaws']:
+            cam_ok, cam, pitch, pushes = self.aim(yaw)
+            self.sleep(op.get('look_s', 1.0))
+            t0, t1, samples, st0, st1, cpu = self.dwell(op.get('dwell_s', 3.0), 0)
+            draws = sorted(x['draws'] for x in samples if x.get('draws') is not None)
+            fps = sorted(x['fps'] for x in samples if x.get('fps') is not None)
+            rec = self.write_window(kind='sweep', cond='sweep', vp=op['vp'], visit=1, tod=op.get('tod'), t0_ns=t0, t1_ns=t1, log0=0, log1=0,
+                                    frame0=st0.get('frame'), frame1=st1.get('frame'), status0=self.snapshot(st0), status1=self.snapshot(st1),
+                                    arrived=pos_ok, camera_ok=cam_ok, aim=[yaw, None], camera=cam, pitch=pitch, aimed_pushes=pushes,
+                                    draws_median=draws[len(draws) // 2] if draws else None, draws_max=draws[-1] if draws else None,
+                                    draws_min=draws[0] if draws else None, fps_median=fps[len(fps) // 2] if fps else None, samples=len(samples), cpu=cpu)
+            out.append({'yaw': yaw, 'camera': cam, 'draws': rec['draws_median']})
+        return {'ok': pos_ok, 'views': out}
 
     @staticmethod
     def moved(samples):
@@ -317,11 +417,11 @@ class Driver:
         """walk the points in order, steering from the game's own samples (the stick's angle is the camera's yaw minus the bearing,
         right positive; its handedness is checked as Link moves, as hsap does): the window is the whole walk"""
         if op.get('start'):
-            self.send_live('!pos ' + ' '.join(f'{v:.3f}' for v in op['start']))
-            self.arrive(tuple(op['start']), None)
+            self.go_to('!pos ' + ' '.join(f'{v:.3f}' for v in op['start']))
             self.sleep(2.0)
         log0 = self.log_size()
         name = f"{self.run_id}-{self.n + 1:03d}-{op['cond']}-{op['walk']}-v{op['visit']}.png" if op.get('shot') else None
+        cpu = self.cpu_start()
         st0 = self.status()
         t0 = self.now()
         end = t0 + int(op['timeout_s'] * 1e9)
@@ -362,6 +462,8 @@ class Driver:
                     if mirror >= 3:
                         sign, mirror, hist = -sign, 0, []
             want = wrap(cam - bearing) * sign
+            if len(track) % 8 == 0:
+                self.cpu_mid(cpu)
             if g.get('frame') != sent_sample:   # (one push for each fresh sample)
                 mag = 1.0 if d > 1.2 else 0.5
                 self.bridge.stick(mag * math.sin(math.radians(want)), mag * math.cos(math.radians(want)), frames=8)
@@ -371,13 +473,14 @@ class Driver:
             result = 'reached'
         self.bridge.release()
         t1 = self.now()
+        self.cpu_end(cpu)
         st1 = self.status()
         log1 = self.log_size()
         shot = self.shot(name) if name else None   # (the end of the walk, after the window)
         rec = self.write_window(kind='walk', cond=op['cond'], vp=op['walk'], visit=op['visit'], tod=op.get('tod'), t0_ns=t0, t1_ns=t1,
                                 log0=log0, log1=log1, frame0=st0.get('frame'), frame1=st1.get('frame'),
                                 status0=self.snapshot(st0), status1=self.snapshot(st1), arrived=result == 'reached', camera_ok=True, shot=shot,
-                                result=result, points_reached=reached, points=len(pts), track=track[::5], sign=sign)
+                                result=result, points_reached=reached, points=len(pts), track=track[::5], sign=sign, cpu=cpu)
         return {'ok': result == 'reached', 'result': result, 'window': rec['n']}
 
     def op_quit(self, op):

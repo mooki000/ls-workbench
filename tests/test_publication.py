@@ -97,7 +97,7 @@ class PublicationTests(unittest.TestCase):
             with patch.dict(os.environ, {'LS_WB_SOURCE_ROOT': str(root)}):
                 pairs = publish.files()
             destinations = {str(destination) for _, destination in pairs}
-            self.assertEqual(len(pairs), 208)
+            self.assertEqual(len(pairs), 209)
             self.assertIn('harness/ls-port.py', destinations)
             self.assertTrue({'play/pilot/pilot.py', 'play/pilot/interact.py', 'play/pilot/test_pilot.py', 'play/bench/run.py',
                              'play/bench/test_bench.py'} <= destinations)

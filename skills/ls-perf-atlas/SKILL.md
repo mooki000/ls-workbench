@@ -35,11 +35,13 @@ crowds can fail the 5% same-arm tolerance (an earlier exclusive Market hold had 
 | Tool | Use | Switch or command | Known limits |
 |---|---|---|---|
 | Control bridge | place, aim, wait, pictures, settings | `HOS_CONTROL=<socket in a 0700 folder>`; the control client (`$HS_CTL` of `ls-workbench`: `status`, `press`, `stick`, `shot`, `option get\|set`, `wait`); `status.game`: `pos`, `facing`, `camera`, `event`, `loading`, `age` | no time of day; samples stop while a map loads; `teleport` lands at the destination's start point only |
-| `!pos X Y Z [FACING [CAM_YAW CAM_PITCH]]` | stand at an exact viewpoint (metres, degrees, numbers of `status.game`) | a line in the `HOS_INPUT_LIVE` file | needs a player camera (not a lock-on or a cutscene); the camera is held 2 s, then the follow camera eases back; on the branch of PR 1351 (was `!place X Y Z`) |
+| `!pos X Y Z` | stand at an exact place (metres, the numbers of `status.game`); arrived to the centimetre in 8 of 8 windows of the first hold | a line in the `HOS_INPUT_LIVE` file | PR 1351 (was `!place`). **The longer form `!pos X Y Z FACING CAM_YAW CAM_PITCH` does nothing in the game**: the facing is logged as turned but Link's heading is recomputed the next update, and the camera hook cannot read the view (`pos: the camera's view cannot be read`): turn the camera with the right stick instead |
+| Camera aim | look in a direction | right stick through the bridge (`stick` with `"stick":"R"`), closed loop on `status.game.camera` (0 toward +z, 90 toward +x): the first push learns the handedness and rate, as hsap's `camera to` does (`driver.aim`) | the camera heading is the only thing to aim: Link's own heading does not matter to what is drawn; `camera_pitch` reads back |
 | Actor tools (PR 1426) | take people, animals, effects, breakables out of an area | `!actors off\|on <map\|here\|*> <glob> [force]`, `!actors clear\|list\|reload`; `HOS_OOT_ACTORS_OFF=<map>:<glob>[!],...` at launch | applied at the area's **next layout read**; `reload` is the Teleport list's change to the same map (puts Link at the entrance, refused in an event or within seconds of a load); people tied to a door or an event and a behaviour group's leader stay (a street vendor and some guards stalled the game when removed): the left-out count is in the log line `actors: <map>: ... left out` |
 | `!cheat N` | time of day, teleport | `100+h` sets hour h; `1000+i` teleports to destination i | `!pos` is not taken in the same update as a pending `!cheat` |
 | FPS counter | the frame's parts on screen | option `fps_counter` 4 = Breakdown, 5 = Dev (draws, dispatches, passes, uploads, GPU slot waits) | headless needs `RX_VK_SHOT_MENU=1` to draw it; the same parts are the frame trace's columns |
-| Frame trace | per frame: interval, game, render, GPU wait, pace, waits, the main thread's time, draw/descriptor/command ms | `RX_VK_FRAME_TRACE=1 HOS_PROFILE_DIR=<folder>` writes `<folder>/frames.csv`; `at_ns` is the host clock (`time.monotonic_ns()` on Linux) | draw/descriptor/command ms time one draw in eight unless `RX_VK_PROF_ALL=1` |
+| Frame trace | per frame: interval, game, render, GPU wait, pace, waits, the main thread's time (on CPU, blocked, waiting for a core), draw/descriptor/command ms | `RX_VK_FRAME_TRACE=1 HOS_PROFILE_DIR=<folder>` writes `<folder>/frames.csv`; `at_ns` is the host clock (`time.monotonic_ns()` on Linux) | draw/descriptor/command ms time one draw in eight unless `RX_VK_PROF_ALL=1` |
+| `/proc` sampling (`cpu.py`) | the game's CPU time a frame by thread group, the cores of everything else (the quiet record) | the driver snapshots `/proc/stat` and `/proc/<game pid>/task/*/stat` while it stands; the pid is found by the `HOS_CONTROL` in the process's environment | ticks of 10 ms: a window needs at least a few seconds; threads that end inside a window are missed |
 | Pass timing | GPU time per pass, program and copy | `RX_VK_PASS_TIMING=1\|2`, logged every 600 presents, no file | every span waits for the GPU: spans add up to more than an unprofiled frame, read shares only |
 | Scene lines | draws, dispatches, passes, barriers, uploads, textures, GPU time, replay ms by part | always on, every 120 presents | averages of the last 120 presents |
 | Draw statistics | one frame's draws by program | `RX_VK_DRAW_STATS=<folder>`, touch `<folder>/draw_stats.now` | one frame |
@@ -77,6 +79,7 @@ path off and pass timing. Libraries and results stay in local files outside ever
 $ATLAS check library.json
 $ATLAS plan library.json --area <key> --tod day --viewpoints a,b,c --conditions baseline,actors-people,actors-animals --prefix a --out plan-a.json
 $ATLAS plan library.json --area <key> --tod day --viewpoints a,b --conditions pass-timing --min-frames 1300 --dwell 20 --prefix p --out plan-p.json
+$ATLAS plan library.json --sweep --area <key> --tod day --viewpoints p01,p02,p03 --yaws 0,60,120,180,240,300 --dwell 2 --prefix s --out plan-s.json
 $ATLAS merge plan-a.json plan-p.json --hold-limit 1100 --out plan.json    # one admission for several runs
 $ATLAS hold plan.json --hold h1 --copy <owned copy> --out <new folder> --hs-run <path>/hs-run.sh --saves <folder> --hold-seconds 1060
 $ATLAS table <out>/<run> ... --library library.json --md cost.md --json cost.json
@@ -98,6 +101,17 @@ objects); each place is scored at eight facings by what lies in a 90 degree cone
 top places by people (crowds), by distant geometry (vistas), by total (dense), by animals and effects, the middle of the walkable area,
 and the **lowest** score that still has geometry in front (a cheap reference). Keep them 22 m apart. Confirm each by its counts in the first
 run: the score is a proxy, the scene line's draws are the truth.
+
+**The first hold's lessons (Castle Town by day and by night, 24 windows, load average 33 to 96, quiet rule not met):** wall frame ms moved with the other
+agents' work (26 to 80 ms at the same view; the night run was "faster" only because the machine was calmer), so on a busy PC a window is an observation of
+the machine. What stayed readable: the counts (draws, passes), the pictures, the game's split (the game part was 95% of every frame; the renderer's
+part 0.3 to 1.1 ms; GPU 4 to 9 ms; the main thread was blocked 74 to 80% of the frame waiting for the job graph and on CPU only 5 to 10 ms) and, with
+the CPU record, the **CPU ms a frame by thread group**, which does not move with other work the way wall time does. Use ordinary windows for counts,
+pictures, CPU per frame and the split; keep every frame-ms comparison for the exclusive worker.
+
+**Places:** a place picked from the nav mesh can be inside a shop or against a wall (5 of the first 8 pictures were); pick from where Link has walked (the route
+library's tracks), then let a **scout** choose the views: `plan --sweep --yaws 0,60,...` stands at each place, turns the camera to each yaw and reads the
+bridge's `draws` (a count: it does not move with the machine's load). Look at the top views' pictures before keeping them.
 
 ## 5. Reading the cost table
 
@@ -134,4 +148,6 @@ window agrees before spending an hour on the renderer.
 
 ## Status
 
-The driver and the cost table are tested against a fake game and made-up logs; the first real holds are queued (update this line with what they showed).
+The driver and the cost table are tested against a fake game and made-up logs. Hold 1 (three runs, 24 windows, ordinary) ran on the real game: the
+driver arrived, reloaded areas with actor rules (people off: 16 left out, animals off: 14, no stall) and took pictures; viewpoint facing and camera did not
+apply (above), and the PC was busy. The camera aim, the sweep and the CPU record were written after it and have not run in a game yet (update this line).
