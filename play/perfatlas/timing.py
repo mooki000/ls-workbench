@@ -122,6 +122,60 @@ def null_pair_verdict(runs, spread_max=SPREAD_MAX, gap_max=GAP_MAX):
     return {'verdict': 'usable' if not reasons else 'noisy', 'ref_spread': rs, 'cand_spread': cs, 'gap': gap, 'rows': rows, 'reasons': reasons}
 
 
+def pair_rows(runs):
+    """one row a run from the worker's PLAN.runs.json rows: mean ms, p99, 1% low fps, the game's CPU ms a frame (cores x frame ms), the others' cores, the kernel lines"""
+    rows = []
+    for r in runs:
+        res = r.get('result') or {}
+        m = res.get('measures') or {}
+        mean = res.get('value') if isinstance(res.get('value'), (int, float)) else m.get('mean_ms')
+        cores = (res.get('threads') or {}).get('total')
+        rows.append({'role': r.get('role'), 'valid': res.get('valid'), 'disturbed': res.get('disturbed'), 'mean_ms': mean, 'p99_ms': m.get('p99_ms'),
+                     'low1_fps': m.get('low1_fps'), 'frames': m.get('frames'), 'cpu_ms_frame': (cores * mean) if isinstance(cores, (int, float)) and isinstance(mean, (int, float)) else None,
+                     'others': res.get('others_cores_window', res.get('others_cores')), 'peak': res.get('others_cores_peak'),
+                     'kernel': (res.get('kernel_errors') or 0) + (res.get('nvrm_lines') or 0), 'problem': res.get('problem')})
+    return rows
+
+
+def pair_verdict(runs, spread_max=SPREAD_MAX, gap_min=GAP_MAX, quiet_mean=3.0, quiet_peak=6.0):
+    """the verdict of a reference/candidate/reference/candidate pair (two builds), by rules set before the results:
+    valid only when all four runs are valid, not disturbed, and the others used under `quiet_mean` cores on average and under `quiet_peak` at the highest 5 s;
+    then the same-arm spreads must be at most `spread_max` ('noisy' otherwise: nothing is averaged away); a gap (candidate against reference, the mean of the means)
+    of `gap_min` or more that is also larger than both spreads is a result ('faster' / 'slower'); anything smaller is 'no difference beyond the spread'.
+    Returns {'verdict', 'gap', 'ref_spread', 'cand_spread', 'ref_mean', 'cand_mean', 'rows', 'reasons'}; every row is kept."""
+    rows = pair_rows(runs)
+    reasons = []
+    for r in rows:
+        if not r['valid'] or r['disturbed'] or not isinstance(r['mean_ms'], (int, float)):
+            reasons.append(f"{r['role']} run: valid={r['valid']} disturbed={r['disturbed']} problem={r['problem']}")
+        elif r['others'] is None or r['peak'] is None:
+            reasons.append(f"{r['role']} run: the others' cores were not recorded")
+        elif r['others'] >= quiet_mean or r['peak'] >= quiet_peak:
+            reasons.append(f"{r['role']} run: not quiet (others {r['others']:.1f} cores mean, {r['peak']:.1f} peak; the rule is under {quiet_mean:.0f} and {quiet_peak:.0f})")
+    ref = [r['mean_ms'] for r in rows if r['role'] == 'reference' and isinstance(r['mean_ms'], (int, float))]
+    cand = [r['mean_ms'] for r in rows if r['role'] == 'candidate' and isinstance(r['mean_ms'], (int, float))]
+    out = {'rows': rows, 'reasons': reasons, 'gap': None, 'ref_spread': spread(ref), 'cand_spread': spread(cand), 'ref_mean': None, 'cand_mean': None}
+    if len(rows) < 4 or len(ref) < 2 or len(cand) < 2:
+        out.update(verdict='invalid', reasons=reasons or ['fewer than four runs'])
+        return out
+    out['ref_mean'], out['cand_mean'] = sum(ref) / len(ref), sum(cand) / len(cand)
+    out['gap'] = out['cand_mean'] / out['ref_mean'] - 1.0
+    if reasons:
+        out['verdict'] = 'invalid'
+        return out
+    rs, cs = out['ref_spread'], out['cand_spread']
+    if rs is None or cs is None or rs > spread_max or cs > spread_max:
+        out['verdict'] = 'noisy'
+        out['reasons'] = [f'same-arm spread {100 * x:.1f}% > {100 * spread_max:.0f}% ({n})' for n, x in (('reference', rs), ('candidate', cs)) if x is not None and x > spread_max] or ['a spread cannot be computed']
+        return out
+    gap = out['gap']
+    if abs(gap) >= gap_min and abs(gap) > max(rs, cs):
+        out['verdict'] = 'faster' if gap < 0 else 'slower'
+    else:
+        out['verdict'] = 'no difference beyond the spread'
+    return out
+
+
 def write_json(path, obj):
     p = Path(path)
     if p.exists():

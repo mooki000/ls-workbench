@@ -224,6 +224,8 @@ The ordinary holds find and rank; only the worker decides. For one viewpoint (`t
    binary hashes go in the receipt; the perf-tools copy is never an arm.
 6. **Then** a pricing pair (a part off versus on, one build, a launch switch only) and proof pairs (main versus main plus the change, both built the same way; the perf-tools game is never an arm).
 
+**A pair of two builds** (a pull request against its base) is the same hold with `candidate` entries on the other copy: the copy needs a `regress-source.txt` with its build stamp (the adapter refuses a copy without one and a log without `(source <stamp>)`), the control folder must be mode 0700, and the control socket is named from the output folders (`<parent>-<first word>.sock`: two dry runs with the same label collide, and the socket stays after a run). `timing.pair_verdict` applies rules set before the results: valid only if all four runs are valid, undisturbed and quiet (others under 3 cores mean and 6 at the highest 5 s), same-arm spreads at most 5%, a gap of 3% or more that is also larger than both spreads is a result, anything smaller is "no difference beyond the spread"; every row is kept. The first pair this way (a host-side pull request at the market square, quiet, 0.8 to 0.9 other cores): main 13.91 ms against 13.76, 1.1% lower, no difference beyond the spread; the same-arm spreads of 1.3% and 0.8% are also what the scene resolves.
+
 ## 8. Add an area
 
 1. Name the map and its saves: `hs_make_save.py --from <entry> --out lib:<name> --start keep|<Map>:x,y,z,yaw --time day|night` (a new save is untried until a game boots from it).

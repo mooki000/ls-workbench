@@ -1079,6 +1079,41 @@ class Rehearsal(unittest.TestCase):
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
 
 
+class PairVerdict(unittest.TestCase):
+    """the reference/candidate/reference/candidate verdict for two builds, on made-up worker rows"""
+    @staticmethod
+    def rows(means, others=(1.0,) * 4, peaks=(2.0,) * 4, valid=(True,) * 4, disturbed=(False,) * 4):
+        out = []
+        for i, role in enumerate(['reference', 'candidate'] * 2):
+            out.append({'role': role, 'label': 'x', 'result': {'valid': valid[i], 'disturbed': disturbed[i], 'value': means[i], 'others_cores_window': others[i],
+                                                               'others_cores_peak': peaks[i], 'kernel_errors': 0, 'nvrm_lines': 0,
+                                                               'measures': {'mean_ms': means[i], 'p99_ms': means[i] * 1.4, 'low1_fps': 30.0, 'frames': 3000},
+                                                               'threads': {'total': 5.0}}})
+        return out
+
+    def test_verdicts(self):
+        v = timing.pair_verdict(self.rows([20.0, 19.0, 20.2, 19.1]))   # 4.4% faster, spreads 1.0% and 0.5%
+        self.assertEqual(v['verdict'], 'faster')
+        self.assertAlmostEqual(v['gap'], 19.05 / 20.1 - 1)
+        self.assertAlmostEqual(v['rows'][0]['cpu_ms_frame'], 100.0)   # 5 cores x 20 ms
+        self.assertAlmostEqual(v['rows'][1]['p99_ms'], 26.6)
+        self.assertEqual(timing.pair_verdict(self.rows([20.0, 21.0, 20.2, 21.1]))['verdict'], 'slower')
+        self.assertEqual(timing.pair_verdict(self.rows([20.0, 19.7, 20.2, 19.8]))['verdict'], 'no difference beyond the spread')   # 1.2%: under the 3% bar
+        # a gap over the bar that is not larger than a spread is not a result (the spread is what the runs differ by themselves)
+        v = timing.pair_verdict(self.rows([20.0, 19.6, 20.9, 19.7]))   # reference spread 4.5%, gap 3.9%
+        self.assertEqual(v['verdict'], 'no difference beyond the spread')
+        noisy = timing.pair_verdict(self.rows([20.0, 19.0, 21.5, 19.1]))   # reference spread 7.5%: nothing is averaged away
+        self.assertEqual(noisy['verdict'], 'noisy')
+        self.assertTrue(any('reference' in r for r in noisy['reasons']))
+        # a run that is not quiet, disturbed or invalid makes the pair invalid, whatever the numbers say; every row is kept
+        for kw in ({'others': (1.0, 3.5, 1.0, 1.0)}, {'peaks': (2.0, 2.0, 6.5, 2.0)}, {'disturbed': (False, False, False, True)}, {'valid': (True, False, True, True)}):
+            v = timing.pair_verdict(self.rows([20.0, 19.0, 20.2, 19.1], **kw))
+            self.assertEqual(v['verdict'], 'invalid', kw)
+            self.assertEqual(len(v['rows']), 4)
+            self.assertTrue(v['reasons'])
+        self.assertEqual(timing.pair_verdict(self.rows([20.0, 19.0, 20.2, 19.1])[:3])['verdict'], 'invalid')
+
+
 STUB_PROF = """
 def load_symbols():
     return {'game': ([0x000, 0x100, 0x200, 0x300], ['f_aaaa0001', 'f_bbbb0002', 'f_cccc0003', 'wait_here'])}
