@@ -37,11 +37,11 @@ map), [game-data.md](game-data.md)
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_8122add0` | `ResourceDB_RegisterTables` | Registers the ResourceDB's tables, among them "GameBancInfo" (`game__GameBancInfoTable`), built from `Work/Banc/GameBancParam` of type `game__banc__GameBancParam` | read |
-| `f_80fcebc0` | `GameBancParam_Construct` | Sets a `GameBancParam`'s vtable, `0x84c14f48` | read |
+| `f_80fcebc0` | `GameBancParam_Construct` | Sets a `GameBancParam`'s vtable, `0x84c14f48`, and its defaults: `BancUseDynamic` (`+832`) and `BancUseStatic` (`+833`) 1, `BancUnitSize` (`+680`) 0, the byte at `+842` (`IsChildWhenInitializingScene`) 1, default file names such as `Work/WorldMgr/WorldParam/Viewer`, `Work/Foliage/ResFoliageScene/DefaultBase`, `Work/Event/EventSetting/DefaultBootEvent` and `Work/VolumeStats/WorldParam/None`; every "set" flag starts clear | read |
 | `f_8083b770` | `GameBancParam_VisitResolved` | Slot 19 (`+152`, at `0x84c14fe0`): hands each field to a visitor (`x1`, its vtable[0] once per field), taking a field the file doesn't set from its `$parent` chain (`+16`/`+24`). The fields: WorldAabbMin/Max, NormalizedBancName, BancUseStatic, BancUseDynamic, BancUnitSize, EnvSetName, WorldMgrName, VolumeStatsWorldName, RenderingMode, LocationalLightScenePlacement, NavMeshMgrMode, NavMeshUnitSize, NavMeshSceneName, TerrainSceneName and the other terrain fields, StaticCompoundMode, StaticCompoundUnitSize, BaseLocation, DungeonParam, FoliageScene and more | read |
 | `f_81227610` | `GameBancParam_VisitRaw` | Slot 18 (`+144`, at `0x84c14fd8`): the same fields as the file has them, each with its "set" flag (from `+877`), probably for loading and saving. Neither slot has a direct caller (**guess** which runs when) | read |
-| `f_82d05160` | `OptimizeChangeBancUnitParam_Parse` | Reads a preload unit (layout below): BancParamName, BancResourcePath, Priority, HasMQ, EnableGameDataHash, IsReverse, AlternativeGameData, LoadRadius, IsUseFailSafe, each with a "set" flag | read |
-| `f_82d04a50` | `OptimizeChangeBancUnitParam_Parse2` | The same fields; the second of the pair | read |
+| `f_82d05160` | `OptimizeChangeBancUnitParam_VisitResolved` | Slot 7 (`0x84b59438`) of the unit's vtable: hands each field to a visitor, taking BancResourcePath, HasMQ and LoadRadius through the fallback getters below (an unset field comes from the `$parent` file). The fields: BancParamName, BancResourcePath, Priority, HasMQ, EnableGameDataHash, IsReverse, AlternativeGameData, LoadRadius, IsUseFailSafe | read |
+| `f_82d04a50` | `OptimizeChangeBancUnitParam_VisitRaw` | Slot 6 (`0x84b59430`) of the unit's vtable: the same fields as the file has them, each with its "set" flag (the flags from `+136`); the twin of `f_82d05160` | read |
 | `f_82d059a0` | `OptimizeChangeBancUnitParam_Name` | The struct's name, `game__banc__OptimizeChangeBancUnitParam` | read |
 | `f_82d05430` | `OptimizeChangeBancUnit_Path` | A unit's BancResourcePath, from its `$parent` file (`f_80fe3690`) when the unit doesn't set it | read |
 | `f_82d05580` | `OptimizeChangeBancUnit_HasMQ` | A unit's HasMQ (`+132`), with the same fallback | read |
@@ -55,8 +55,8 @@ file), **read**
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_810a4390` | `SeqOneShotOnChangeBancOptimizeChangeBanc_Execute` | A sequence node run on a change of map: walks the current map's preload units and adds each with `f_810a44e0` | read |
-| `f_810a44e0` | `OptimizeChangeBanc_AddUnit` | Copies the unit's BancResourcePath. In Master Quest mode (`f_811f4040`), when the unit's HasMQ is set, it inserts "_MQ" before the first "." of the path, in the same folder (`…/ForestTemple/ForestTemple.bcett.json` becomes `…/ForestTemple/ForestTemple_MQ.bcett.json`), then registers the unit with `f_832baf30`. It renames only this layout path | read |
+| `f_810a4390` | `SeqOneShotOnChangeBancOptimizeChangeBanc_Execute` | A sequence node run on a change of map (slot 39 of `0x84bd3eb0`): fetches an object with `f_810a43e0(manager, 0x17)` and passes it to `f_810a44e0`, which adds the preload units | read |
+| `f_810a44e0` | `OptimizeChangeBanc_AddUnit` | Copies the unit's BancResourcePath and registers the unit with `f_832baf30`. In Master Quest mode (`f_811f4040`), when the unit's HasMQ is set, it inserts "_MQ" before the first "." of the path, in the same folder (`…/ForestTemple/ForestTemple.bcett.json` becomes `…/ForestTemple/ForestTemple_MQ.bcett.json`). It also compares the path against `Child`, `Adult` and `_Alternative` (the age and Alternative variants; not read further) and reads the unit's LoadRadius (`f_82d057c0`) | read |
 | `f_832baf30` | `OptimizeChangeBanc_Register` | Registers a unit to preload | guess |
 | `f_8002f7a0` | `OptimizeChangeBancMgr_PreloadUnit` | The preload worker ("OptimizeChangeBancMgr"): for each unit it drops ".bcett.json" from the path (`f_8002eda0`), adds "_Static" or "_Dynamic" and ".bcett.json", turns it into a RomFS path (`f_80036c20`) and asks for it (`f_8002f220`); it also builds the units' actor packs' paths (`Pack/Actor/` + Gyaml + `.pack`) and models (`Model/%s.%s.bfres`) | read |
 | `f_805d7660` | `BancEntity_ParseActorForPreload` | The preload's twin of `f_83b12ea0` (below) | read |
@@ -99,7 +99,7 @@ The map's layout is loaded by the BancLoadMgr (named by `f_809de840`, vtable `0x
 |---|---|---|---|
 | `f_83b072b0` | `ActorRegistry_AddInstance(registry, unit, &name, …)` | Adds a layout entry to the actor registry (`[0x84eb1940]`): finds its archetype by name (`f_802dbd90`), skips archetypes that are not valid (`+84`) or have bit 3 of `+190`, and links a pooled instance node | read |
 | `f_802dbd90` | `ActorRegistry_Find` | Finds an archetype's entry (0xd8 bytes; the table at `+160`/`+168`) by its name's hash (`f_801939e0`) | read |
-| `f_802d5480` | `ActorName_FromPath` | The base name of a "Work/…" path, for a Gyaml given as a path (no layout in this game does that) | read |
+| `f_802d5480` | `Path_BaseName` | The base name of a "Work/…" path: for a Gyaml given as a path (no layout in this game does that), and for a map's name (`f_8114b3b0` makes the current map's name in the per-map manager with it) | read |
 | `f_82ddfad0` | `ActorPack_Path` | Builds `Pack/Actor/%s.pack` (`0x83cfa29f`) and `Actor/%s` for an archetype | read |
 | `f_83afa980` | `ActorParam_Load` | Looks up `Actor/<name>` of type `engine__actor__ActorParam` (through `f_801a9540`) and reads ActorNameRef, SystemSetting, UsePreActorRenderer and IsFarActor | read |
 | `f_805cb760` | `ActorInfoTable_ParseRow` | A row of the ResourceDB's ActorInfo table (`engine__rsdb__ActorInfoTable`): ActorName, ClassName, ModelProjectName, FmdbName, the animation resources, CreateRadiusOffset, DeleteRadiusOffset, LoadRadius, UnloadRadiusOffset, CalcRadius, DisplayRadius, IsFarActor, InstanceHeapSize and more | read |
@@ -107,14 +107,13 @@ The map's layout is loaded by the BancLoadMgr (named by `f_809de840`, vtable `0x
 | `f_80d7ac00` | `PlacementMgr_MakeHeap` | Makes its "PlacementMgr" heap | read |
 
 ### Geometry, collision and navigation
-### Geometry, collision and navigation
 
 None of these reads Master Quest mode, HasMQ or "_MQ". **read**
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_80844740` | `StaticCompound_PathFromBanc` | The static collision's path: strips "Work/Banc/Scene" and "/" from `Banc.Main`, cuts at the ".", and formats `Phive/StaticCompoundBody/<Map>/<Map>.Nin_Ounce_NVN2.bphsc`. Called from the sequence node `SeqOneShotInitializeStaticCompoundBodyMgr` | read |
-| `f_80715ae0` | `StaticCompound_Load` | Another static collision loader on the same path | read |
+| `f_80715ae0` | `StaticCompound_Load` | The static collision loader of the `StaticCompoundBodyMgr`: the same path as `f_80844740` and a tiled variant `Phive/StaticCompoundBody/%s/%s_X%d_Z%d.%s.bphsc`; it calls `f_832cc540` | read |
 | `f_832cc540` | `StaticCompound_Load2` | Another static collision loader | read |
 | `f_809d6110` | `StaticCompound_Load3` | Another static collision loader | read |
 | `f_80a06fa0` | `Terrain_Load` | Builds the terrain's path, `%s/%s.tscb`, from the `GameBancParam`'s terrain fields | read |
@@ -206,10 +205,10 @@ Each table has a 56-byte slot; the offsets below are each table's data root.
 
 | Offset | Field | Sure |
 |---|---|---|
-| `+680` | BancUnitSize | read |
-| `+832` | BancUseDynamic (its "set" flag: `+879`) | read |
-| `+833` | BancUseStatic (its "set" flag: bit 0 of `+878`) | read |
-| `+842` | A byte that `f_809d76a0` copies into `Sequence_IsChildhood` (its "set" flag: `+929`) | read |
+| `+680` | BancUnitSize (its "set" flag: `+880`); default 0 | read |
+| `+832` | BancUseDynamic (its "set" flag: `+879`); default 1 | read |
+| `+833` | BancUseStatic (its "set" flag: bit 0 of `+878`); default 1 | read |
+| `+842` | `IsChildWhenInitializingScene` (its "set" flag: `+929`), default 1; `f_809d76a0` reads it through `f_809d77d0` and writes `Sequence_IsChildhood` | read |
 
 No map in the game sets BancUnitSize, BancUseStatic or BancUseDynamic in its file, so they keep the class's defaults (not
 found). **tested** (the files)

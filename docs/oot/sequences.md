@@ -46,10 +46,10 @@ event request), [save-data.md](save-data.md), [save-list.md](save-list.md), [gam
 |---|---|---|---|
 | `f_80ca4a00` | `NodeRegistry_Get` | Returns the node registry's list (`[0x84c9da38]`), making it on first use (guard `[0x84c9da40]`): empty, count 0, and the link's offset in an entry (`+20`) set to 16. Every static initialiser calls it | read |
 | `f_80ca4f70` | `NodeRegistry_Link(list, link)` | Pushes a link on the front of a list: the link's `+0` gets the old first link, its `+8` the list, and the old first link's `+8` the new one. The initialiser then adds 1 to the list's count (`+16`) | read |
-| `f_8108d7c0` | `SeqQueryHasAoCMQ_Register` | SeqQueryHasAoCMQ's static initialiser ([master-quest.md](master-quest.md)): stores the key 0x97bb1b66 at `0x84e92f98+0`, the create function `f_8331a6c0` at `+8`, zeroes `+16` and `+24`, and links the entry. The other initialisers are the same 24 instructions with their own key, entry and function | read |
+| `f_8108d7c0` | `SeqQueryHasAoCMQ_Register` | SeqQueryHasAoCMQ's static initialiser ([master-quest.md](master-quest.md)): stores the key 0x97bb1b66 at `0x84e92f98+0`, the create function `f_8331a6c0` at `+8`, zeroes `+16` and `+24`, and links the entry. Most other initialisers have the same shape with their own key, entry and function (24 instructions in 2,786 of the 5,574, 27 in 2,257, about 520 longer ones) | read |
 | `f_80ca1c30` | `NodeRegistry_InitCommon` | The one initialiser that registers many classes (143): the 102 CommonSequence classes, 39 shared AI ones (`DrawSphere`, `QueryMathAddF32` and the other maths queries) and the two CommonNode ones (`QueryF32OutputBoundValue`, `QueryMathF32Min`) | read |
 | `f_801939e0` | `Murmur3_String(text, seed)` | murmur3 (x86, 32-bit) of a C string, read up to its 0. The keys computed at run time, the category hashes and many of the game's name hashes come from it ([maps.md](maps.md), [events.md](events.md) use it) | read |
-| `f_80fd6440` | `LookIKControllerArbiterRequestPause_Register` | An attachment class's initialiser, which computes its key at run time: `Murmur3_String("AI") + Murmur3_String("LookIKControllerArbiterRequestPause")`, stored in the entry `0x84df1868` with the create function `f_80ced6a0`, linked into the second registry. Eleven classes register this way (`HorseSlipBehavior`, `CameraIndoor`, `CameraDoorOpenMove`, `ListenerChangePresetAttachment`, …) | read |
+| `f_80fd6440` | `LookIKControllerArbiterRequestPause_Register` | An attachment class's initialiser (init-array slot `0x84870a70`; it only jumps to `f_80fd6450`, where the code is), which computes its key at run time: `Murmur3_String("AI") + Murmur3_String("LookIKControllerArbiterRequestPause")`, stored in the entry `0x84df1868` with the create function `f_80ced6a0`, linked into the second registry. Eleven classes register this way (`HorseSlipBehavior`, `CameraIndoor`, `CameraDoorOpenMove`, `ListenerChangePresetAttachment`, …) | read |
 | `f_80fd67d0` | `AttachmentRegistry_Get` | The second registry's list (`[0x84c9dca8]`, guard `[0x84c9dcb0]`), the same shape as the node registry. **guess** that it holds the `.ainb` attachments, from its classes' names | read |
 
 ### The factory tables
@@ -61,41 +61,41 @@ event request), [save-data.md](save-data.md), [save-list.md](save-list.md), [gam
 | `f_80fd61d0` | `NodeFactory_Alloc(capacity, heap)` | The table's two arrays (u32 keys, then 8-byte create functions), the keys zeroed; stores them, the count 0 and the capacity at `0x84ea5350` | read |
 | `f_80fd6280` | `AttachmentFactory_Build(heap)` | The same for the second registry, into the table at `0x84ea5138` | read |
 | `f_80fd5d00` | `AIModule_vt9` | Slot 9 of the vtable `0x84c7a7c8`: a module's set-up that uses the name "AIModule" and builds the factory tables (`f_80fd5f10`, at 0x80fd5e04). **guess** that the vtable is `engine::ai::AIModule`'s | read |
-| `f_80fd0330` | `AIModule_LoadDefinitions` | Slot 7 of the same vtable: reads the node definitions and file lists by name, `AI/NodeDefinition/Node.%s.aidefn.byml`, `Logic/NodeDefinition/Node.%s.aidefn.byml` and `%s/FileEntry/FileEntry.%s.byml` (the RomFS has `Node.Product.111.aidefn.byml.zs` and `FileEntry.Product.111.byml.zs`), with the unversioned `Node.aidefn.byml` names as well | guess |
+| `f_80fd0330` | `AIModule_LoadDefinitions` | Slot 7 of the same vtable: reads the node definitions and file lists by name, `AI/NodeDefinition/Node.%s.aidefn.byml`, `Logic/NodeDefinition/Node.%s.aidefn.byml` and `%s/FileEntry/FileEntry.%s.byml` (the RomFS has `Node.Product.111.aidefn.byml.zs` and `FileEntry.Product.111.byml.zs`), with the unversioned `Node.aidefn.byml` names as well | read |
 
 ### Making a node
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_80198f50` | `AIFile_SetCategories(?, ctx, file)` | Fills a context's category list by the file's kind (`file+0x2848`): the names at `ctx+104` and their murmur3 at `ctx+232`, the count at `ctx+296` (16 inline). Kind 0: `AI`, `CommonAI`, `CommonNode`. Kind 1: `Logic`, `CommonLogic`, `CommonNode`. Kind 2: `AI`, `Sequence`, `CommonSequence`, `CommonNode`, and the context is named "Sequence". Kind 3: `AI`, `CommonAI`, `CommonNode`, named "MetaAI". No class registers under `CommonAI` or `CommonLogic` | read |
-| `f_8005aba0` | `AIGraph_CreateNodes` | Makes a graph's nodes: calls `f_8005b560` (at 0x8005af24, 0x8005af80 and 0x8005b4bc) and, for attachments, `f_80a53800` (0x8005b3ac). Reached from `f_83ad8e90` through `f_800582d0` and `f_8005a950` | guess |
-| `f_8005b560` | `AINode_Create(…, record, …, categories)` | Makes one node from its record in the file (`x3`). A record with no name is a built-in element (`Element_Sequential`, `Element_Simultaneous`, `Element_S32Selector`, `Element_BoolSelector`, `Element_ModuleIF_Input_Bool`, `Element_Expression`, …), made by `f_8005cbf0` by its type (`record+0`). A named one is first looked up by murmur3 of its name in a tree of the graph's own (entries tagged 0xd702d6b0; **guess**: the module and actor-logic nodes); otherwise, for each category hash in the list (`x6+128`, count `x6+192`), the key `record+12` + category is looked up in `0x84ea5350` and the first hit's create function makes the node. Then it stores the graph at `+8`, the record's index (`record+2`) at `+28`, and the flags at `+24` | read |
-| `f_8005cbf0` | `AINode_CreateBuiltin` | Makes a built-in element node by its type; called from `f_8005b560` for a nameless record | guess |
+| `f_8005aba0` | `AIGraph_CreateNodes` | Makes a graph's nodes: calls `f_8005b560` (at 0x8005af24, 0x8005af80 and 0x8005b4bc) and, for attachments, `f_80a53800` (0x8005b3ac). Reached from `f_83ad8e90` through `f_800582d0` and `f_8005a950` | read |
+| `f_8005b560` | `AINode_Create(…, record, …, categories)` | Makes one node from its record in the file (`x3`; `x2` is the graph, `x4` a per-graph table of nodes made so far by record index, an existing entry is returned as is). A record with no name is a built-in element (`Element_Sequential`, `Element_Simultaneous`, `Element_S32Selector`, `Element_BoolSelector`, `Element_ModuleIF_Input_Bool`, `Element_Expression`, …), made by `f_8005cbf0` by its type (`record+0`). A named one is first looked up by murmur3 of its name in a tree reached through the 5th argument's virtual (default `f_8005a420`; entries tagged 0xd702d6b0; **guess**: the module and actor-logic nodes), unless the record's flag `+6` bit 1 is set; otherwise, for each category hash in the list (`x6+128`, count `x6+192`), the key `record+12` + category is looked up in `0x84ea5350` and the first hit's create function makes the node. Then it stores the graph at `+8`, the record's index (`record+2`) at `+28`, the flags at `+24` and, sized from the output counts of the parameter block, a block for the node's output values at `+16` | read |
+| `f_8005cbf0` | `AINode_CreateBuiltin` | Makes a built-in element node by its type; called from `f_8005b560` for a nameless record | read |
 | `f_80a53800` | `AIAttachment_Create` | The same category-list lookup, in the attachment table `0x84ea5138` | read |
 | `f_83ad8e90` | `AIControllerUnit_Create` | Makes an "AIControllerUnit" for an `.ainb` (it uses ".ainb", "ainb" and "Unknown") and builds its graph (`f_800582d0`). Called from seven places, the Sequence component among them | guess |
-| `f_83bdd800` | `SequenceComponent_CreateController` | Slot 18 of the vtable `0x84c92ad8`, a component class whose slot 8 names it "Sequence" (and "Icon=PLAYER"): makes the sequence's AIControllerUnit (with "Work") through `f_83ad8e90` | guess |
+| `f_83bdd800` | `SequenceComponent_CreateController` | Slot 18 of the vtable `0x84c92ad8`, a component class whose slot 8 names it "Sequence" (and "Icon=PLAYER"): makes the sequence's AIControllerUnit (with "Work") through `f_83ad8e90` | read |
 
 ### The vtable's shared functions
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_806b7eb0` | `Node_Setup` | Slot 5: calls slot 28 (declare and bind the parameters), then slot 33 | read |
+| `f_806b7eb0` | `Node_Setup` | Slot 5: calls slot 28 (declare and bind the parameters), then slot 33, unless that is the empty default (`f_82c3a660`). It recognises the two commonest slot-33 bodies, `f_80a04900` and `f_80864ec0`, and runs their work inline: they read the node's `OutputOnlyOnEnter` / `ExecuteEveryFrame` property into bits 20-21 of `+24` | read |
 | `f_837cbb30` | `Node_Enter` | Slot 7: clears the node's bit in its graph's bit set (`[+8]+136`, by `+28`; the bit count is `[+8]+128`) and jumps to slot 29 | read |
 | `f_837cbb70` | `Node_Update` | Slot 8: jumps to slot 30 | read |
 | `f_837cbb80` | `Node_Leave` | Slot 9: calls slot 31 unless it is one of the empty defaults, then sets the node's bit | read |
 | `f_8054dd00` | `Node_GetParams` | Slot 21: the node's parameter block in the file. The file holder is `[[+8]+16]`: its `+16` is the file's base and its `+72` the node records (60 bytes each). The result is the base plus `+20` of record number `+28`. The binders inline it when a class keeps this slot | read |
 | `f_80c33cd0` | `Node_Destroy` | Slot 2 for most classes: puts back the base vtable (`0x84c47ae8`) and, when `+16` is set, calls through what it points to | read |
 | `f_808aaa10` | `SeqQuery_OnEnter` | Slot 29 of the Sequence queries: calls slot 39 with a copy of its argument (8 bytes and a float) | read |
-| `f_800b1c60` | `SeqQuery_OnUpdate` | Slot 30 of the Sequence queries: calls slot 39 again only when bit 1 of `+24` is set | read |
+| `f_800b1c60` | `SeqQuery_OnUpdate` | Slot 30 of the Sequence queries: does nothing unless bit 1 of `+24` is set, then calls slot 39 again (same 8 bytes and float). When slot 39 is the shared getter calc `f_808aaa50` it does that calc's work inline (hashes the String input at `+48` into `+32`, then the typed read through slot 40) | read |
 | `f_832e9ae0` | `SeqOneShot_OnEnter` | Slot 29 of the Sequence one-shots: calls slot 39 once. Their slot 30 is `f_82638ed0`, which does nothing | read |
 | `f_83bd2000` | `CommonSeqOneShot_OnEnter` | The same for the CommonSequence one-shots | read |
 | `f_83bd8bf0` | `CommonSeqQuery_OnEnter` | The same as `f_808aaa10` for the CommonSequence queries; their OnUpdate (`f_83bd8c30`) also tests bit 1 of `+24` | read |
 | `f_83adc560` | `AIOneShot_OnEnter` | Slot 29 of the AI one-shots: calls slot 39, then sets bits of the byte at `+31` from the flags at `+24` | read |
 | `f_83adc610` | `AIOneShot_OnUpdate` | Slot 30 of the AI one-shots: calls slot 39 when bit 1 of `+24` is set | read |
-| `f_83adc630` | `AIQuery_OnEnter` | Slot 29 of the AI queries: calls slot 39, then marks the node done (status 2) unless bit 20 of `+24` is set | read |
+| `f_83adc630` | `AIQuery_OnEnter` | Slot 29 of the AI queries: calls slot 39, then always marks the node done (status 2 in bits 30-31 of `+24`); when bit 20 of `+24` is set it also sets bits of the byte at `+31`, as the one-shots do | read |
 | `f_83adc6c0` | `AIQuery_OnUpdate` | Slot 30 of the AI queries: calls slot 39 when bit 1 of `+24` is set | read |
 | `f_8320b900` | `LogicNode_OnEnter` | Slot 29 of the Logic nodes (Hold, Trigger, Operate): calls slot 39 with the float at its argument's `+8` | read |
-| `f_8320b940` | `LogicNode_OnUpdate` | Slot 30 of the Logic nodes: calls slot 40 with the same float. A Hold node's slot 39 is empty (`f_832027f0`); its work is in slot 40 | read |
+| `f_8320b940` | `LogicNode_OnUpdate` | Slot 30 of the Logic nodes: calls slot 40 with the same float. A Hold node's slot 39 is usually a one- to three-instruction stub (`f_832027f0` in 8 of the 86 classes, `f_804c3eb0` in 21); its work is in slot 40 | read |
 
 ### Binding parameters
 
@@ -142,7 +142,7 @@ in the file and stores, at `field`, where the value lives (an output's pointer i
 | `0x84ea5138` | `g_AttachmentFactory` | The second factory table, the same layout | read |
 | `0x84df1098` | `NodeRegistryEntries` | The first of the 32-byte registry entries, which run to `0x84ea5520`: Logic's from `0x84e61d80` to `0x84e63b30`, Sequence's from `0x84e8d108` to `0x84e93e18`, CommonNode's and CommonSequence's from `0x84e96e38` to `0x84e97b18`, the AI ones around them | read |
 | `0x848709e8` | `InitArray_Nodes` | Where the init array's node initialisers start; they run to `0x8487f368` | read |
-| `0x84c92ad8` | `SequenceComponent_vtable` | The vtable of the component named "Sequence"; slot 18 is `f_83bdd800` | guess |
+| `0x84c92ad8` | `SequenceComponent_vtable` | The vtable of the component named "Sequence"; slot 18 is `f_83bdd800` | read |
 | `0x84c7a7c8` | `AIModule_vtable` | The module vtable with `f_80fd0330` (slot 7) and `f_80fd5d00` (slot 9) | guess |
 
 ## Structures
@@ -160,7 +160,7 @@ in the file and stores, at `field`, where the value lives (an output's pointer i
 
 | Offset | Field | Sure |
 |---|---|---|
-| `+0` | The first link | read |
+| `+0` | The first link (the newest; its own address when the list is empty). `+8` (not listed) is the last link | read |
 | `+16` | The count | read |
 | `+20` | The link's offset in an entry (16) | read |
 
@@ -173,7 +173,7 @@ SeqQueryHasAoCMQ, 0x148 for QueryGameBancParamMQName), zeroes it, sets the u16 a
 |---|---|---|
 | `+0` | The vtable | read |
 | `+8` | The graph instance: `[+8]+16` holds the file, `[+8]+128` and `+136` the count and words of a bit per node (set by Leave, cleared by Enter) | read |
-| `+24` | Flags (u32). Bit 1: Update calls the calc again (**guess**: "calc every frame"). Bits 30 and 31: the result, 2 done, 3 (**guess**: failed). `f_8005b560` keeps bit 11 and sets bit 10 when the record's u16 at `+24` is not 0 | read |
+| `+24` | Flags (u32). Bit 1: Update calls the calc again (**guess**: "calc every frame"). Bits 20-21: the node's `OutputOnlyOnEnter` (queries) or `ExecuteEveryFrame` (one-shots) property, set by `Node_Setup`; bit 20 holds its value and the AI OnEnters test it. Bits 30 and 31: the result, 2 done, 3 (**guess**: failed). `f_8005b560` keeps bit 11 and sets bit 10 when the record's u16 at `+24` is not 0 | read |
 | `+28` | The node's index in the file (u16) | read |
 | `+30` | A u16 set to 0xff at creation | read |
 | `+32` | The first parameter. An input or output is a pointer to its value, with tags in bits 0 and 1 | read |
@@ -197,7 +197,7 @@ The fields the code reads; the 1,942 loose files are all version 0x408.
 |---|---|---|
 | `+0` … `+47` | The fixed parameters: an (offset, count) pair for each of Int, Bool, Float, String, Vec3 and pointer | read |
 | `+48` … `+143` | Inputs and outputs: for each of the six types an (offset, count) pair of inputs and one of outputs (the counts at `+52`/`+60` Int, `+68`/`+76` Bool, `+84`/`+92` Float, `+100`/`+108` String, `+116`/`+124` Vec3, `+132`/`+140` pointer) | read |
-| `+148`, `+149` | Two byte counts that other binders (`f_8054e980`, `f_8054e2a0`) step through | read |
+| `+148`, `+149` | Two byte counts, read by `f_8054e980` and by `f_8005b560` (`f_8054e2a0`, next to it, is the fixed-Int binder and reads `+0`/`+4`) | read |
 
 ## Notes
 
@@ -215,13 +215,13 @@ made on first call).
 | 5 | `+40` | Shared: Setup (`f_806b7eb0`) |
 | 7, 8, 9 | `+56` … `+72` | Shared: Enter, Update, Leave (`f_837cbb30`, `f_837cbb70`, `f_837cbb80`) |
 | 19 | `+152` | Per class: the name (returns a string) |
-| 20 | `+160` | Per class: the category (`AI`, `Sequence`, `Logic`, `CommonSequence`, `CommonNode`) |
+| 20 | `+160` | Per class: the category (`AI`, `Sequence`, `Logic`, `CommonSequence`, `CommonNode`); 78 classes registered under the `CommonSequence` key return `Sequence` or `AI` here, so the registry key decides which copy it is |
 | 21 | `+168` | Shared: the parameter block (`f_8054dd00`) |
 | 28 | `+224` | Declares and binds the parameters (`f_82633920`, which declares none, in 676 AI and 103 Sequence classes) |
 | 29, 30, 31 | `+232` … `+248` | OnEnter, OnUpdate, OnLeave: the kind's base for queries and one-shots, the class's own for Execute nodes |
-| 33 | `+264` | After Setup (`f_8085daa0` in most) |
+| 33 | `+264` | After Setup, by kind: `f_80a04900` (most AI queries), `f_8085daa0` (Execute, Sequence and Logic nodes), `f_80864ec0` (AI one-shots), `f_80b32380` (Selectors) and about 90 others; `Node_Setup` runs the first and third inline. Slots 36 to 38 are optional hooks (defaults return nothing or 0) that these bodies call |
 | 39 | `+312` | The calc: Query, OneShot, Selector, and Logic's first calc |
-| 40 | `+320` | Logic only: the calc each Update |
+| 40 | `+320` | Logic: the calc each Update. Selectors have a function here too, and so does any other class with extra virtuals (about 9% of the AI queries, 6% of the AI one-shots) |
 
 The other slots up to 38 are the same in every class. A Query or OneShot vtable has 40 slots (0 to 39), an Execute one
 39 (no slot 39), a Selector 41 or 47, a Logic one 41 or 42. A class with extra virtuals has them after slot 39.
@@ -310,7 +310,7 @@ use the name. Nodes with rows on other pages are listed after the table.
 | `SeqOneShotStartSound` | Sequence | `0x84be15f8` | `f_8330acd0` | `f_80e02110` | 7 |
 | `SeqOneShotResetSound` | Sequence | `0x84bd8d88` | `f_832fe4f0` | `f_832fe3e0` | 0 |
 | `SeqOneShotRequestLoadBancAsync` | CommonSequence | `0x84c8e0b8` | `f_83bd41a0` | OnEnter `f_83bd3f90`, OnUpdate `f_83bd3ff0` | 0 |
-| `SeqExecuteWaitLoadBancAsyncEnd` | CommonSequence | `0x84c8c378` | `f_83bd0f20` | OnEnter `f_83bd0e00`, OnUpdate `f_83bd0e30` | 0 |
+| `SeqExecuteWaitLoadBancAsyncEnd` | CommonSequence | `0x84c8c4c0` | `f_83bd1120` | OnEnter `f_83bd0fe0`, OnUpdate `f_83bd0ff0` | 0 |
 | `SeqQueryGetCurrentGameBancParam` | Sequence | `0x84be5a38` | `f_83311f40` | OnEnter `f_83311b80`, OnUpdate `f_83311dc0` | 5 |
 | `ExecuteWmSetTime` | AI | `0x84a02b58` | `f_828b0f90` | OnEnter `f_828b0e80` (inputs TimeHour, TimeMin) | 0 |
 | `SeqOneShotInitializeWorldMgr` | Sequence | `0x84bd2dc0` | `f_832f6850` | `f_8083b0b0` | 1 |

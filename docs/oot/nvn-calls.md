@@ -260,7 +260,7 @@ is where most of the counter and condition places are. **read**
 | `f_812be290` | `NvnProcs_Load(device, getProcAddress)` | 735 calls of `getProcAddress(device, name)`, each answer stored through its GOT slot into its global in `g_NvnProcs` (`0x84d66f00`…`0x84d685f0`). Called twice by `f_8348be50`, with no device and then with it | read |
 | `f_8348be50` | `GameFramework_InitNvn` | The framework's NVN set-up: `nvnBootstrapLoader` for `nvnDeviceInitialize` and `nvnDeviceGetProcAddress` (and `nvnInstallGlobalDebugCallback` when `+0xae` is 1), the table without a device, the device builder, a 0x3000-byte device, `nvnDeviceInitialize`, the table with the device, then `nvnDeviceGetInteger`: API 231 and minor at least 40 (`0x8348c11c`) or it stops there. Also uses "Presentation Thread". Called from `nnMain` (`f_81222ce0`, [graphics.md](graphics.md)) | read |
 | `f_855f6f80` | `NvnSdk_DeviceGetProcAddress(device, name)` | The SDK's `nvnDeviceGetProcAddress`: stores the inline-command flag `nvnPrivate0` (1 with a device and the driver's state as expected, else 0), then binary-searches 735 names after the "nvn" prefix. Never runs under LS | read |
-| `f_855f1750` | `NvnSdk_ClearPrivate0` | Stores 0 into `nvnPrivate0` (the rest not read); three callers and a table word (`0x85e56dd8`). Likely the device's finalize | guess |
+| `f_855f1750` | `NvnSdk_ClearPrivate0` | The SDK's device finalize: stores 0 into `nvnPrivate0` first, then frees the device's pools, events, queue and sync state and clears the registration words `0x85ff2078` and `0x85ff2080`. Three callers (`f_855f5350`, `f_855f61a0` and a tail call from `f_85631fa0`) | read |
 | `f_812c3470` | `NvnConv_Primitive(x)` | A table lookup (`0x83e79c60`): the game's primitive enum to NVN's | read |
 | `f_812c3480` | `NvnConv_Stage(x)` | A table lookup (`0x83e79c9c`): the game's shader-stage enum to NVN's, for the bind wrappers: the game's stages 0–7 map to NVN's 0, 3, 4, 2, 1, 5, 8, 6 ([shaders.md](shaders.md)) | read |
 | `f_812c3490` | `NvnConv_StageBits(x)` | Moves the bits of a stage mask into NVN's order, for `BindProgram` | read |
@@ -285,7 +285,7 @@ is where most of the counter and condition places are. **read**
 | `f_80527e90` | `Queue_SubmitOne(queue, handles)` | `f_80527f00`, then `nvnQueueSubmitCommands(queue, 1, handles)`. Hot rank 452 | read |
 | `f_80527f00` | `Queue_SubmitPending` | One queue's pending slots sorted by the order key at `slot+0x68`, then one `nvnQueueSubmitCommands` and an `nvnQueueFlush`. Called three times by the Presentation Thread's flush (`f_834bf400`); the thread and the call sites were seen in a run. Hot rank 427 | read |
 | `f_805902c0` | `Framework_SubmitAndPresent` | The frame's submit and present, slot `+0xf8` of the framework: locks `g_GfxDevice+0x220`; `nvnQueueWaitSync(gfxQueue, acquire sync)`; `nvnQueueSubmitCommands` of the final command buffer's handle at `g_GfxDevice+0x60` (or a callback at `fw+0x250`); `nvnQueueFenceSync`; `nvnQueueFlush`; optional polling of the frame's event (`nvnEventGetValue`); then the present slot `+0x100`. Run by the Presentation Thread, or by the main thread when `fw+0x228` bit 0 is clear; the thread and the return addresses were seen in a run. Formerly `Queue_SubmitFenced`. Hot rank 261 | read |
-| `f_80547f20` | `Framework_PresentFrame(fw)` | Slot `+0x100` of the framework class that runs (vtable `0x84c84040`), called by `Framework_SubmitAndPresent` (`f_805902c0`) on the Presentation Thread. When the framework's state word (`fw+80`) is 2 and the byte at `[fw+384]+16` is 1 (and after a virtual call on the object at `fw+400`, when that is not null) it calls `nvnQueuePresentTexture` through the import slot `0x84d67138` with the queue `[[0x84e9f000+1736]]+104`, the texture `[[fw+384]+112]` and the index `[[fw+384]+128]`, then stores the index at `[[fw+384]+132]` and tail-calls the swap-chain re-make `f_80547fc0`. The port's present hook (`hos_oot_coop_present`, from `nvnQueuePresentTexture` in `host/nvn_native.c`) therefore runs on the thread that makes this call, the Presentation Thread | tested |
+| `f_80547f20` | `Framework_PresentFrame(fw)` | Slot `+0x100` of the framework class that runs (vtable `0x84c83f80`: the slot is at `0x84c84080`, and slot `+0xf8` there is the thunk `f_805902b0`, a tail call of `f_805902c0`), called by `Framework_SubmitAndPresent` (`f_805902c0`) on the Presentation Thread. When the framework's state word (`fw+80`) is 2 and the byte at `[fw+384]+16` is 1 (and after a virtual call on the object at `fw+400`, when that is not null) it calls `nvnQueuePresentTexture` through the import slot `0x84d67138` with the queue `[[0x84e9f000+1736]]+104`, the texture `[[fw+384]+112]` and the index `[[fw+384]+128]`, then stores the index at `[[fw+384]+132]` and tail-calls the swap-chain re-make `f_80547fc0`. The port's present hook (`hos_oot_coop_present`, from `nvnQueuePresentTexture` in `host/nvn_native.c`) therefore runs on the thread that makes this call, the Presentation Thread | tested |
 | `f_8348c9b0` | `Framework_PresentFrame2(fw)` | The same code as `f_80547f20`, in slot `+0x100` of the other framework class (vtable `0x84c167e0`); it did not run in the traced frames | read |
 | `f_800ae150` | `PresentationThread_Body` | The Presentation Thread's callable: a tail call of the framework's slot `+0xf8` (`f_805902c0`); `f_800ae110` is the functor's call thunk | read |
 
@@ -374,7 +374,7 @@ The 285 used, by places. Pointer is the global in `g_NvnProcs`; GOT is the slot 
 | `nvnPolygonStateSetFrontFace` | `0x84cad1d0` | `0x84d67a90` | 17 | 12 | `f_80084de0` (16) |
 | `nvnPolygonStateSetPolygonMode` | `0x84cad1d8` | `0x84d67a98` | 17 | 12 | `f_80084de0` (16) |
 | `nvnPolygonStateSetPolygonOffsetEnables` | `0x84cad1e0` | `0x84d67aa0` | 17 | 12 | `f_80084de0` (16) |
-| `nvnTextureBuilderGetStorageAlignment` | `0x84cad8a8` | `0x84d67560` | 17 | 11 | `f_80547f20` (3589) |
+| `nvnTextureBuilderGetStorageAlignment` | `0x84cad8a8` | `0x84d67560` | 17 | 11 | none ranked |
 | `nvnCommandBufferGetCommandMemoryUsed` | `0x84cae6d0` | `0x84d67bd0` | 16 | 16 | `f_80084de0` (16) |
 | `nvnCommandBufferGetControlMemoryUsed` | `0x84cae6e8` | `0x84d67be8` | 16 | 16 | `f_80084de0` (16) |
 | `nvnCommandBufferAddCommandMemory` | `0x84cad8f0` | `0x84d67bb8` | 15 | 15 | `f_80084de0` (16) |
@@ -392,7 +392,7 @@ The 285 used, by places. Pointer is the global in `g_NvnProcs`; GOT is the slot 
 | `nvnDepthStencilStateSetStencilFunc` | `0x84cae620` | `0x84d67af0` | 15 | 11 | `f_80084de0` (16) |
 | `nvnDepthStencilStateSetStencilOp` | `0x84cae628` | `0x84d67af8` | 15 | 11 | `f_80084de0` (16) |
 | `nvnDepthStencilStateSetStencilTestEnable` | `0x84cae618` | `0x84d67ae8` | 15 | 11 | `f_80084de0` (16) |
-| `nvnTextureBuilderSetSize2D` | `0x84cae0f0` | `0x84d67520` | 15 | 9 | `f_80547f20` (3589) |
+| `nvnTextureBuilderSetSize2D` | `0x84cae0f0` | `0x84d67520` | 15 | 9 | none ranked |
 | `nvnBlendStateSetDefaults` | `0x84cae440` | `0x84d678e8` | 14 | 11 | `f_80084de0` (16) |
 | `nvnChannelMaskStateSetChannelMask` | `0x84cad1b8` | `0x84d679a0` | 14 | 11 | `f_80084de0` (16) |
 | `nvnCommandBufferBindBlendState` | `0x84cad970` | `0x84d67c20` | 14 | 11 | `f_80084de0` (16) |
@@ -452,7 +452,7 @@ The 285 used, by places. Pointer is the global in `g_NvnProcs`; GOT is the slot 
 | `nvnCommandBufferSetTiledCacheTileSize` | `0x84cae7f0` | `0x84d67e50` | 6 | 6 | `f_8074b190` (2004) |
 | `nvnCommandBufferShadingRateImagePalette` | `0x84caea30` | `0x84d68180` | 6 | 5 | `f_80660320` (41) |
 | `nvnMemoryPoolGetBufferAddress` | `0x84cae010` | `0x84d673a0` | 6 | 6 | none ranked |
-| `nvnQueueFinish` | `0x84cadde0` | `0x84d67130` | 6 | 6 | `f_80547f20` (3589) |
+| `nvnQueueFinish` | `0x84cadde0` | `0x84d67130` | 6 | 6 | none ranked |
 | `nvnSamplerBuilderSetDefaults` | `0x84cae308` | `0x84d677b0` | 6 | 6 | none ranked |
 | `nvnSamplerBuilderSetDevice` | `0x84cae300` | `0x84d677a8` | 6 | 6 | none ranked |
 | `nvnSamplerFinalize` | `0x84cae3d0` | `0x84d67878` | 6 | 6 | none ranked |
@@ -537,15 +537,15 @@ The 285 used, by places. Pointer is the global in `g_NvnProcs`; GOT is the slot 
 | `nvnVertexStreamStateSetDivisor` | `0x84cae698` | `0x84d67b68` | 2 | 2 | none ranked |
 | `nvnVertexStreamStateSetStride` | `0x84cae690` | `0x84d67b60` | 2 | 2 | none ranked |
 | `nvnWindowAcquireTexture` | `0x84cadea8` | `0x84d671f8` | 2 | 2 | `f_81207a50` (3470) |
-| `nvnWindowBuilderSetDefaults` | `0x84caddf8` | `0x84d67148` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowBuilderSetDevice` | `0x84caddf0` | `0x84d67140` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowBuilderSetNativeWindow` | `0x84cade00` | `0x84d67150` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowBuilderSetNumActiveTextures` | `0x84cade20` | `0x84d67170` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowBuilderSetPresentInterval` | `0x84cade10` | `0x84d67160` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowBuilderSetTextures` | `0x84cade08` | `0x84d67158` | 2 | 2 | `f_80547f20` (3589) |
-| `nvnWindowInitialize` | `0x84cade90` | `0x84d671e0` | 2 | 2 | `f_80547f20` (3589) |
+| `nvnWindowBuilderSetDefaults` | `0x84caddf8` | `0x84d67148` | 2 | 2 | none ranked |
+| `nvnWindowBuilderSetDevice` | `0x84caddf0` | `0x84d67140` | 2 | 2 | none ranked |
+| `nvnWindowBuilderSetNativeWindow` | `0x84cade00` | `0x84d67150` | 2 | 2 | none ranked |
+| `nvnWindowBuilderSetNumActiveTextures` | `0x84cade20` | `0x84d67170` | 2 | 2 | none ranked |
+| `nvnWindowBuilderSetPresentInterval` | `0x84cade10` | `0x84d67160` | 2 | 2 | none ranked |
+| `nvnWindowBuilderSetTextures` | `0x84cade08` | `0x84d67158` | 2 | 2 | none ranked |
+| `nvnWindowInitialize` | `0x84cade90` | `0x84d671e0` | 2 | 2 | none ranked |
 | `nvnWindowSetCrop` | `0x84caded8` | `0x84d67228` | 2 | 2 | `f_81207a50` (3470) |
-| `nvnWindowSetNumActiveTextures` | `0x84cadef8` | `0x84d67248` | 2 | 2 | `f_80547f20` (3589) |
+| `nvnWindowSetNumActiveTextures` | `0x84cadef8` | `0x84d67248` | 2 | 2 | none ranked |
 | `nvnBufferGetMemoryOffset` | `0x84cad858` | `0x84d674c8` | 1 | 1 | none ranked |
 | `nvnBufferSetDebugLabel` | `0x84cad848` | `0x84d67490` | 1 | 1 | none ranked |
 | `nvnCommandBufferBindImages` | `0x84cae748` | `0x84d67cf0` | 1 | 1 | `f_81503720` (1776) |
@@ -600,7 +600,7 @@ The 285 used, by places. Pointer is the global in `g_NvnProcs`; GOT is the slot 
 | `nvnTextureViewGetLevels` | `0x84cada58` | `0x84d67678` | 1 | 1 | `f_802f35a0` (3514) |
 | `nvnTextureViewGetTarget` | `0x84cada60` | `0x84d676a0` | 1 | 1 | `f_802f35a0` (3514) |
 | `nvnTextureViewSetDepthStencilMode` | `0x84cae210` | `0x84d67668` | 1 | 1 | none ranked |
-| `nvnWindowFinalize` | `0x84cade98` | `0x84d671e8` | 1 | 1 | `f_80547f20` (3589) |
+| `nvnWindowFinalize` | `0x84cade98` | `0x84d671e8` | 1 | 1 | none ranked |
 | `nvnWindowSetPresentInterval` | `0x84cadec0` | `0x84d67210` | 1 | 1 | none ranked |
 
 The 450 never referenced: all 57 `nvnDlss*` and all 13 `nvnDirtyTileMap*`, and by object command buffer 113, device 50,

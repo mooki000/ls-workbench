@@ -15,12 +15,12 @@ view's matrix. Looked at for the native mouse look, the option to stop the camer
 | `f_80649c10` | `PlayerCamera_TurnYaw` | Turns the yaw by the right stick, wrapped at 180 | tested |
 | `f_8064b770` | `PlayerCamera_TurnPitch` | Turns the pitch by the right stick, within the limits | tested |
 | `f_80642c80` | `PlayerCamera_AuthoredHeading` | The authored heading override in state 3's follow; when it applies, the update branches to 0x806492c4 | read |
-| `f_80642410` | `PlayerCamera_EaseYaw` | Eases the yaw (`+0x1a4`) toward a heading; state 3's follow calls it at 0x806475e4 | read |
+| `f_80642410` | `PlayerCamera_EaseYaw(&yaw, s0 = target, s1, s2)` | Eases the yaw toward a heading: `x0` is the address of the yaw (`camera+0x1a4`), not the camera. It moves the yaw along the shorter way by the fraction 1 - (1 - `s1`)^`s2` of the angle left, wrapped at 180. State 3's follow calls it at 0x806475e4 | read |
 | `f_804e48c0` | `View_UpdateMatrix(…, x20 = view)` | Builds a view's matrix in a loop (its head at 0x804e5068). Camera zero gives the gameplay view, but the same routine serves the other cameras' views too. Hooked by `patch_view`: with the free camera on, the host builds the gameplay view's matrix instead | tested |
 | `f_80643f10` | `CameraSpeed_Yaw` | Returns in `s0` the yaw's turn speed for the right stick: the entry of the game's own camera speed option (options `+0x254`) in its speed table, times a factor. The player camera's update (`f_80644c80`) multiplies the stick by it each frame. Hooked by `patch_camera_speed`: each return scaled by `hos_camera_scale` (the Insert menu's Camera speed, 1.0 as shipped) | read |
 | `f_80643b60` | `CameraSpeed_Pitch` | The pitch's, the same option's entry in the other table. Hooked by `patch_camera_speed` | read |
-| `f_82ea21f0` | `CameraSpeed_Yaw2` | The yaw's at level 2, the path taken while the stick's actor has the flag at `+0x218`. Hooked by `patch_camera_speed` | read |
-| `f_82ea2220` | `CameraSpeed_Pitch2` | The pitch's at level 2. None of the four calls another, so each turn is scaled once. Hooked by `patch_camera_speed` | read |
+| `f_82ea21f0` | `CameraSpeed_Pitch2` | The pitch's turn speed at level 2 (entry 2 of the speed table, no extra factor): the path of `f_827c2df0`, which the player camera's update (`f_80644c80`, at 0x80648988) takes while bit 44 of the u64 at `+0x218` of the object at `camera+0x20` is set. Hooked by `patch_camera_speed` | read |
+| `f_82ea2220` | `CameraSpeed_Yaw2` | The yaw's turn speed at level 2 (entry 2 of the speed table times the same factor `f_80643f10` uses): called by `f_827c2d50`, which the player camera's update takes while bit 44 of the u64 at `+0x218` of the object at `camera+0x20` is set. None of the four calls another, so each turn is scaled once. Hooked by `patch_camera_speed` | read |
 
 ## Data
 

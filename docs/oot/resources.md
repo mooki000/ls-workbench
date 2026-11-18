@@ -50,7 +50,8 @@ with the dictionary pack), [master-quest.md](master-quest.md) (the mounts the ga
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_809db6a0` | `SeadSystemManagers_Init` | Makes the heaps "sead::SystemManagers", "sead::ResourceMgr" and "sead::FileDeviceMgr" and the managers in them (the file device manager through `f_80c49770`), then `nn::fs::SetAllocator(f_8348d800, f_8348d820)` | read |
+| `f_809db6a0` | `SeadSystemManagers_InitThunk` | A one-instruction thunk that tail-calls `f_809db6b0`: the address nnMain's caller `f_81222ce0` uses | read |
+| `f_809db6b0` | `SeadSystemManagers_Init` | Makes the heaps "sead::SystemManagers", "sead::ResourceMgr" and "sead::FileDeviceMgr" and the managers in them (the file device manager through `f_80c49770`), then `nn::fs::SetAllocator(f_8348d800, f_8348d820)` | read |
 | `f_80c499d0` | `FileDeviceMgr_MountContent` | Reached from `f_80c49770` → `f_80c497f0`: `nn::fs::QueryMountRomCacheSize`, allocates that much (8-aligned) from the heap it is given, stores it at `+0x28`, and calls `nn::fs::MountRom("content", cache, size)` | read |
 | `f_8006bb40` | `FileDevice_Open` | Slot 9 of the file device vtable `0x84c16100`: `nn::fs::GetEntryType`, `OpenFile` and, for a file opened to write, `SetFileSize`; closes the file on failure | read |
 | `f_8348a140` | `FileDevice_Read` | Slot 14: `nn::fs::ReadFile` (with a `ReadOption`) at the handle's position (`+0x20`) for the handle's file (`+0x18`); adds what was read to the position, stores the result at the device's `+0x5c` and answers whether it was 0 | read |
@@ -64,10 +65,10 @@ with the dictionary pack), [master-quest.md](master-quest.md) (the mounts the ga
 | `f_836d8ad0` | `AresSystem_Init` | Sets up `ares::System` from a settings block (about 3,000 instructions): "Resource Control", "Resource Memory", the "LoadingThreads" (each named "ARes Loading %@"), the "ComposeThreads" ("ARes Compose %@"), the "DecompSystem" heap (the setting at `+0x20`, 2 MB when 0) with one decompression slot per thread (the settings at `+0xc` plus `+0x14`, capped by `+0x18` unless it is -1), each made by `f_8069a5e0`, and the "zsdic" heap (the setting at `+0xc0`) | read |
 | `f_801bcd40` | `AresSystem_Calc` | Slot of the vtable at `0x84c88818`: from `ares::System` (`[0x84ea2fe0]`) queues a job record labelled "ares::System::calc" (`f_801bca90`), then, when the object at `[0x84e9f7c8]` has work pending, try-locks its two mutexes and runs `f_801c07e0` | read |
 | `f_83213890` | `ResourceSettings_Init` | A vtable slot (`0x84bb9048`) of the framework's set-up that fills the resource settings: the size table path `System/Resource/ResourceSizeTable.%s.%s.Nin_Ounce_NVN2.rsizetable` (with "Product"), `Pack/ResidentCommon.pack` (with 0x100000), `Pack/ZsDic.pack`, `Pack/GeneralFormat/Global.%s.gfpack.byml` ("Product" or "All") | read |
-| `f_83bb6eb0` | `ResourceModule_Init` | The "ResourceModule" set-up: the heaps "ResourceU", "ResourceS", "ResourceL", "ResourceG", "ResourceDebug", `Local/IgnorePackContent.txt`; it loads the dictionaries either one file at a time (`%s/%s`, `f_836dd060`) or from the pack (`f_811fdd00`) | guess |
+| `f_83bb6eb0` | `ResourceModule_Init` | The "ResourceModule" set-up: the heaps "ResourceU", "ResourceS", "ResourceL", "ResourceG", "ResourceDebug", `Local/IgnorePackContent.txt`; it loads the dictionaries either one file at a time (`%s/%s`, `f_836dd060`) or from the pack (`f_811fdd00`) | read |
 | `f_80b13af0` | `ResourceHeaps_SetFileTypes` | Lists file extensions by heap: pack, zsdic, sarc, genvb, bmodelsh, bfres, bfsha, bgyml, bcett.byml, asb, ainb, bphsh, bphhf, bpheb, bphnm, bphnv, bphsc, baev, and the heaps "ForResourceV", "ForResourceU", "ForResourceS", "ForResourceL"; a vtable slot (`0x84bbe0b8`, `0x84c879a8`) | guess |
-| `f_80383e80` | `Resource_LoadForSync` | Makes a request labelled "Load(ForSync)", makes the calls `f_8002f220` ([maps.md](maps.md)) also makes (`f_836dc5b0`, `f_801b3f60`, `f_801b5590`, `f_801b4090`) and waits with `f_8080c610`. Four callers (`f_801b43bc`, `f_803837ac`, `f_803845b4`, `f_80385084`) | guess |
-| `f_801b5590` | `Resource_Submit` | Hands a request to the system under its mutexes, clearing and waiting on light events as it goes; called by `f_8002f220`, `f_80383e80` and 9 others | guess |
+| `f_80383e80` | `Resource_LoadForSync` | Makes a request labelled "Load(ForSync)", makes the calls `f_8002f220` ([maps.md](maps.md)) also makes (`f_836dc5b0`, `f_801b3f60`, `f_801b5590`, `f_801b4090`) and waits with `f_8080c610`. Four callers (`f_801b43bc`, `f_803837ac`, `f_803845b4`, `f_80385084`) | read |
+| `f_801b5590` | `Resource_Submit` | Hands a request to the system under its mutexes, clearing and waiting on light events as it goes; called by `f_8002f220`, `f_80383e80` and 9 others | read |
 | `f_8080c610` | `ResourceHandle_WaitReady` | Waits for a requested resource (75 callers): issues the request first if its state is 1 (`f_801b27a0`), then waits on the record's light event at `+0x140`; then, if the calling thread's context (TLS) lies between the system's `+0x98` and `+0xa0`, runs `f_80036920` on the record's `+0x158`, otherwise waits on a second light event at `+0x1c8`. Answers 1 | read |
 | `f_801b4090` | `ResourceHandle_Release` | Lets a handle go (159 callers): marks it, drops the reference count at `+0x94` of the resource's record (the records are 0x398 bytes, in `ares::System`'s `+0x440`, `+0x438` of them), and when it reaches 0 pushes the record's index on a lock-free ring (`+0x4d0` to `+0x4e8`) for unloading | read |
 | `f_836d80e0` | `Path_Extension` | The text after a path's last "." (the empty string when there is none) | read |
@@ -100,7 +101,7 @@ that compares a file with its entry was not located. **tested**
 | `f_834ac440` | `ZsDecompressor_AddDictionary` | Registers a DDict in the tree at `+0x70` under its ID (`f_834ab970`) | read |
 | `f_811fdd00` | `ZsDic_LoadPack` | Loads the resource "ZsDic" (with 0x140000 bytes), and for each file in it makes the dictionary resource (`f_80c76b10`, `f_836dd120`) and registers its DDict in every slot's `zs` decompressor (the system's `+0x150` slots at `+0x158`, the decompressor at slot `+0x10`) | read |
 | `f_836dd060` | `ZsDic_LoadOne` | The same for one dictionary file by path, through the loader at `[0x84e9f5c0]` | read |
-| `f_83bb15b0` | `ZsDicResource_CreateDDict` | A vtable slot (`0x84c88168`) of the dictionary resource: makes its DDict over the file's bytes with `f_834ab740` | guess |
+| `f_83bb15b0` | `ZsDicResource_CreateDDict` | A vtable slot (`0x84c88168`) of the dictionary resource: makes its DDict over the file's bytes with `f_834ab740` | read |
 
 ### Model material blocks (the OptimizeChangeBank thread)
 
@@ -172,13 +173,13 @@ checksum wrong, -32 dictionary wrong, -44 table log too large, -70 destination t
 
 | Address | Name | What it is | Sure |
 |---|---|---|---|
-| `0x84ea2fe0` | `g_AresSystem` | `ares::System`: read by `AresSystem_Calc` and `ResourceHandle_Release` (and 70 other places) | guess |
-| `0x84e9f5c0` | `g_SeadResourceMgr` | The loader `ZsDic_LoadOne` loads through; the `zs` decompressor's destructor unregisters itself from it (`f_8349f0f0`) | guess |
+| `0x84ea2fe0` | `g_AresSystem` | `ares::System`: read by `AresSystem_Calc` and `ResourceHandle_Release` (and 70 other places) | read |
+| `0x84e9f5c0` | `g_SeadResourceMgr` | The loader `ZsDic_LoadOne` loads through; the `zs` decompressor's destructor unregisters itself from it (`f_8349f0f0`) | read |
 | `0x84c16100` | `FileDevice_vtable` | A file device's vtable: slot 9 `f_8006bb40` (open), 10 `f_80ba1bf0` (close), 11 flush, 12 delete, 14 `f_8348a140` (read), 15 write, 19 `f_80ba1b90` (size), 22 to 25 the directory calls | read |
 | `0x84c376e0` | `ParallelDecompThread_vtable` | Slot 2 `f_801c5ea0` (send a message), slot 14 `f_836dda20` (run a message) | read |
 | `0x84c377c0` | `ParallelDecompJob_vtable` | Slot 2 `f_80115bf0` | read |
 | `0x84c377e8` | `ZsDecompressor_vtable` | Slot 2 `f_80108da0`; slot 0 its destructor `f_836dea10` | read |
-| `0x84c37770` | `SzsDecompressor_vtable` | The `szs` decompressor's; slot 2 is `f_836de2b0` | guess |
+| `0x84c37770` | `SzsDecompressor_vtable` | The `szs` decompressor's; slot 2 is `f_836de2b0` | read |
 | `0x83f456d8` | `HUF_algoTime` | The Huffman decoder timing table, 16 rows of 3 (table time, time per 256 bytes) | read |
 | `0x83f45658` | `BIT_mask` | The bit-stream masks (0, 1, 3, 7, …) | read |
 | `0x83f4564c` | `ZSTD_repStartValue` | The repeat offsets a frame starts with: 1, 4, 8 | read |

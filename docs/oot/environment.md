@@ -52,18 +52,18 @@ variable). Its setters all have one shape: take the lock at `+0x490`, pick the r
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_803ec2a0` | `WorldMgr_CalcJob` | A job delegate's invoke (slot 2 of the vtable at `0x84c14638`): takes the frame's arguments and the world manager (`delegate+0x28`) and calls `f_803ec480` | read |
-| `f_803ec480` | `WorldMgr_Calc(world, args)` | The world manager's frame. Under the lock it flips the index at `+0x3128`, copies the block it took into the new one and keeps only the persistent bits (the mask `0xffffe07edfd80004`). Then it sets the clock's rate (below), calls `f_803edf70` (the time of day) with the taken block, then `f_803e9130` and `f_803eb170` on the environment object (`+0x578`), and `f_803ed930` when `+0x4d1` bit 2 is set. It copies request bit 20 into `+0x4d0` bit 11 | read |
-| `f_803edb40` | `WorldMgr_LoadWorldParam` | Formats `Work/WorldMgr/WorldParam/%s.game__wm__WorldParam.gyml` and makes the environment object it stores at `+0x578` (with `f_81216060`) | read |
+| `f_803ec2a0` | `WorldMgr_CalcJob` | A job delegate's invoke (slot 2 of the vtable at `0x84c14638`): copies the frame's arguments from the delegate's block (`delegate+24`) to the stack, files `delegate+40` in the running thread's slot of a six-entry table while it runs (cleared after), and calls `f_803ec480` with the world manager `[0x84e9eab0]` (read through `0x84c9e898`) and those arguments | read |
+| `f_803ec480` | `WorldMgr_Calc(world, args)` | The world manager's frame. It tries the lock at `+0x4b0` and does nothing that frame when it fails, moves `+0x4d8` into `+0x4d4`, calls `f_803edb40` (the WorldParam check), then under the lock at `+0x490` flips the index at `+0x3128`, copies the block it took into the new one and keeps only the persistent bits (the mask `0xffffe07edfd80004`). It sets the clock's rate (below), calls `f_803edf70` (the time of day) with the taken block, then `f_803e9130` and `f_803eb170` on the environment object (`+0x578`), and `f_803ed930` when `+0x4d1` bit 2 is set. It copies request bit 20 into `+0x4d0` bit 11. A non-negative word at `+0x38d8` is applied as a pending hour (`f_80f0e640`, flag 0, day -1) and stops the clock | read |
+| `f_803edb40` | `WorldMgr_LoadWorldParam` | The WorldParam check `WorldMgr_Calc` makes every frame: formats `Work/WorldMgr/WorldParam/%s.game__wm__WorldParam.gyml` and, when the name differs from the current one (`+0x598`), drops the old environment object and makes the new one (with `f_81216060`), stored at `+0x578` | read |
 | `f_803eed30` | `WorldParam_Params` | Declares the WorldParam's fields: `WorldType`, the base palettes (`BasePalette_Bluesky`, `BasePalette_Cloudy`), the wind's limits, `IsSolarMotion`, `SunRiseAzimuth`, `SunElevation`, `MoonElevation`, `SunriseHoure`/`SunriseMin`, `SunsetHoure`/`SunsetMin`, `IsExistSunMoon`, `SunMoonDist`, `SunSize`, `MoonSize`, `CloudShadowOnOff`, the volume fog's start and end distances, noise and resolution scales (`VolumeFogResScaleConsole`, `VolumeFogResScaleHandheld`), and others | read |
 | `f_834722f0` | `WorldMgr_RequestImmTrans` | `ExecuteWmRequestImmTrans`: sets bit 0 of `+0x4d4`, which the frame passes on as the environment update's "immediate" flag | read |
 | `f_83472300` | `WorldMgr_SetCloudShape(world, …)` | `ExecuteWmSetCloudShape`: request bit `0x1`, the shape in the block's `+0xc`, `+0x10`, `+0x14` | read |
 | `f_834723b0` | `WorldMgr_SetCloudShadowPos(world, x, y)` | `ExecuteWmSetCloudShadowPos`: request bit `0x2`, the position at `+0x18`, `+0x1c` | read |
-| `f_83473380` | `WorldMgr_SetWeather(world, name, …)` | `HoldWmSetWeather`: looks the weather up by name, then writes it into the block. `f_83473830` calls it with an empty name (`HoldWmSetWeatherDefault`) | guess |
+| `f_83473380` | `WorldMgr_SetWeather(world, name, …)` | `HoldWmSetWeather`: copies the name (a 256-byte string) and the integer argument into the block being filled at `+0x670`; it sets no request bit itself. `f_83473830(world, w)` calls it with the empty string (`HoldWmSetWeatherDefault`) | guess |
 | `f_83473840` | `WorldMgr_SetEnvEffect` | `HoldWmSetEnvEffect` and `HoldWmSetForceDefaultEnvPalette`: request bit `0x800` and a value at `+0x9e4` | read |
 | `f_834738c0` | `WorldMgr_HoldSunMoonInvisible` | `HoldWmSunMoonInvisible`: request bit `0x40000` (one frame, so the hold sets it every frame) | read |
 | `f_83473970` | `WorldMgr_SetEnvPalette` | `ExecuteWmSetEnvPaletteForTimeline` and `…ForFlowchart`: the palette names at `+0xa18` and `+0xb38` | read |
-| `f_83473b80` | `WorldMgr_ResetEnvPalette` | `ExecuteWmResetEnvPaletteForFlowchart`: request bit `0x200000` | read |
+| `f_83473b80` | `WorldMgr_ResetEnvPalette(world, flag)` | `ExecuteWmResetEnvPaletteForFlowchart` (and the OnLeave of `ExecuteWmSetEnvPaletteForTimeline`, slot 31): clears the two palette names at `+0xa18` and `+0xb38`; when `flag` is 1 it also sets request bit `0x200000` | read |
 | `f_83474560` | `WorldMgr_SetCloudShadowOff` | `ExecuteWmSetCloudShadowOffForTimeline`: request bit `0x400000`; the sky then uses 0 for the cloud shadow's rate | read |
 | `f_83474620` | `WorldMgr_SetWorldShadow` | `ExecuteWmSetWorldShadowForTimeline`: a value at `+0x112c` | read |
 | `f_834747e0` | `WorldMgr_SetSunMoonModelInvisible` | `ExecuteWmSetSunMoonModelInvisibleForTimeline` (its slot 29): request bit `0x8000000`, persistent | read |
@@ -74,7 +74,7 @@ variable). Its setters all have one shape: take the lock at `+0x490`, pick the r
 | `f_83474f10` | `WorldMgr_SetLunarAge` | `ExecuteWmSetLunarAgeForTimeline`: the lunar age at `+0x10fc` | read |
 | `f_83474fb0` | `WorldMgr_SetWeatherTransition` | `ExecuteWmSetWeatherTransitionForTimeline` and `OneShotWmSetWeatherForFlowchart`: request bit `0x10000000`, values at `+0x10d0` and `+0xfb0` | read |
 | `f_83475120` | `WorldMgr_ResetWeather` | `OneShotWmResetWeatherForFlowchart`: request bit `0x20000000` | read |
-| `f_83475190` | `WorldMgr_SetWind` | `ExecuteWmSetWindForTimeline` and `…ForFlowchart`: request bits `0x40000000` and `0x100000000`, the wind vector at `+0x1100 … +0x1108`. `ExecuteWmResetWindForFlowchart` goes to `f_83475250` | read |
+| `f_83475190` | `WorldMgr_SetWind` | `ExecuteWmSetWindForTimeline`, `…ForFlowchart` and the update of `ExecuteWmSetWindTransitionForTimeline`: request bits `0x40000000` and `0x100000000`, the wind vector at `+0x1100 … +0x1108`. `ExecuteWmResetWindForFlowchart` (and the OnLeave of the timeline nodes) goes to `f_83475250`, which clears `0x40000000` | read |
 | `f_834752d0` | `WorldMgr_SetUsePlayerPos` | `OneShotWmSetUsePlayerPosForEvent`: request bit `0x100000` | read |
 | `f_80c91790` | `WorldMgr_SetSunActor(world, actor)` | Points the actor link at `+0x528` at the sun's actor (or releases it for 0) | read |
 | `f_80c91830` | `WorldMgr_SetMoonActor(world, actor)` | The same for the moon, `+0x540` | read |
@@ -100,8 +100,8 @@ Hold node's; [master-quest.md](master-quest.md) has the layout). Most nodes are 
 
 ## The environment object
 
-`[WorldMgr+0x578]`, made from the WorldParam. Two vtables were seen, `0x84c12040` and `0x84c123a0` (the start of each is
-a **guess**), with the same getters; they differ at `+0x220`.
+`[WorldMgr+0x578]`, made from the WorldParam. At least four vtables carry the same getters (`0x84c12040`, `0x84c123a0`,
+`0x84c12610` and `0x84c12880`, in slots `+0x70` and `+0x78`); the start of each is a **guess**, and the first two differ at `+0x220`.
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
@@ -114,7 +114,7 @@ a **guess**), with the same getters; they differ at `+0x220`.
 | `f_83444740` | `WorldEnv_IsMoonAppearing` | Slot `+0x90`: bit 5 of `env+0x38` | read |
 | `f_83444750` | `WorldEnv_IsMoonModelVisible` | Slot `+0x98`: bit 8 (bit 0 of `env+0x39`) | read |
 | `f_83444770` | `WorldEnv_MoonDir` | Slot `+0xa8`: `env+0xb24` | read |
-| `f_83444010` | `WorldEnv_LunarAge` | Slot `+0xb0`: the clock's `+0x68` | read |
+| `f_83444010` | `WorldEnv_LunarAge` | Slot `+0xb0`: the clock's `+0x68` when it is not negative; otherwise (day + 1 before noon, day + 2 after, mod 8) from the clock's current day block | read |
 | `f_802c8de0` | `WorldEnv_SecondsOfDay` | Slot `+0x30`: the clock's (`env+0xd48`) seconds of the day, at `+0x28`, or at `+0x58` when the clock's `+9` bit 1 is set (a second time: `OneShotRequestVisualOnlyTime` is a likely user, **guess**) | read |
 | `f_8006cd50` | `WorldEnv_TimeDivision` | Slot `+0x38`: the clock's `+0x40` (0 day, 1 night) | read |
 
@@ -122,7 +122,7 @@ a **guess**), with the same getters; they differ at `+0x220`.
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_80f0e640` | `Clock_SetTime(clock, seconds, flag, day)` | What `f_834722d0` calls with `(seconds, 1, -1)`: stores the seconds and the day at `+0x48` and `+0x4c` and sets bits 1 (and 2, when `flag` bit 0 is set) of `+8`, then builds a larger request on the stack | read |
+| `f_80f0e640` | `Clock_SetTime(clock, seconds, flag, day)` | What `f_834722d0` calls with `(seconds, 1, -1)`: stores the seconds and the day at `+0x48` and `+0x4c` and sets bit 1 (and bit 2, when `flag` bit 0 is set, otherwise clears it) of `+8`, then builds a default request block on the stack and calls `f_803edf70` on the clock with a zero step, so the set takes hold at once, and sets bit 3 of `+8` (the next step clears it) | read |
 | `f_83472280` | `WorldMgr_ReadTime(world)` | Returns (hidden result pointer x8) a 24-byte time snapshot: vtable pointer, then one u64 = seconds of the day (low) and day (high) of the clock block at `clock+0x20` (or `clock+0x50` while bit 0x200 of `clock+8` is set), then that block's u32 at `+0x10`; empty snapshot when `[world+0x510]` is null. Callers `f_803ff420`, `f_80401980` | read |
 | `f_83445090` | `Clock_LoadFromGameData(clock)` | Sets bit 8 of `clock+8`, reads the saved seconds and day from the game-data time object `[world+0x508]+8`, calls `Clock_SetTime(seconds, 0, saved day)`, stages the minute words, sets bit 0. The save-load / load-sequence set. Its only caller is `f_83472050`. (it was first guessed to be a visual-only time request; it loads the saved time) | read |
 | `f_83472050` | `WorldMgr_ApplyGameDataState(world)` | Takes the lock at `+0x4b0`, copies the saved environment values (three floats) into `world+0xdb8…` when they are non-zero (and sets bits 7 and 8 of `world+0x4d0`), calls `f_83445090` when the clock exists, then lets the four sub-objects at `+0x558…+0x570` refresh (slot 57) and clears request bit 23 of the block being filled. Callers: `f_832f8690`, `f_830513c0`. Read in outline: the control flow; the offsets are as the lifted code prints them | read |
@@ -130,8 +130,8 @@ a **guess**), with the same getters; they differ at `+0x220`.
 | `f_828d7e20` | `OneShotAutoPlacementMgrSetIsTimeElapsedToNightByOcarinaSunSong_Calc` | Stores 72000 (20:00) into the auto-placement manager entry 0x23 at `+116`; node done. Run only by the Sun's Song flow | read |
 | `f_828b0ec0` | `ExecuteWmSetTime_OnUpdate` | Marks the node finished (OnEnter `f_828b0e80` did the set) | read |
 | `f_828b1060` | `ExecuteWmSetTimeTransitionForTimeline_OnUpdate` | The timeline's time transition: from start hour/minute to end hour/minute by the node's progress, through `f_83474aa0` into the world's request block (bit 0x2000000, times at block `+0x10e4…`); never calls Clock_SetTime. OnLeave `f_828b11a0` -> `f_83474e10`. Read in outline: the two functions and their stores | read |
-| `f_829428b0` | `OneShotRequestVisualOnlyTime_Calc` | Hour*3600 + minute*60 + second from the node's inputs plus a float, into `f_83474f00` -> `f_83445140` (the second time block); not Clock_SetTime. Read in outline: the node function and `f_83474f00`; `f_83445140` was not read | read |
-| `f_8347c020` | `GameData_ClockHeld` | A game-data lookup by a constant hash that returns a bit; `f_803edf70` calls it right after cutting the frame's seconds (`+60`) and stores 0 there when it is true, and takes the seconds from game data (`f_8347c450`) while it holds. So the clock stands while the bit holds. The name is a guess: which game-data bool it is, and what in a save holds it, is not known | guess |
+| `f_829428b0` | `OneShotRequestVisualOnlyTime_Calc` | Hour*3600 + minute*60 + second from the node's inputs plus a float (a fade time), into `f_83474f00` -> `f_83445140`: that stores the target seconds at `clock+0x6c`, a flag at `+0x74` (0 while a fade runs, 1 when the time is about 0) and a rate (a constant divided by the float) at `+0x78`; not Clock_SetTime | read |
+| `f_8347c020` | `GameData_ClockHeld` | A game-data lookup by a constant hash that returns a bit; `f_803edf70` calls it right after cutting the frame's seconds (`+60`) and stores 0 there when it is true, and takes the seconds from game data (`f_8347c450`) while it holds. So the clock stands while the bit holds. The name is a guess: which game-data bool it is, and what in a save holds it, is not known | read |
 
 `f_803edf70`, which steps the seconds of the day (`+40`) and the day (`+44`), has its row in [frame-time.md](frame-time.md).
 It gets the taken request block and tests request bits `0x1000000` and `0x2000000`. The rate it steps by is set in
@@ -152,9 +152,9 @@ It gets the taken request block and tests request bits `0x1000000` and `0x200000
 | `f_82849ab0` | `VolumeFogAreaParam_Load` | Formats `Work/System/GameGraphics/VolumeFogAreaParam/%s.game__gfx__VolumeFogAreaParam.gyml` (its `FogParams`); `ExecuteRegisterVolumeFogArea` registers such areas | read |
 | `f_83452160` | `ResEnvPalette_Params` | Declares an environment palette's fields: `ExposureValue` and its corrections, the lights' intensities (character, sub-character, field-object, specular), the bake and sky light scales, the hemisphere light, the volume fog block (`VolumeFogIsEnabled`, `VolumeFogMainLightScale`, the probe light scales, `VolumeFogEnableFog1`/`2`), white balance, bloom, caustics, the sky's sun colour and scattering (`SkyRParam_rayleigh_amplifier`, `SkyRParam_mie_*`), the scatter fog (`SfParam_*`), `CloudShadowRate`, `RainExposureRate`, `HumidityWetRatio`, the plain fog (`FogColor`, `FogStart`, `FogEnd`, `AfParam_attenuationForGrd`/`ForSky`), `AmbientIntensity` and the cube map's ambient and fog | read |
 | `f_83451e40` | `ResEnvPalette_VolumeFogParams` | The palette's two volume fog blocks, `VolumeFogParams1` and `VolumeFogParams2` (`game__wm__ResEnvPalette_VolumeFog`) | read |
-| `f_83466620` | `FixedEnvPalette_Params` | Fields that each come with an `IsOverwrite…` switch: exposure, character light, specular, hemisphere light, the volume fog's scales and densities (`VF…`), white balance, bloom, caustics, wetness | guess |
-| `f_834477e0` | `DemoPalette_Params` | A cutscene palette's fields: a fixed sun direction (`IsDirectSunAzimuth`, `DirectSunElevation`, …), fog and volume fog overrides, exposure compensation, character lights, local depth shadow, vignetting, Navi's light, bloom | guess |
-| `f_831d2870` | `VolumeFogCommonParam_Params` | `NoiseParams` (`game__gfx__VolumeFogNoiseParam`) and `Fog1Params`/`Fog2Params` (`game__gfx__VolumeFogCommonParam`) | read |
+| `f_83466620` | `FixedEnvPalette_Params` | Fields that each come with an `IsOverwrite…` switch: exposure, character light, specular, hemisphere light, the volume fog's scales and densities (`VF…`), white balance, bloom, caustics, wetness | read |
+| `f_834477e0` | `DemoPalette_Params` | A cutscene palette's fields: a fixed sun direction (`IsDirectSunAzimuth`, `DirectSunElevation`, …), fog and volume fog overrides, exposure compensation, character lights, local depth shadow, vignetting, Navi's light, bloom | read |
+| `f_831d2870` | `VolumeFogAreaParam_Params` | Declares the fields of `game__gfx__VolumeFogAreaParam` (vtable `0x84ba8d50`): `NoiseParams` (`game__gfx__VolumeFogNoiseParam`) and `Fog1Params`/`Fog2Params` (`game__gfx__VolumeFogCommonParam`) | read |
 
 `Work/WorldMgr/WorldParam/MainField.game__wm__WorldParam.gyml` and `Viewer.game__wm__WorldParam.gyml` are named outright,
 as are `ResEnvPalette/Default` and `ResEnvPaletteTimeTable/MainField_Bluesky`; `PrequelPrCloud/%03d` and
@@ -169,8 +169,8 @@ as are `ResEnvPalette/Default` and `ResEnvPaletteTimeTable/MainField_Bluesky`; `
 | `f_80ddaa40` | `SunOcclusion_Construct` | Makes a 0x40-byte object (vtable `0x84baa188`) that `f_80ddab00` keeps at `[gfx+0xb50]` | read |
 | `f_80ecdd80` | `SunOcclusion_Init` | Finds the program `effect_sun_occlusion_cs` (the name at `0x84baa198`) and makes two small buffers in each 0x118-byte entry | read |
 | `f_80b693b0` | `SunOcclusion_BindProgram` | Finds `effect_sun_occlusion_cs` and binds `cReducedBuffer` (a texture), `cParameters` and `Occlusion` (a buffer) | read |
-| `f_834d13c0` | `CloudLayerParam_Params` | A cloud layer's fields: `IsEnable`, `IsDrawReduceBuffer`, `IsDisableFarClip`, `IsDisableDepthTest`, `IsSyncSunPosition`, `DrawOrder`, `CloudColorScale`, `FogColor`/`Near`/`Far`, `AttenuationForSky`, `SunOccBufSize` (next to the name `agl__CloudLayerParam`) | guess |
-| `f_834cb420` | `VolumetricCloudParam_Params` | The volumetric clouds' fields, among them `ScatterHeight`, `ScatterAmb`, `SunOccChkSize` and the noise and backlight parameters | guess |
+| `f_834d13c0` | `CloudParam_Params` | The cloud's own fields, class `agl__CloudParam` (vtable `0x84c1b898`): `IsEnable`, `IsDrawReduceBuffer`, `IsDisableFarClip`, `IsDisableDepthTest`, `IsSyncSunPosition`, `DrawOrder`, `CloudColorScale`, `FogColor`/`Near`/`Far`, `AttenuationForSky`, `SunOccBufSize`; its slot 2 (`f_834d1bc0`) declares `Textures` and `Layers` | read |
+| `f_834cb420` | `CloudLayerParam_Params` | One cloud layer's fields, class `agl__CloudLayerParam` (vtable `0x84c1b7d0`): `IsEnable`, the base and noise texture numbers, `ScatterHeight`, `ScatterAmb`, `SunOccChkSize`, the noise, backlight and colour parameters, the far/near fades and `UseScatter` | read |
 | `f_834f7570` | `LensFlareElement_Params` | A lens flare element's fields: textures, position, rotation, size, colour, and `IsEnableOccludedScaling`, `IsEnableOccludedDec`, `IsEnableOccludedAlpha`, `IsEnableAngleOcclusion` | read |
 
 The pipeline has a switch for the occluded effect (`CreateOccludedEffect`, [rendering.md](rendering.md)) and limits for
@@ -182,7 +182,7 @@ lens flares (`OfxNumLensFlare` and its rigs, presets and dynamic presets). The a
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_83357770` | `EnvSoundOcclusion_Params` | Declares `SkyOcclusionNear/Far/SHeavySnow` `VolumeMin`/`FilterMax`, the same for `InDoor`, `InDoorDist` and `Height`: how far a sound's volume and filter drop under a roof, indoors and in heavy snow | read |
+| `f_83357770` | `EnvSoundRainSetting_Params` | Declares the fields of `game__sound__EnvSoundRainSetting` (vtable `0x84bf4830`): `SkyOcclusionNear/Far/SHeavySnow` `VolumeMin`/`FilterMax`, the same for `InDoor`, `InDoorDist` and `Height` (how far a sound's volume and filter drop under a roof, indoors and in heavy snow), the spatial doubler's sends, the rain and snow move and smoothing times, `RainFilterType` and the height and distance limits | read |
 | `f_81097c50` | `WindSound_Params` | The wind sound's fields, among them `InCaveOcclusionVolumeBasic`/`Strong` and `InCaveOcclusionFilterBasic`/`Strong`, `BasicWindCaveRateMin` and `BasicWindSkyRateMin` | read |
 
 ## The bake workers
@@ -212,9 +212,9 @@ waits while a save loads, where both show up as waiters.
 | Offset | Field | Sure |
 |---|---|---|
 | `+0x490` | The requests' lock | read |
-| `+0x4b0` | A lock the frame takes first (it does nothing that frame when it can't) | guess |
+| `+0x4b0` | A lock the frame takes first (it does nothing that frame when it can't); `f_83472050` also takes it around the saved-state apply | guess |
 | `+0x4d0` | Flags: bit 11 a copy of request bit 20 (use the player's position), bit 13 stops the clock, bit 14 the clock is stopped | read |
-| `+0x4d4` | Flags: bit 0 "immediate" (`ExecuteWmRequestImmTrans`) | read |
+| `+0x4d4` | Flags: bit 0 "immediate" (`ExecuteWmRequestImmTrans` sets it; `WorldMgr_Calc` begins by copying `+0x4d8` here and zeroing `+0x4d8`, and passes the bit on to the environment update) | read |
 | `+0x510` | The clock (must be set before `f_834722d0` is called) | read |
 | `+0x528` | The sun's actor link | read |
 | `+0x540` | The moon's actor link | read |
@@ -232,7 +232,7 @@ waits while a save loads, where both show up as waiters.
 | `+0xc … +0x14` | The cloud shape (bit `0x1`) | read |
 | `+0x18`, `+0x1c` | The cloud shadow's position (bit `0x2`) | read |
 | `+0x9e4` | The environment effect (bit `0x800`) | read |
-| `+0xa18`, `+0xb38` | Palette names | read |
+| `+0xa18`, `+0xb38` | Palette names (256-byte strings); `+0xc50` the third argument of `f_83473970` | read |
 | `+0x10fc` | The lunar age | read |
 | `+0x1100 … +0x1108` | The wind vector | read |
 
@@ -240,14 +240,14 @@ waits while a save loads, where both show up as waiters.
 
 | Offset | Field | Sure |
 |---|---|---|
-| `+8` | Flags: bits 1 and 2 set by `Clock_SetTime` (a set leaves `+8` at 0x4, seen), bit 8 marked by the game-data load, `0x30`, `0xc0` and `0x200` tested by the frame | tested |
+| `+8` | Flags: bit 1 (and bit 2, when `flag` bit 0 is set) set by `Clock_SetTime`, which also sets bit 3 (the step clears it again; a set leaves `+8` at 0x4, seen), bit 8 marked by the game-data load, `0x30`, `0xc0` and `0x200` tested by the frame | tested |
 | `+9` | Bit 1: read the second time block (`+0x50`) instead of the first (`+0x20`) | read |
 | `+40` | The seconds of the day (0 to 86399): 120 game seconds a real second, so a day in 12 real minutes; stopped by the pause menu and for 1 to 3 s at a map load | tested |
 | `+44` | The day, kept mod 8 (7 then 0 seen) | tested |
 | `+0xc`, `+0x10` | The minute of the day and the second of the minute (both are the save's "auxiliary words"); standing while the seconds stand | tested |
 | `+0x40` | The time division (0 day, 1 night): 1 at 20:15 and 00:15, 0 from 06:00 to 15:00 | tested |
 | `+0x48`, `+0x4c` | The time and day asked for by `Clock_SetTime` (a script set leaves `+0x4c` at -1, "leave the day") | tested |
-| `+0x68` | The lunar age | read |
+| `+0x68` | The lunar age (negative: not set; `WorldEnv_LunarAge` then derives it from the day) | read |
 | `+0x20` | Block A: `+0x28` the seconds, `+0x2c` the day, `+0x30` a u32 that is zeroed whenever a requested time is applied (meaning not found) | read |
 | `+0x50` | Block B, the second time block the visual-only time uses (`+0x58`, `+0x5c`, `+0x60`); selected while bit 0x200 of `+8` is set | read |
 | world `+0x38d8` | A signed pending hour (negative: none): `WorldMgr_Calc` applies it with `Clock_SetTime(hour * 3600, flag 0, day -1)`, sets bit 13 of `world+0x4d0` (the bit that stops the clock) and writes -1 back; who writes it was not found | read |
@@ -259,7 +259,7 @@ waits while a save loads, where both show up as waiters.
 | Offset | Field | Sure |
 |---|---|---|
 | bit 2, bit 3 | Day, night (the day/night value passed in the update's arguments is 0 or 1); bit 3 is slot `+0x68` | read |
-| bit 4 | The sun is appearing (day), cleared with bit 5 by a flag in the arguments (`args+5`) or `+0xd08` bit 2 | read |
+| bit 4 | The sun is appearing (day): bit 2's twin; cleared with bit 5 by a second condition, and with bits 2, 3 and 5 by a flag in the arguments (`args+5`) | read |
 | bit 5 | The moon is appearing (night) | read |
 | bit 7 | The sun model is visible: a copy of bit 4, cleared while request bit `0x40000` or `0x8000000` is set | read |
 | bit 8 | The moon model is visible: a copy of bit 5, cleared the same way | read |
@@ -304,12 +304,12 @@ culled, so the depth is complete and the GPU's own sun occlusion should be right
 - `oot_set_time` calls `f_834722d0` directly with `hour * 3600`, as `ExecuteWmSetTime` would with `TimeMin` 0. It checks
   the clock (`world+0x510`) first. **read**
 - The time of day above 60 fps is `f_803edf70`'s cut to whole seconds ([frame-time.md](frame-time.md), PR #2093).
-- The fog and exposure factors: `docs/design.md` says the OoT fog (0.25) and exposure (0.65) factors are
-  still needed, but `oot_visual` in `gpu/vk/vk_shader.cpp` is now off unless `RX_VK_OOT_VISUAL=1`, and its defaults are
-  0.08 (`RX_VK_OOT_FOG`) and 1.0 (`RX_VK_OOT_EXPOSURE`). The fog it scales is the froxel fog's integration (a compute
-  program; the volume fog of the palettes above), and the exposure is the final pass's (`c3+0x38`). The game sets its
-  exposure from the palette (`ExposureValue`, `IsExposureLow`, `RainExposureRate`) and from its auto exposure
-  (`agl::pfx::AutoExposure`), whose meter the CPU reads back (`gpu/vk/vk_memory.cpp`).
+- The fog and exposure factors: no factor of LS's scales them any more. The OoT fog (0.25) and exposure (0.65)
+  factors, from Orchid's workaround, were off from 11-07 and removed in HS #2042 (`RX_VK_OOT`, `RX_VK_OOT_EXPOSURE`,
+  `RX_VK_OOT_FOG` and `RX_VK_OOT_VISUAL` are now only logged as doing nothing). What they scaled is the froxel fog's
+  integration (a compute program; the volume fog of the palettes above) and the final pass's exposure (`c3+0x38`). The
+  game sets its exposure from the palette (`ExposureValue`, `IsExposureLow`, `RainExposureRate`) and from its auto
+  exposure (`agl::pfx::AutoExposure`), whose meter the CPU reads back (`gpu/vk/vk_memory.cpp`).
 - The volume fog's resolution is set separately for the console and handheld (`VolumeFogResScaleConsole`,
   `VolumeFogResScaleHandheld`, in the WorldParam).
 - The volume fog reads the light probes (`VolumeFogProbeBakeLightScale`, `…SkyLightScale`, `…BounceLightScale`): the

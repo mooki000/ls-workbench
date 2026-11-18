@@ -78,7 +78,7 @@ The game does not import `GetTouchScreenStates`, the debug pad or the gesture fu
 | `f_80ed66d0` | `ControllerMgr_AddDevice(mgr, device)` | Links a device into the manager's list (`+0x160`, the count at `+0x170`, the node's offset at `+0x174`) | read |
 | `f_8038a140` | `ControllerMgr_Calc` | The manager's calc (its vtable `+0xb0`): every device's calc (`+0x20`), then every controller's calc (`+0x30`, called directly when it is `f_8038a220`) | read |
 | `f_81041d30` | `ControllerMgr_NpadDevice(mgr)` | The first device in the list whose type is the Npad device's; 0 when there is none | read |
-| `f_81041e10` | `ControllerMgr_Controller9` | The controller whose id (`+0x138`) is 9, under a mutex (`[0x84eb5f48]+0xd60`). Likely the merged controller | guess |
+| `f_81041e10` | `ControllerMgr_Controller9` | The controller whose id (`+0x138`) is 9, under a mutex (`[0x84eb5f48]+0xd60`). Likely the merged controller | read |
 | `f_80ed67c0` | `NpadDevice_Ctor(device, mgr, heap, priority)` | Sets the device id 13 (`+0x18`), 8 Npads (`+0x28`), builds the `VibrationThread` at `+0x8518`, calls `InitializeNpad`, `SetSupportedNpadIdType` (the nine ids at `0x83f38fb8`) and `SetSupportedNpadStyleSet(0x1f)`, clears the nine records (style 15, none), puts the thread on core mask 2 and starts it | read |
 | `f_834892b0` | `NpadDevice_Dtor` | Finalises Jcms, Nmouse and sensor fusion if their buffers are set, frees them, and stops the thread | read |
 | `f_834893a0` | `NpadDevice_DtorDelete` | The deleting destructor (0x8788 bytes) | read |
@@ -86,8 +86,8 @@ The game does not import `GetTouchScreenStates`, the debug pad or the gesture fu
 | `f_80ed6970` | `VibrationThread_Ctor` | A sead thread named "VibrationThread" (vtable `0x84c16050`), a message queue of 15, a queue of 16 vibration commands at `+0xd8` and a critical section at `+0x230` | read |
 | `f_83489ad0` | `VibrationThread_Calc` | Takes the oldest command (a handle and a `VibrationValue`, 20 bytes) off the queue under the lock (`f_83489b50`) and sends it with `nn::hid::SendVibrationValue` | read |
 | `f_83489b50` | `VibrationQueue_Pop(queue, out)` | Pops one 20-byte entry from the ring (`+0` storage, `+8` capacity, `+0xc` read index, `+0x10` count) | read |
-| `f_83b486e0` | `KeyMouseDevice_Ctor(device, mgr)` | The keyboard and mouse device (vtable `0x84c81cf8`, device id 10): clears its key bits and counters, calls `InitializeMouse` and `InitializeKeyboard` | read |
-| `f_83b48780` | `KeyMouseDevice_Calc(device)` | Reads 16 mouse states and the keyboard's state, and keeps hold, trigger, release and repeat bits for 256 Windows virtual-key codes, from the table at `0x83f8f8a8` (131 entries: codes 1, 2, 4, 5 and 6 are the mouse's buttons, the rest a keyboard key). A key held for 30 calcs or more sets its repeat bit each calc (a count of calcs, not of time). Also the pointer (pixels at `+0x1a8`, -1 to 1 at `+0x1b0`) and the wheel (`+0x1c0`). It stops early when bit 0 of the newest mouse state's attributes is set | read |
+| `f_83b486e0` | `KeyMouseDevice_Ctor(device, mgr)` | The keyboard and mouse device (vtable `0x84c81cf8`, device id 10): keeps the manager at `+0x20`, clears its bit arrays and counters (0x80 bytes from `+0x28`, 0x100 bytes from `+0xa8`), calls `InitializeMouse` and `InitializeKeyboard` | read |
+| `f_83b48780` | `KeyMouseDevice_Calc(device)` | Reads 16 mouse states and the keyboard's state, and keeps hold, trigger, release and repeat bits for 256 Windows virtual-key codes, from the table at `0x83f8f8a8` (131 byte pairs: codes 1, 2, 4, 5 and 6 are the mouse's buttons, the rest a keyboard key). A key held for 30 calcs or more sets its repeat bit each calc (a count of calcs, not of time). Also sums the mouse wheel's movement (`+0x1c0`) and keeps the last sampling number (`+0x1c8`). It stops early when bit 0 of the newest mouse state's attributes is set. Where the pointer (`+0x1a8`, `+0x1b0`) is written was not found | read |
 
 ## The controllers
 
@@ -113,9 +113,9 @@ controller the camera's input reads.
 |---|---|---|---|
 | `f_80fb5b70` | `ControllerModule_Create(heap)` | Creates the module (0x1a0 bytes) once, among the engine's modules (`f_80fb5200`), and keeps it at `0x84eb2f10` | read |
 | `f_83b44500` | `ControllerModule_Init` | The module's setup (its vtable `+0x38`): creates the controllers and their addons and the keyboard and mouse device (`f_83b486e0`), links eight controllers through `f_810421f0`, and calls `SetSupportedNpadIdType` | read |
-| `f_83b45780` | `ControllerModule_Update` | The module's vtable `+0x10`: under a try-lock, checks the pads and, when its state asks for it, calls `ShowControllerSupport` | guess |
+| `f_83b45780` | `ControllerModule_Update` | The module's vtable `+0x10`: under a try-lock, checks the pads and, when its state asks for it, calls `ShowControllerSupport` | read |
 | `f_83b45f80` | `ControllerModule_ShowControllerSupport` | Fills a `ControllerSupportArg` (`SetDefault`), shows the applet under the module's locks and assigns the pads from its result (`f_81041e90`). `SeqExecuteShowControllerSupportApplet` calls it | read |
-| `f_81041e90` | `Controllers_AssignNpads` | Finds the Npad device and controller 9 and hands the Npads to the controllers, disconnecting the ones it does not use | guess |
+| `f_81041e90` | `Controllers_AssignNpads` | Finds the Npad device and controller 9 and hands the Npads to the controllers, disconnecting the ones it does not use | read |
 | `f_81041ae0` | `Npad_Disconnect(_, id)` | `DisconnectNpad` for an id up to 7 | read |
 | `f_81000d20` | `ControllerModule_SetStyles(module, styles, hold)` | `SetSupportedNpadStyleSet(styles)`, keeps the hold type at the Npad device's `+0x2c` and calls `SetNpadJoyHoldType` | read |
 | `f_81000ca0` | `SeqOneShotSetSupportControllerStyle_Eval` | The script node: five bools (the five styles) and a hold type, to `f_81000d20` | read |
@@ -171,7 +171,7 @@ next to `PreRawLeftStickRadian`, `ReverseInput` and `RawLeftStick`. Script nodes
 | `0x84c818e8` | `ControllerModule_vtable` | The controller module's vtable | read |
 | `0x84eb2f10` | `g_ControllerModule` | The controller module; `[0x84c9ef30]` points here | read |
 | `0x83f38fb8` | `NpadIdTable` | The nine Npad ids the game supports: 0 to 7 and 0x20 (Handheld) | read |
-| `0x83f8f8a8` | `KeyMouseTable` | 131 pairs (Windows virtual-key code, mouse button or keyboard key) | read |
+| `0x83f8f8a8` | `KeyMouseTable` | 131 byte pairs (Windows virtual-key code, mouse button or keyboard key index) | read |
 | `0x83e6085c` | `StickScale` | 1/32767, a stick's integer to -1..1 | read |
 
 ## Structures

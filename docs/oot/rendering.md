@@ -134,10 +134,11 @@ pass each belongs to is from the names (**guess** where marked).
 | `f_8361c3f0` | `Decal_Make` | Allocates `decal_drawer_buffer` (decal AO: `decalAoTmp`, `f_8361ef90`) | read |
 | `f_834c1e80` | `VolumeMask_Make` | Allocates `volume mask - mask` (and its layer, depth and shadow in `f_834c20a0`) | read |
 | `f_8026a9e0` | `Bloom_Make` | Allocates `bloom_ex`, `bloom_ex_tgt`, `reduce` and `detect0`/`detect1` | read |
-| `f_83515da0` | `Dof_MakeCoc` | Allocates `near_coc_tex`, `far_coc_tex`, `coc_map_tex` and `tmp_tile` | read |
+| `f_83515da0` | `DofPass_DeletingDtor` | A deleting destructor (15 instructions; vtable `0x84c1f368`), the neighbour of `f_83515de0`, which holds the DoF textures' names | read |
+| `f_83515de0` | `Dof_MakeCoc` | Allocates `near_coc_tex`, `far_coc_tex`, `coc_map_tex` and `tmp_tile` (386 instructions) | read |
 | `f_80280270` | `Dof_MakeMips` | Allocates `dof_blur_mipmap`, `dof_blur_mipmap_weight`, `dof_depth_mipmap` | read |
 | `f_8357aa80` | `MotionBlur_Make` | Allocates `aglMotionBlur::tmp_tex` | read |
-| `f_8361b770` | `RadialBlur_Make` | Allocates `radial_blur` (`radial_blur_HalfBuffer` in `f_8361b290`) | read |
+| `f_8361b770` | `RadialBlur_Make` | Picks the radial blur's element and tail-calls `f_8361b790`, which allocates `radial_blur` (`radial_blur_HalfBuffer` in `f_8361b290`) | read |
 | `f_835a1ae0` | `MultiFilter_HdrCompose` | Allocates `MultiFilterHDRCompose`, the last of the post chain (`MultiFilterReduce`, `Expand`, `ColorDrift`, `Trimming` in `f_835a0a30`..`f_835a17d0`) | read |
 | `f_809ec0e0` | `MultiFilter_ColorCorrection` | Allocates `MultiFilterColorCorrection` | read |
 | `f_80271420` | `Ndsr_MakeTargets` | Allocates `ndsr::two_step_upscale_input` and `ndsr::smaa_output` | read |
@@ -146,11 +147,11 @@ pass each belongs to is from the names (**guess** where marked).
 | `f_8065c660` | `Reprojection_Make` | Allocates `Reprojection` and `DepthBuffer`: a temporal reprojection | guess |
 | `f_8065f190` | `ShadingRate_Make` | Allocates `shading_rate_image` | read |
 | `f_8028ca00` | `SkinShading_Make` | Allocates `Blur0`, `Blur1`, `Reduce` and `skin_shading` | read |
-| `f_836ba520` | `Outline_Make` | Allocates `OutlineDepth` | read |
+| `f_836ba520` | `Outline_Make` | Picks an element and tail-calls `f_836ba530`, which allocates `OutlineDepth` | read |
 | `f_8065afe0` | `Snapshot_Make` | Allocates `SnapshotColor`, `SnapshotDepth` and the stroke textures | read |
 | `f_809ed030` | `RenderDisplay_Make` | Allocates `agl::RenderDisplay(color)` and `(depth)` | read |
 | `f_8006ec60` | `PauseTexture_Make` | Allocates `pause texture`: the paused picture | read |
-| `f_83b83360` | `Ndve_Output` | Allocates `NDVE_Output` | guess |
+| `f_83b83360` | `Ndve_Output` | Allocates `NDVE_Output` through `f_8005ed00` | read |
 
 ## What the renderer recognises
 

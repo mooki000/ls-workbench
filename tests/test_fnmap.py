@@ -66,6 +66,7 @@ class FunctionMap(unittest.TestCase):
             self.assertEqual(code, 0, query)
             self.assertIn("a.md:9", out)
             self.assertIn("Clock_Update", out)
+            self.assertNotIn("recheck", out)   # (no ledger beside the pages: no label)
 
     def test_find_falls_back_to_the_prose_and_fails_when_nothing_names_it(self):
         self.page()
@@ -106,6 +107,53 @@ class FunctionMap(unittest.TestCase):
         code, out = self.check()
         self.assertEqual(code, 0, out)
         self.assertIn("note: f_80000050 is patched", out)
+
+    def ledger(self, *lines):
+        header = "page\tkey\tkind\tverdict\tsure_before\tsure_after\tnote\tchecked\tbuild\thooks_at\torigin"
+        (self.pages / "rechecks").mkdir(exist_ok=True)
+        (self.pages / "rechecks" / "a.tsv").write_text("\n".join([header, *lines]) + "\n", encoding="utf-8")
+
+    def test_find_prints_the_rows_recheck_label_under_it(self):
+        self.page("| `f_80000030` | `Slow` | A long function | read |\n"
+                  "| `f_80000050` | `Late` | A row that came after the recheck | read |\n"
+                  "| `f_80000070` | `Fixed` | Says what it does now | read |")
+        row = "a\t%s\tfunction\t%s\t%s\t%s\t%s\t2026-11-17\tbuild\t\tdyst"
+        self.ledger(row % ("f_80000010", "agrees", "guess", "read", "Calls and offsets match."),
+                    row % ("f_80000030", "cannot-check", "read", "read", "deep: the loader was not read"),
+                    row % ("f_80000070", "partly", "read", "read", "Also calls the second reader."))
+        code, out = self.tool("find", "f_80000010")
+        self.assertEqual(code, 0, out)
+        self.assertIn("  rechecked 2026-11-17: agrees (read, raised from guess)", out)
+        self.assertIn("  cannot-check yet: deep: the loader was not read", self.tool("find", "f_80000030")[1])
+        self.assertIn("  not rechecked: the row was added after the first pass", self.tool("find", "f_80000050")[1])
+        self.assertIn("  rechecked 2026-11-17: partly (read): Also calls the second reader.", self.tool("find", "f_80000070")[1])
+
+    def test_check_looks_up_a_module_a_hook_names_in_the_port(self):
+        self.page("| `f_80000060` | `Pane_Calc` | Moves a pane. Hooked by `UI_SITES` of `nx2/oot_wide.py`: it runs first | read |\n"
+                  "| `f_80000070` | `Gone` | Hooked by `install` (nx2/oot_gone.py): six reads of it | read |\n"
+                  "| `f_80000080` | `Old` | Hooked by `install` of `oot_removed.py`. More text | read |\n"
+                  "| `f_80000090` | `Host` | Hooked by nothing; `host/oot_coop.c` calls it | read |")
+        (self.port / "nx2" / "oot_wide.py").write_text("UI_SITES = ()\n", encoding="utf-8")
+        self.code('A = "f_80000010"\ndef patch_clock(s):\n    return s\n')
+        code, out = self.check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("f_80000070 says 'Hooked by' nx2/oot_gone.py, which the port does not have at HEAD", out)
+        self.assertIn("f_80000080 says 'Hooked by' oot_removed.py, which the port does not have at HEAD", out)
+        self.assertNotIn("oot_wide.py, which", out)
+        self.assertNotIn("f_80000090 says", out)
+
+    def test_check_fails_for_a_ledger_line_with_too_few_columns_or_an_unknown_verdict(self):
+        self.page()
+        self.code('A = "f_80000010"\ndef patch_clock(s):\n    return s\n')
+        good = "a\tf_80000010\tfunction\tagrees\tread\tread\tfine\t2026-11-17\tbuild\t\tdyst"
+        self.ledger(good)
+        self.assertEqual(self.check()[0], 0, self.check()[1])
+        self.ledger(good, "a\tf_80000010\tfunction\tagrees", good.replace("agrees", "probably"))
+        code, out = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("rechecks/a.tsv:3: a line needs 11 columns", out)
+        self.assertIn("rechecks/a.tsv:4: a line needs 11 columns", out)
+        self.assertNotIn("rechecks/a.tsv:2:", out)
 
 
 class SkillCheck(unittest.TestCase):

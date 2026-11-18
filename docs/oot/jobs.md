@@ -61,14 +61,14 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_83b797e0` | `ModuleSystem_SetupAndRun` | The ModuleSystem's slot 10: runs the boot phases (`f_83b7a2c0`), builds the job graphs (stage chains at 0x83b79fcc and 0x83b79fe0, stage 0's fork at 0x83b79ff8, nodes at 0x83b7a060 and 0x83b7a120), sets the delegate "ModuleSystem::moduleCalc_" (`f_80706be0`, at ModuleSystem `+592`), then calls the framework's run (slot `+32` of `[0x84eb5f40]`, at 0x83b7a188), which doesn't return | read |
-| `f_81028640` | `FrameContext_Build` | Builds the frame context the stages live in (`[[0x84ea2de0]+208]`), from `f_836ce9d0`; `f_836d0880` fills it | read |
+| `f_81028640` | `FrameContext_Construct` | Constructs (initialises) the frame context the stages live in (`[[0x84ea2de0]+208]`): its vtable and the fields set to 0 or -1. Its only caller is `f_836ce9d0`; `f_836d0880` (called from there) fills it | read |
 | `f_80b20010` | `JobGraphBuilder_LinkStages` | Links begin k → six slots → end k, then end k → begin k+1 | read |
 | `f_80b208e0` | `JobGraphBuilder_AddNode(g, desc)` | Adds a node: `desc+8` the job, `+20` priority (0x8c, 0xb4), `+22`/`+24` a mask, `+29` the thread (0xff any), `+0`/`+1` a named-node index (`g+112+4*i`) | read |
 | `f_80b206e0` | `JobGraphBuilder_AddEdge(g, from, to)` | Adds an edge | read |
 | `f_80b20f80` | `JobGraphBuilder_AddEdgeFromNamed(g, i, to)` | Adds an edge from named node i | read |
 | `f_83499af0` | `JobGraphBuilder_Named(g, i)` | Named node i | read |
 | `f_80b20fe0` | `JobGraph_AddFrameStart` | Stage 0's fork: begin 0 → `f_80764670` → six per-core `f_80adaba0` → `f_80bb62f0` → begin 1. The fork is the effects' calc; the EffectModule's calc job (`f_83b525b0`) runs the same calc instead when bit 23 of the manager's `+0x1378` says so, which the hot list suggests in play ([effects.md](effects.md)) | read |
-| `f_80083960` | `StageSlotJob_Run` | A stage slot job's run (about 1,500 lines, 13 indirect calls): **guess**, it runs the work queued for that stage and slot | read |
+| `f_80083960` | `StageSlotJob_Run` | A stage slot job's run (about 1,500 lines, 13 indirect calls): dispatches by the mask at `job+0x10` (set by `f_836d0880`: bit 10 draw-list batches, bits 13 and 15 draw tasks), calls `f_800998a0` (bit-3 work), `f_8006cd60` and `f_80084de0`, and carries the `agl::lyr::Renderer` begin/end labels | read |
 | `f_83b78d80` | `ModuleCalcJob_Run` | A module's calc job: calls the module's vtable `+16` | read |
 | `f_83b78f50` | `ModuleJob48_Run` | A module's second job: calls its vtable `+24` | read |
 | `f_80fb6860` | `ActorModule_Construct` | Makes the "Actor" module (vtable `0x84c7c9b8`) | read |
@@ -84,10 +84,10 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_8069dbe0` | `SeadThread_Construct` | Makes a sead::Thread: a message queue of 1, quit message 0x7fffffff | read |
-| `f_834a3060` | `SeadThread_MessageLoop` | A thread's idle loop: `ReceiveLightMessageQueue`, then runs what the message asks | read |
-| `f_834a2e50` | `SeadThread_Entry` | The thread entry above `f_80df25c0` and `f_80df2680` in every job thread's stack | guess |
-| `f_80df2680` | `SeadThread_Run` | Calls the thread's run slot (`+112` of the vtable, slot 14) | guess |
+| `f_8069dbe0` | `SeadThread_Construct` | Makes a sead::Thread: its message queue's size and the quit message are arguments (the thread pools pass 1 and `0x7fffffff`, `DecompSlot_Create` 32 messages) | read |
+| `f_834a3060` | `SeadThread_ReceiveMessage` | One message from the thread's queue: blocking when the second argument is 0 (`f_85103a20`), with a timeout otherwise (`f_85103cc0`); answers the message, 0 on a timeout. The loop that runs the messages is `f_80df2680` | read |
+| `f_834a2e50` | `SeadThread_Entry` | The thread entry above `f_80df25c0` and `f_80df2680` in every job thread's stack | read |
+| `f_80df2680` | `SeadThread_Run` | The thread's message loop: receives a message (`f_834a3060`), calls the run slot (`+112` of the vtable, slot 14) with it, and repeats until the quit message (`+160`) | read |
 | `f_8069b020` | `ThreadPoolA_Construct` | Builds a pool A: one worker per set bit of `cfg+36 & 0x3e`, or-ed with the byte at `cfg+16` (cores 1–5, and core 0 when the byte at `cfg+16` is 1), named `%s%u` (`0x83d7c024`) with the core, pinned to that core (`SetThreadCoreMask(t, -1, 1 << core)`, the mask kept at `thread+176`), priority `cfg+32` (16). Worker vtable `0x84c53338` | read |
 | `f_8069aa20` | `ThreadPoolB_Construct` | The same for a pool B; worker vtable `0x84c532a8` | read |
 | `f_80b5e9e0` | `BaseProcExecutor_Create` | Makes the "BaseProcExecutor" pool (A, cores 0–5: six threads) | read |
@@ -106,8 +106,8 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 | `f_85786920` | `AtomicNotify` | libc++'s atomic notify (its contention table at `0x8600bf80`) | read |
 | `f_83acfb90` | `BaseProcExecutor_RunPhase` | Starts the BaseProc phase (sends the workers their message, at 0x83acfc98) and waits for it (`WaitLightEvent` at 0x83acfcf4); its caller doesn't run BaseProc jobs itself | read |
 | `f_806afc40` | `PoolA_WaitPhase` | Waits for a pool A phase, joining it when `pool+260` bit 0 is set | read |
-| `f_83b001c0` | `RunBaseProc_Invoke` | "RunBaseProc", six of them, job k pinned to thread k (functor vtable `0x84c7c968`): marks its core's bit in `Actor+232` and calls `f_83acfb90` on the manager at `[0x84eb1920]`, which wakes the BaseProcExecutors and waits. So during stage 5 the ModuleSystem participants sit in that wait while the executors run the actors | read |
-| `f_83aff840` | `EntryJobsBgGraphics_Invoke` | "EntryJobsBgGraphics" (vtable `0x84c7c918`), before PhysicsModule and SoundModule: calls pool A helpers (`f_806b0e80`, `f_806b08a0`, `f_806affc0`) and `f_83acf9b0` | read |
+| `f_83b001c0` | `RunBaseProc_Invoke` | "RunBaseProc", six of them, job k pinned to thread k (functor vtable `0x84c7c968`, slot 2): marks its core's bit in `Actor+232` (`Actor` is `[0x84eb1920]`) and tail-calls `f_83acfb90` on the BaseProc manager `[0x84eb0d90]`, which wakes the BaseProcExecutors and waits. So during stage 5 the ModuleSystem participants sit in that wait while the executors run the actors | read |
+| `f_83aff840` | `EntryJobsBgGraphics_Invoke` | "EntryJobsBgGraphics" (vtable `0x84c7c918`), before PhysicsModule and SoundModule: calls pool A helpers (`f_806b0e80`, `f_806b08a0`) and `f_83acf9b0` | read |
 | `f_83afff70` | `StartBaseProc_Invoke` | "StartBaseProc" (vtable `0x84c7c940`), after begin 5, PhysicsModule and SoundModule, before the six RunBaseProc | read |
 | `f_83b00340` | `CalcCommandEndJob_Invoke` | "CalcCommandEndJob" (vtable `0x84c7c990`), after stage 6's end and StartBaseProc | read |
 
@@ -121,15 +121,15 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 | `f_800711c0` | `JobGraph_Start` | Queues the graph's root jobs and sends the workers their message (`TrySendLightMessageQueue`) | read |
 | `f_80083350` | `PoolB_MakeReady` | Queues a job whose dependency count reached zero | read |
 | `f_80070b20` | `PoolB_WaitPhase` | Waits for a pool B phase; when `pool+260` bit 0 is set the caller joins it and runs `f_8007fe60` on its own context (`pool+16`), then waits for each worker's done event | read |
-| `f_80070d30` | `PoolB_RunPhase` | Runs a pool B phase and waits (`f_80070b20`); used by the limiter's path | read |
+| `f_80070d30` | `PoolB_RunPhase` | Runs a pool B phase and waits: `f_80070ea0` (build), the wait `f_80070b20` and a second build. It sits in the vtable at `0x84c85738`, so it is reached through a slot (the limiter's path as `FrameLimit_Phase`, below, was not shown by direct calls) | read |
 
 ### The frame on the main thread
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_809667b0` | `Framework_Frame` | The frame, under `nnMain` (`f_81222ce0`, [graphics.md](graphics.md)) through `f_80f48c30`: calls `f_8348c680` | read |
+| `f_809667b0` | `Framework_Frame` | The frame loop under `nnMain` (`f_81222ce0`, [graphics.md](graphics.md)) through `f_80f48c30`: an endless loop that calls the framework's slot `+0xe0`; in the class that runs that slot is `f_83b6ea90` (it sets the frame's time and tail-calls `Framework_RunFrame`, `f_8348c680`), in the class at `0x84c167e0` it is `Framework_ProcFrame` | read |
 | `f_8348c8d0` | `Framework_ProcFrame` | The framework's frame entry (slot `+0xe0` of the class at `0x84c167e0`): the timers (`f_8348c600`), the variable-refresh check (slot `+0x128`, `f_8348c660`), then a tail call of `Framework_RunFrame` | read |
-| `f_8348c660` | `Framework_VrrCheck` | When `fw+0x88` is set, tail-calls `Display_VrrEnabled` (`f_804fc0f0`, [frame-time.md](frame-time.md)) | read |
+| `f_8348c660` | `Framework_VrrCheck` | When `fw+0x88` is set, tail-calls `Display_SetRefreshRate` (`f_804fc0f0`, [frame-time.md](frame-time.md)) | read |
 | `f_8348c680` | `Framework_RunFrame` | The framework's frame (slot `+0x130`). In order: the method-tree work, the calc tree (slot `+0xf0`, `f_802eabd0`), the end-of-calc callbacks (slot `+0x70`), the window acquire (slot `+0x120`, `f_81207a50`), the draw tree (slot `+0xe8`, `f_802eb020`) and the frame limiter (slot `+0x110`, `f_8042cd20`). It stamps the frame's CPU times at `fw+0x100`, `+0x108` and `+0x148` | read |
 | `f_802eabd0` | `CalcTree_Run` | Runs the calc tree, recursing through `f_802eacc0` (four levels in the stacks) to the ModuleSystem's calc | read |
 | `f_802eacc0` | `CalcTree_Node` | One level of the calc tree | read |
@@ -137,7 +137,7 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 | `f_81207a50` | `Framework_AcquireTexture` | Slot `+0x120` of the framework: `nvnWindowAcquireTexture` and `nvnWindowSetCrop` | read |
 | `f_802eb020` | `DrawTree_Run` | The draw: through `f_8066fc80` and `f_80665980` to `f_806668b0`. After the draw tree it ends the recording of the primary command buffer (`g_GfxDevice+0x40`, the handle kept at `+0x60`), then does the submit and present directly or sends a message to the Presentation Thread (`fw+0x1b8`) | read |
 | `f_806668b0` | `Draw_Wait` | Where the draw waits (about 7% of the main thread's blocked time) | read |
-| `f_80441560` | `FrameLimit_Phase` | From the limiter (`f_8042cd20`, [frame-time.md](frame-time.md)) through `f_80441630` to `f_80070d30`: one more pool B phase | read |
+| `f_80441560` | `FrameLimit_Phase` | Calls `f_80441630` (which makes indirect calls and tail-calls `f_836d2130`) and tail-calls `f_8353a210`; whether it is the limiter's pool B phase (`f_8042cd20` to `f_80070d30` by slots) was not confirmed | read |
 
 `f_80706be0` (`ModuleSystem_ModuleCalc`, its row in [frame-time.md](frame-time.md)) runs the module phase: it signals
 `[0x84eb1920]+368`, sets bit 0x20 of the ModuleSystem's `+3384`, then builds and runs graph `+1232` and waits
@@ -169,8 +169,8 @@ The jobs that run while the main thread waits in the module phase and at most tw
 | `0x84c7c9b8` | `ActorModule_vtable` | The Actor module | read |
 | `0x84c862d0` | `PhysicsModule_vtable` | PhysicsModule | read |
 | `0x84c92c48` | `SoundModule_vtable` | SoundModule | read |
-| `0x84eb1920` | `g_BaseProcMgr` | The BaseProc manager's holder; its pool A through `+128` → `+16` | read |
-| `0x84c9df00` | `got_BaseProcMgr2` | The manager a BaseProc job's process is run through (`+192`, `+200`, `+224`) | read |
+| `0x84eb1920` | `g_ActorModule` | The Actor module's singleton (0x1f8 bytes, vtable `0x84c7c9b8`); the BaseProc manager proper is `[0x84eb0d90]`, whose pool A is `[[mgr+128]+16]` | read |
+| `0x84c9df00` | `got_PhysicsRoot` | The GOT slot that holds `0x84ea7ff0`, the physics root, which a BaseProc job's process is run through (`+192`, `+200`, `+224`) | read |
 | `0x84c53338` | `PoolAWorker_vtable` | Pool A's worker vtable (slot 14 `f_8004aae0`) | read |
 | `0x84c532a8` | `PoolBWorker_vtable` | Pool B's worker vtable (slot 14 `f_8007fe10`) | read |
 | `0x84c7c968` | `BaseProcPhaseJob_vtable` | The functor that runs the BaseProc phase (invoke `f_83b001c0`) | read |
@@ -200,7 +200,7 @@ Built each frame from a node descriptor `d`.
 | `+24` | An optional push hook | read |
 | `+32`, `+40`, `+48` | Its dependents: sentinel, first link, count | read |
 | `+56` | Instance count (`d+2`), for a job run several times | read |
-| `+60` | Unmet dependencies, counted down atomically | read |
+| `+60` | Unmet dependencies: starts at bit 5 of `desc+5` and grows with each edge when the graph is built, counted down atomically when a job finishes | read |
 
 ### A job graph
 

@@ -12,7 +12,7 @@ description: >
 # The function map: look it up first, add what you learn
 
 The game ships without symbols, so the lifted code calls every function `f_<address>`. The map says what the ones
-somebody already looked at do: about 2,000 rows over 34 pages, one page per part of the game, each row with how sure it
+somebody already looked at do: about 2,000 rows over 35 pages, one page per part of the game, each row with how sure it
 is. Reading it takes seconds; working a function out again from lifted C takes an hour and may get it wrong.
 
 - Pages and conventions: `/home/mooki/Code/hookshot-workbench/docs/oot/` (`README.md` is the index).
@@ -34,6 +34,9 @@ python3 $M/fnmap.py find BakeProbe         # a thread, class or job name from a 
   without describing it (each cut at 240 characters: open the page for the rest): another function's row, or a page's
   prose (its *Notes* and *Open questions* often say more than its rows). `find` stops after 20 hits, so do not pipe it
   into `head`: that ends in a `BrokenPipeError` traceback, harmless but it looks like a failure.
+- `find` prints, under a row, how the recheck of 17 Nov 2026 judged it (`docs/oot/rechecks.md`): `rechecked …: agrees`
+  is a row whose claims were found in the code; `partly` or `corrected` says what the row got wrong; `cannot-check yet:
+  <reason>` and `not rechecked` mean nobody has verified the row since it was written, so weigh it by its *Sure* alone.
 - `find` knows function **starts**. A place inside a function answers `nothing`: every line of a guest backtrace (those
   are return addresses) and a fault's pc are such places. Find the containing function first (rules for lifted code
   below), then look that function up.
@@ -119,6 +122,21 @@ commit you are asking about (the brief and `reports/LOG.md` name them; one of ma
   `c->x[N] = (c->x[N] & ~(0xFFFFULL<<16)) | (0x<high half>ULL<<16);`. Grep the low half and read the next two lines for
   the high half, or scan every file per register in a script. A flag can also be read as a member of a struct, by the
   plain hash of its name instead of the flat `Struct.member` hash: scan for both (`docs/oot/game-data.md`).
+- **Where the real body is.** Many functions start with a 1 to 20 instruction stub, a thunk or a destructor next to the
+  body (a `functions.txt` count of 1 to 5 flags one). A row that sits on one is a wrong address: search the string's or
+  the vtable's users first, then read the neighbours. A cross-file tail call is `TAILCALL(f_x);` (count it as a call when
+  you list callers, and search all `code_*.c`; a function missing from the link map is in `code_hot_*.c`). Import
+  stubs (`f_85...`) are in `$G/a64_hooks.c`, which names the import, not in `functions.txt` (it is in `$G` too).
+- **Without a disassembler.** `llvm-mc --disassemble --triple=aarch64` on the 4-byte words of `image.bin` gives the
+  instructions of a stub. Find a function's vtable slot by searching `image.bin` for its address as 8 little-endian bytes
+  (it has the vtables and GOT cells, not the registry entries a static initialiser writes at run time).
+- **Reading the C.** An address constant is a page base plus a displacement, which can be negative (`g_module_base +
+  0x80de9000 + (-N)`): add them before you search. `recomp_load8` is a byte load. A `_Params` class name is returned by
+  the function 6 slots before its visitor in the vtable (7 for `WorldParam`). A script node's name getter is slot 19, its
+  Execute 29, 30 or 31, OneShot and Query 39, Hold 40.
+- **The retained build is older than main:** its C has only the port's patches of its own date, so a hook on newer main
+  is not in it; read the port's `nx2/` at the rev you ask about. A row's `at 0x...` is the call; a backtrace or `lr` line
+  is the return address, 4 after it.
 - What you work out this way is exactly what section 4 is for: hand the rows back.
 
 ## 2. Weigh the row before you build on it

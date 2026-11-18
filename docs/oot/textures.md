@@ -47,10 +47,11 @@ the budget and eviction), `gpu/vk/vk_memory.cpp` (which guest pages changed),
 | `f_80065b10` | `Texture_Make` | Makes a texture over storage it is given (`nvnTextureInitialize`); the render-target pool's allocator (`f_8005ed00`, [graphics.md](graphics.md)), the occlusion depth buffer (`gfx::OcclusionDepthBuffer`) and several render passes call it | read |
 | `f_800634b0` | `Texture_MakeAndRegister` | Makes a texture and registers it in the texture pool; called by the sky (`SkyInscatter`) and other rendering set-up | read |
 | `f_800662e0` | `Texture_MakeAndRegister2` | The same pair, for render passes' targets (`bilateral_grid_tmp` and others) | read |
-| `f_8348fcc0` | `Device_MakeSystemTextures` | Makes and registers textures as the NVN device is set up (its caller uses `nvnDeviceInitialize`) | guess |
-| `f_83a6d8f0` | `Texture_Upload` | Fills a texture from the CPU, by the texture's pool. A CPU-visible pool: `nvnTextureWriteTexels` and `FlushTexels`. Otherwise a temporary pool (NVN 0x24) and a buffer over it, filled through `BufferMap` and `FlushMappedRange`, then `nvnCommandBufferCopyBufferToTexture`, and both finalised. The game's only other place to write texels from the CPU is `f_8353d560`. Seen: 3,449 `CopyBufferToTexture` in the first 20 s of a start, none in play | tested |
+| `f_8348fcc0` | `Device_MakeSystemTextures` | Makes and registers textures as the NVN device is set up (its caller uses `nvnDeviceInitialize`) | read |
+| `f_83a6d8f0` | `Texture_Upload` | Fills a texture from the CPU, by the texture's pool. A CPU-visible pool: `nvnTextureWriteTexels` and `FlushTexels`. Otherwise a temporary pool (NVN 0x24) and a buffer over it, filled through `BufferMap` and `FlushMappedRange`, then `nvnCommandBufferCopyBufferToTexture`, and both finalised. The game's other places that write texels from the CPU are `f_8353d560` and `f_809e9d60`. Seen: 3,449 `CopyBufferToTexture` in the first 20 s of a start, none in play | tested |
 | `f_8353d560` | `Texture_WriteTexels` | Writes texels into a texture from the CPU (`nvnTextureWriteTexels`) | read |
-| `f_83b82200` | `MovieRenderer_Upload` | The movie renderer's frames, copied into a texture (`nvnCommandBufferCopyBufferToTexture`) | read |
+| `f_83b82200` | `LockedState_Reset(obj)` | An 18-instruction reset next to the movie renderer's upload `f_83b82250`: under the mutex at `obj+8` (`nn::os::LockMutex`, then a tail call of `nn::os::UnlockMutex`) it clears the words at `+188` and `+400`, the pointer at `+192` and the low two bits of the byte at `+40`. It copies nothing | read |
+| `f_83b82250` | `MovieRenderer_Upload` | The movie renderer's frames ("MovieRenderer"; 121 instructions), copied into a texture (`nvnCommandBufferCopyBufferToTexture`) | read |
 | `f_809e9d60` | `Texture_WriteTexelsRange` | `nvnTextureWriteTexels` plus `FlushTexels` for a view; 7 callers | read |
 | `f_80c17040` | `TextureResource_LoadAndUpload` | A texture loader: Zstd decompression (`f_8010b380`), `Texture_Make`, `Texture_Upload` | read |
 | `f_83a6d540` | `Texture_Readback` | Reads a texture back: `ReadTexels` when its pool is CPU-visible, else a temporary 0x24 pool, a buffer, `CopyTextureToBuffer`, a wait, an invalidate and a map | read |
@@ -68,13 +69,14 @@ then hands out ranges of that pool as targets come and go ([graphics.md](graphic
 | `f_809dc6a0` | `TeraScene_Enter` | Uses the label "tera::Scene::enter": the terrain scene as a map is entered | guess |
 | `f_809e24c0` | `TeraScene_MakeHeap` | Makes the terrain scene's heap ("Create Terrain Scene Heap") | read |
 | `f_80f6cf50` | `TeraFileResourceMgr_Init` | Uses "tera::FileResourceMgr": the terrain's file resources | guess |
-| `f_80f6d830` | `TeraFileResourceMgr_SetHeaps` | Splits the heap it is given into "Terrain GPU Res" and "Terrain Host Res" by a ratio (`s0`) | read |
+| `f_80f6d830` | `TeraFileResourceMgr_SetHeaps` | Initialises the file resource manager's fields and tail-calls `f_80f6d8e0`, which splits the heap it is given into "Terrain GPU Res" and "Terrain Host Res" by a ratio (`s0`) | read |
 | `f_809e38d0` | `TeraResourceHolder_Init` | Uses "tera::ResourceHolder" | guess |
 | `f_80387f40` | `TerrainResourceHooker` | "TerrainAresResourceRequestProcessHooker - Prefetch": fetches terrain resources ahead of need | guess |
 | `f_83aca6a0` | `Tera_UpdateGrid` | Allocates a texture named "tera::update_grid" from the render-target pool (`f_8005ed00`): the GPU's work target when the grid around the centre changes | read |
 | `f_83aca900` | `Tera_UpdateFrame` | Allocates a texture named "tera::update_frame" from the same pool, each frame's terrain update | read |
 | `f_809f3900` | `Tera_DrawCompressed` | Allocates "tera::temp_for_compressed" from the render-target pool, sets a viewport (`f_802a46e0`) and draws: the GPU writing terrain textures from compressed data | read |
-| `f_80d7e070` | `Tera_PolishCompressed` | Allocates "tera::temp_for_compressed_in_polish" from the same pool and fills it from the CPU (`f_83a6d8f0`) | read |
+| `f_80d7e070` | `MemberCall_Thunk` | An 8-instruction this-adjusting thunk (a call through a member-function pointer held in its first argument), next to `f_80d7e090`, which holds the polish body below | read |
+| `f_80d7e090` | `Tera_PolishCompressed` | Allocates "tera::temp_for_compressed_in_polish" from the same pool and fills it from the CPU (`f_83a6d8f0`; 421 instructions) | read |
 | `f_80942d20` | `Tera_Programs` | Names the terrain's shader programs: `tera_material`, `tera_normal`, `tera_height`, `tera_height2`, `tera_bake_gi`, `tera_bake_ao`, `tera_custom`, and the passes `OpaqueNear`, `OpaqueMiddle`, `OpaqueFar`, `ZOnly` and their `…Deformable` forms ([shaders.md](shaders.md)) | read |
 
 The terrain's script nodes say how the rest of the game waits on it: `SeqExecuteWaitTerrainResourceStable`,
@@ -99,7 +101,7 @@ with its own settings: `TexatureHandleNum` (sic), `TextureCompactionJobNum`, `Te
 | `f_832ee450` | `SeqOneShotClearTextureCacheAll_Evaluate` | Slot 39: calls `f_8079bb50` on the cache and marks the node done | read |
 | `f_8079bb50` | `TextureDataMgr_ClearAll(mgr)` | Under the cache's lock (`+0x3d0`), takes each entry off its list (head `+0x28`, count `+0x30`, the link's offset in an entry `+0x34`) and frees it (`f_8079bbe0`) | read |
 | `f_831cb1f0` | `TextureDataMgr_ReadParams` | Reads the cache's settings: `TexatureHandleNum`, `TextureCompactionJobNum`, `TextureCacheRejectionThreshold`, `TextureUserDataList` | read |
-| `f_80f6c580` | `TextureDataMgr_Init` | Sets the cache up (its heaps: `TextureCompactionWorkHeap`) and starts the compaction task, its work function at `0x807da3f0` | read |
+| `f_80f6c580` | `TextureDataMgr_Init` | Sets the cache up (its heaps `agl::TextureDataMgr::InitializeHeap` and `aglTextureDataMgr::CompactibleHeap`; the setting `TextureCompactionWorkHeap` is read by `f_831dd780`) and starts the compaction task (`aglTextureDataMgr::Compaction`), its work function at `0x807da3f0`, and a second one, `aglTextureDataMgr::Replace` | read |
 | `f_807da480` | `TextureDataMgr_CompactStep` | One step of the compaction, under its lock: a pass that picks what to move (`f_807da590`) and the moves (`f_807dbf90`, `f_807db4a0`, `f_807dbd60`) | read |
 | `f_807dbf90` | `TextureDataMgr_CompactMove` | Moves texture data with `memcpy`, a slice at a time | read |
 
@@ -177,10 +179,10 @@ is needed (Hyrule Field, Lost Woods), still with the keep rule off, to show it o
 | Address | Name | What it is | Sure |
 |---|---|---|---|
 | `0x84d673a8` | `pfn_nvnMemoryPoolMapVirtual` | The game's pointer to `nvnMemoryPoolMapVirtual` (two sites; the one that runs, once at the start, is in `f_811c9ba0`, and the site count of [nvn-calls.md](nvn-calls.md) puts the other in `f_8005ed00`, where none ran) | read |
-| `0x84d676b0` | `pfn_nvnTextureInitialize` | The same for `nvnTextureInitialize` (17 places) | read |
+| `0x84d676b0` | `pfn_nvnTextureInitialize` | The same for `nvnTextureInitialize` (18 places in 17 functions) | read |
 | `0x84d673d8` | `pfn_nvnTexturePoolRegisterTexture` | The same for `nvnTexturePoolRegisterTexture` (12 places) | read |
-| `0x84d676c0` | `pfn_nvnTextureFinalize` | The same for `nvnTextureFinalize` (10 places) | read |
-| `0x84d67748` | `pfn_nvnTextureWriteTexels` | The same for `nvnTextureWriteTexels` (2 places) | read |
+| `0x84d676c0` | `pfn_nvnTextureFinalize` | The same for `nvnTextureFinalize` (11 places) | read |
+| `0x84d67748` | `pfn_nvnTextureWriteTexels` | The same for `nvnTextureWriteTexels` (3 places: `f_83a6d8f0`, `f_8353d560`, `f_809e9d60`) | read |
 | `0x84d67f00` | `pfn_nvnCommandBufferCopyBufferToTexture` | The same for `nvnCommandBufferCopyBufferToTexture` (3 places) | read |
 
 The game never calls `nvnTextureGetSparseTileLayout` or `nvnTextureBuilderGetSparseTileLayout`, so it likely makes no

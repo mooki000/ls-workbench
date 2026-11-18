@@ -31,8 +31,9 @@ and instanced draws like any other, and the DLSS motion path treats particles as
    - from stage 0 of the frame's job graph, the "frame start" fork in [jobs.md](jobs.md): `f_80764670`, then six per-core
      `f_80adaba0`, then `f_80bb62f0`.
    Pool B's job runner `f_80080000` runs the same loop inline when a job's run is the calc's (`f_83b52550`), and
-   `f_8007f6c0` holds a copy of it too. **read** Bit 23 of `manager+0x1378` stops the stage-0 path and lets the upload run;
-   the upload is in `hot_order.txt` and the stage-0 jobs are not, so the first path is the one that ran in the profiled
+   `f_8007f6c0` holds a copy of it too. **read** Bit 23 of `manager+0x1378` stops the stage-0 path (bit 21 stops it after
+   the group entries) but not the upload, which runs whenever the manager exists. The stage-0 jobs are not in
+   `hot_order.txt` while the module path's `f_83b525b0` and `f_8007f100` are, so the module path is the one that ran in the profiled
    play. **guess**
 3. **Where the particles are worked.** An emitter's calc type (`emitter+0x20`) decides it:
    - type 1: the CPU simulates every particle. Each live particle costs virtual calls into the emitter's modules
@@ -125,9 +126,10 @@ the lens flare and the sun's occlusion ([environment.md](environment.md)), not t
    a light event. Each set is
    calculated with its group's step: 0 if the group's bit in `+0x1414` is clear, and left out altogether if its bit in
    `+0x1418` is set. **read**
-3. **Upload**: the slot jobs' bit-3 work (`f_800998a0`, [drawing.md](drawing.md)) calls `f_800ad2b0` when bit 23 of
-   `manager+0x1378` is set. That walks the 16 groups' set lists and copies each live emitter's particle data into the
-   frame's GPU buffer (index `vfx+0x2238`). **read**
+3. **Upload**: the slot jobs' bit-3 work (`f_800998a0`, [drawing.md](drawing.md)) calls `f_800ad2b0` whenever the manager
+   exists (the caller tests no flag; bit 23 of `manager+0x1378` does not gate it). That walks the 16 groups' set lists and
+   copies each live emitter's particle data into the frame's GPU buffer (index `vfx+0x2238`). With bit 21 set and bit 23
+   clear it first handles each group's pending entries and runs a per-group calc step (`f_836c06d0`, `f_836d3640`). **read**
 4. **GPU calc**: the scene's recording (`f_80660320`) and its main render step (`f_80a47660`) call `f_80664210`. It
    dispatches the compute emitters that the calc collected per core (`vfx+0x4c0`, counts at `+0x4d8`). **read**
 5. **Draw**: twelve pass functions call `f_8027c9e0`, among them `LocalDepthShadow::drawDepth`, the snapshot and
@@ -141,21 +143,21 @@ the lens flare and the sun's occlusion ([environment.md](environment.md)), not t
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_8087c140` | `EffectMgr_Create(heap)` | Makes the 0x1b68-byte effect manager once and keeps it at `0x84ea2ea8`; a sub-object at `+0x1b48` (vtable `0x84c37090`) is kept at `0x84ea2e08` | read |
-| `f_8087c1d0` | `EffectMgr_Construct` | Clears the set list (`+0x18`, count `+0x1018`), the 16 group slots (`+0x1460`, 0x50 bytes each), the group masks (`+0x1414`, `+0x1418`) and the flags (`+0x1378`) | read |
+| `f_8087c1d0` | `EffectMgr_Construct` | Sets the manager's vtable (`0x84c370b0`) at `+0`; zeroes the live-set count and take counter (`+0x1018`, `+0x101c`; the set pointers at `+0x18` are not wiped), the calc-open byte and done counter (`+0x1020`, `+0x1028`), the vfx3 system pointer (`+0x1030`), the mode (`+0x1360`), the flags (`+0x1378`), the stage-0 counters and the per-group bits (`+0x1394`, 0x44 bytes), and the counters in the tail of each of the 16 group slots (`+0x1460`, 0x50 bytes each). The group masks start as `+0x1414` = all ones (every group's time runs) and `+0x1418` = 0 (no group left out) | read |
 | `f_80eee830` | `EffectModule_Construct` | Makes the engine's EffectModule: vtable `0x84c82468` | read |
 | `f_83b51a00` | `EffectModule_Init` | Slot `+56`: makes `NnVfxDataHeap`, the ELink user (`ELinkUserCreate`, `ELink2/elink2.%s.belnk`) and the threads `EffectResLoadingThread` and `EffectResUnloadThread` | read |
 | `f_83b525b0` | `EffectModule_Calc(mod, arg)` | Slot `+16`, run by the module's calc job ([jobs.md](jobs.md)): adds `step × tick frequency` to `+0xf0`, puts `arg+4` into the ELink system's `+0xa8`, runs the ELink calc (`f_8012f9c0`), timing each phase in µs (`+0x1a0`, `+0x1b0`, `+0x1b8`). When `+0x1c8` is set and the argument has a job queue, it prepares the set list (`f_80762dc0`), queues `min(+0x1ca − 1, 5)` jobs, runs the calc loop itself (`f_8007f100`), waits on the light event at `+0x228`, then finishes (`f_80073200`). Rank 208 | read |
 | `f_83b52550` | `EffectCalcJob_Run(job)` | The queued job: runs `f_8007f100` on the manager, then counts `+0x200` down and signals `+0x228` when it is the last. Its delegate call (`f_83b55050`) runs the loop inline when the target is this function | read |
-| `f_8087ae60` | `GameEffectModule_Init` | Slot `+56` of the game effect module (vtable `0x84b3fe90`): loads `System/GameEffect/EffectModuleParam/Default.game__effect__EffectModuleParam.bgym`. The parameter object beside its type name (vtable at `0x84b390e0`) visits cloud rendering fields (`CloudRenderingParam`, `CloudWeatherParamCloudy`…) and debug areas (`HyruleCastleCSCenter`, `KorokForestRadius`…): no effect caps were seen there (**guess**) | read |
+| `f_8087ae60` | `GameEffectModule_Init` | Slot `+56` of the game effect module (vtable `0x84b3fe90`): loads `System/GameEffect/EffectModuleParam/Default.game__effect__EffectModuleParam.bgyml`. The parameter object beside its type name (vtable at `0x84b390e0`) visits cloud rendering fields (`CloudRenderingParam`, `CloudWeatherParamCloudy`…) and debug areas (`HyruleCastleCSCenter`, `KorokForestRadius`…): no effect caps were seen there (**guess**) | read |
 | `f_82bee380` | `GameEffectModule_Calc` | Slot `+16`: writes the group steps. Groups 0 and 2, and group `[vfx+0x28] − 1`, get this core's scaled step from the frame-time keeper (`[[0x84c9e890]]`, slot `+0x20 + 0x30k`), plus a one-off extra (`[[0x84ca2cc0]]+0x1c0`, cleared after use). Group 1 gets the keeper's `+0x10`. Group 3 gets 0 or 0.0001. While bit 1 of `+0x300` is set, the steps come from `+0xeda0+0xd8` instead. Rank 488 | read |
 
 ### The emitter sets' calc
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_80764670` | `EffectCalc_FrameStart` | Stage 0's first job ([jobs.md](jobs.md)). Does nothing while bit 7 of `+0x137a` is set. Otherwise it stamps the tick (`+0x1a00`), handles each group's pending entries (`f_836c06d0`), and stops there while bit 5 is set. Then it zeroes the take and done counters (`+0x1388`, `+0x138c`), rebuilds the list (`f_80764040`, `f_80763da0`) and clears the per-group bits (`+0x1394`, 0x44 bytes). Rank 1827 | read |
+| `f_80764670` | `EffectCalc_FrameStart` | Stage 0's first job ([jobs.md](jobs.md)). Does nothing while bit 7 of `+0x137a` is set. Otherwise it stamps the tick (`+0x1a00`, once per frame), handles each group's pending entries (`f_836c06d0`, for each group whose count at `+0x40` of its slot is 1 or more), and stops there while bit 5 is set. Then it zeroes the take and done counters (`+0x1388`, `+0x138c`), runs `f_80764040` and `f_80763da0` (a per-group step with ticks), wipes the 16 group slots (0x500 bytes at `+0x1460`) unless calc mode `+0x1360` is 2, calls `f_8002ec00` (resets the counters at `+0x1018` to `+0x1028`, sets the calc-open byte `+0x1020` to 1 and collects the live sets of every running group into the list at `+0x18`, at most 512) and clears the per-group bits (`+0x1394`, 0x44 bytes). Rank 1827 | read |
 | `f_80adaba0` | `EffectCalc_StageJob` | One of stage 0's six per-core jobs: unless `+0x137a` has bits 0xa0, counts itself in at `+0x1388`, runs the loop (`f_80adac20`, a copy of `f_8007f100`) and counts itself out at `+0x138c` | read |
-| `f_80bb62f0` | `EffectCalc_FrameEnd` | Stage 0's join: checks `+0x137a`, calls `f_80073200` (the calc's finish, also called by the module path: it checks `+0x1020` and `+0x1028` and calls `f_800733c0` for the groups) and stamps a tick | read |
+| `f_80bb62f0` | `EffectCalc_FrameEnd` | Stage 0's join: returns at once while bit 5 or bit 7 of `+0x137a` is set. Otherwise it calls `f_80073200` (the calc's finish, also called by the module path: it clears the calc-open byte `+0x1020`, then for each group set in `+0x13d4` and not left out by `+0x1418` calls `f_800733c0` twice and updates the 16-bit flag words at the end of the group's slot), clears byte `+0x1390`, and adds the ticks since `+0x1a00` to `+0x1968` | read |
 | `f_80762dc0` | `EffectCalc_Prepare(mgr)` | The module path's preparation: the same steps as `f_80764670`, under locks. Both call `f_80764040` (by `+0x1378`, `f_807642a0` and `f_80764120`) and `f_80763da0` (per-core work with ticks); [drawing.md](drawing.md) lists those two as slot-job work too. Rank 1208 | read |
 | `f_8007f100` | `EffectCalc_Worker(mgr)` | The parallel loop: while `+0x1020` is 1, takes set *i* by an atomic add on `+0x101c` (stops at `+0x1018`). It skips dead sets and groups masked in `+0x1418`. The step is the group's float at `+0x1420` if the group's bit in `+0x1414` is set, else 0. It marks the group's bit for this core in `+0x1394`, calls `f_8007f340(vfx, set, [+0x1368], core)` and adds one to the done count `+0x1028`. In mode 2 (`+0x1360`) only one group is calculated. Rank 296 | read |
 | `f_8007f340` | `EffectCalc_EmitterSet(vfx, set, mask, core, step)` | Adds the set's counts to this core's 128-byte block at `vfx+0x68` (sets, emitters, particles of types 1, 2 and 3, sets and emitters calculated) and ORs the set's draw-path masks (`+0x38`, `+0x340`, `+0x348`) into per-group arrays. When the set's mask (`+0x358`) meets `mask`, it runs the system callbacks (`+0xbf8`), then either finalises a dead set's emitters (`f_81262600`) or calculates it (`f_81270540`). Rank 74 | read |
@@ -176,7 +178,7 @@ the lens flare and the sun's occlusion ([environment.md](environment.md)), not t
 | `f_80136b60` | `ELinkAssetExecutor_Activate` | Slot 18 of `0x84c3e180`: works out the clip type ("instance is clipped") and, if the instance is not clipped, emits (`f_8012dae0`). Rank 3261 | read |
 | `f_8012dae0` | `ELinkAssetExecutor_Emit` | Creates the effect: the asset name (`@Blank`: none), the `effectPreEmit` system and user callbacks (either can veto), the limiter group ("LimiterGroup[%s] emit limiter over"), then `ptclSys->createEmitterSetID` (an error is logged if that fails), and the set's position, rotation and scale (`f_8012d320`). Rank 2048 | read |
 | `f_82be5f90` | `EffectCallbackProcessSet_EventCreate` | `game::effect::EffectCallbackProcessSet::eventCreate`: the game's callback when an ELink event creates an effect (`EventCommonArg`) | read |
-| `f_809d0f50` | `EffectCallbackProcessSet_InitEmitterSet` | `initializeEmitterSet_`: the game's set-up of a new emitter set (`EmitterSetArg`) | read |
+| `f_809d0f50` | `EffectCallbackProcessSet_InitEmitterSet` | A one-instruction jump to `f_809d0f60`, which holds the body: `game::effect::EffectCallbackProcessSet::initializeEmitterSet_`, the game's set-up of a new emitter set (its allocation tag names `EmitterSetArg`) | read |
 
 ### The XLink user chain (search and emit)
 
@@ -186,7 +188,7 @@ An actor's XLink component hands out two users, one for effects (ELink) and one 
 |---|---|---|---|
 | `f_804609e0` | `XLinkUser_SystemReady(user, label, key)` | The readiness test before a search or an emit: true when bit 0 of `[[user + 0x48 + 8*(flags & 1)] + 0x20]` is set (the user's system side is enabled); otherwise it formats the label with the key into a local 256-byte buffer, throws it away and returns false. The labels are "searchAndEmit(%s)" (the nodes) and "emit(%s)" (`f_80460630`). It does not pick a sound system | read |
 | `f_8045db00` | `XLinkResource_FindCallByName(accessor, &outEntry, key)` | Picks a table (the u32 at `accessor+0x18` selects `[accessor+0x20 + 8*i]`, values above 1 use the first), needs its ready byte at `+0xb0` to be 1, then binary-searches the table's sorted u16 index array (`+0x20`) over its 0x30-byte entries (`+0x28`, the entry's name char pointer at `+0`) comparing with the key as a string; a hit stores the entry pointer in `*out` and returns true | read |
-| `f_80460630` | `XLinkUser_Emit(user, &entryCell, &handleOut, delegate)` | Starts the named call on the user: refuses unless user bit 0x8 is clear, the system object (the ELink or SLink holder, byte `[holder]+0x9c`) is on, `f_804609e0` passes, user bit 0x2 is clear, the entry is not null and the user's vtable slot 12 filter accepts it. Then it takes a free event from the system's pool (the serial at `pool+0x34` skips 0), initialises it (`f_80460ac0(event, serial, user)`), creates the emitter instance (`f_80460e50(event, entry)`), links the event at the head of the user's list, adds one to the user's count, sets user bit 0x4, fills `handleOut` (8 bytes: the system, the pool index, the serial) and ends with a tail call of the user's vtable slot 13 (`onEmitted(entry, event)`). `delegate`, when given, is called with the new event before it is linked. The entry is passed by reference (the address of a cell that holds it) | read |
+| `f_80460630` | `XLinkUser_Emit(user, &entryCell, &handleOut, delegate)` | Starts the named call on the user: refuses when user bit 0x8 is set, when the system object (the ELink or SLink holder, byte `[holder]+0x9c`) is off, when `f_804609e0` fails, when user bit 0x2 is set, when the entry is null, or when the user's vtable slot 12 returns true (that slot is a veto, not an accept). Then it takes a free event from the system's pool (the serial at `pool+0x34` skips 0), initialises it (`f_80460ac0(event, serial, user)`), creates the emitter instance (`f_80460e50(event, entry)`), links the event at the head of the user's list, adds one to the user's count, sets user bit 0x4, fills `handleOut` (8 bytes: the kind, the pool index, the serial) and ends with a tail call of the user's vtable slot 13 (`onEmitted(entry, event)`). `delegate`, when given, is called with the new event before it is linked. The entry is passed by reference (the address of a cell that holds it) | read |
 | `f_807ec120` | `XLinkHandle_Stop(handle*)` | Stops what an xlink2 handle plays. Handle: u8 pool kind +0 (0 effects, 1 sound), s16 index +2 (-1 = none: return), u32 generation +4. Element = pool base[kind] + stride[kind] x index (the two tables sit behind GOT cells 0x84c9e260 and 0x84c9e268). If the element's generation (u32 +0x20) matches: element u32 +8 |= 0x30 (stop request), then, if the element's user (+0x28) is set, under the system lock (system chosen by bit 0x1000 of user+0x18): calls the object at element+0x58 slot 8, then slot 7 on every node of the circular list at element+0x98 (link offset s32 at +0xac). A stale handle is left alone. | read |
 | `f_837616c0` | `XLinkUser_FindPlayingByName(user, handle*|0, name)` | Walks the user's list of running instances (sentinel at user+0x28, first link +0x30, link offset s32 at +0x3c); an instance's asset record is at element+0x30 and its first qword is the asset name `char*`; compares with `name` (strcmp `f_8575d380`). Found: returns 1 and, when `handle` is non-null, writes {u8 kind = (user flags & 0x1000 ? 0 : 1), s16 index = (element - pool base) / stride, u32 generation from element+0x20}; not found or null name: 0. Done under the system lock. 7 callers (f_82729310, f_82854180, f_829347b0, f_8296e810, f_8297af30, f_82b23920, f_8306b9b0). | read |
 
@@ -209,14 +211,14 @@ execute node's OnEnter, OnUpdate and OnLeave.
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_800ad2b0` | `EffectMgr_UploadAll(mgr)` | From the slot jobs' bit-3 work (`f_800998a0`, at 0x8009b050) when bit 23 of `+0x1378` is set: stamps a tick (`+0x1a10`), then `f_800ad840` for groups 0 to 15 with the system's buffer index (`vfx+0x2238`). Rank 251 | read |
+| `f_800ad2b0` | `EffectMgr_UploadAll(mgr)` | From the slot jobs' bit-3 work (`f_800998a0`, at 0x8009b050), whenever the manager exists (the caller tests no flag). Always uploads: if bit 21 of `+0x1378` is set and bit 23 is clear it first handles each group's pending entries (`f_836c06d0`) and runs `f_836d3640` (a per-group calc step); then it stamps a tick (`+0x1a10`) and calls `f_800ad840` for groups 0 to 15 with the system's buffer index (`vfx+0x2238`), adding the elapsed ticks to `+0x1968`. Rank 251 | read |
 | `f_800ad840` | `EffectGroup_Upload(vfx, group, buf)` | The group's live, not dead sets (list at `vfx+0x20`, ranges at `vfx+0x38`): `f_81270c20` for each, prefetching the next. Rank 214 | read |
 | `f_81270c20` | `EmitterSet_Upload(set, buf, ctx)` | For each active emitter: `f_81260600`; then gathers the emitters that will draw into `+0xf0`. Rank 192 | read |
 | `f_81260600` | `Emitter_Upload(em, ctx)` | Copies the emitter's changed particle bytes (`+0x128`, range `+0x140`–`+0x144`) and its live-index list (`+0x2c8`, 16 bytes a particle) into buffer `buf` of its GPU memory (`memcpy`, then a flush, `f_812bceb0`). It writes the emitter's constant block (matrices and colours, 16-byte stores) and calls its modules' `+0x378`/`+0x2b0` and renderers' `+0x398`/`+0x4f0`. Rank 55 | read |
-| `f_80664210` | `Effects_GpuCalc` | Called by the scene's recording (`f_80660320`) and its main render step (`f_80a47660`, [drawing.md](drawing.md)): sets the view (`f_83539260`) and dispatches the compute emitters (`f_80664620`). Rank 813 | read |
+| `f_80664210` | `Effects_GpuCalc` | Called by the scene's recording (`f_80660320`), its main render step (`f_80a47660`, [drawing.md](drawing.md)) and `f_8360d430`: builds a view block on the stack from the pass's camera data, gives it to the manager's callback at `+0x1380` when set (the game effect module's init sets it to `f_80664580`), calls `f_83539260` (an empty one-instruction function) unless bit 17 of `+0x1378` is set, and dispatches the compute emitters (`f_80664620`), timing each phase per core. Rank 813 | read |
 | `f_80664620` | `Effects_DispatchCompute(vfx, cmd, …)` | For each core's compute list (`vfx+0x4c0`, counts `+0x4d8`): each active emitter goes through the system's filters (`+0xe68`, `+0xd18`), and type-2 emitters get `f_81260fc0`. Rank 505 | read |
 | `f_81260fc0` | `Emitter_DispatchCompute(em, cmd, ctx)` | When the emitter's time moved since its last dispatch (`+0xdc`) and its mask matches: binds its compute program, two constant blocks and its particle storage (this frame's part of `+0x510`). Its modules (`+0x380`) and renderers (`+0x3a0`, `+0x4f8`) bind theirs. Then `DispatchCompute(⌈capacity / group size⌉, 1, 1)` through vfx3's wrapper `f_812bd7f0`. Rank 400 | read |
-| `f_8027c9e0` | `Effects_DrawPass` | The effects' draw for one pass (12 pass functions call it): view parameters (`f_8027d040`, `f_8027cde0`), each group in the pass's list (`f_8027ce80`), then the draw (`f_8027c880`) with the frame's buffer index. Rank 161 | read |
+| `f_8027c9e0` | `Effects_DrawPass` | The effects' draw for one pass (12 pass functions call it); does nothing while bit 1 of `+0x1378` is set. Otherwise: view parameters (`f_8027d040`, `f_8027cde0`), each group in the pass's list (`f_8027ce80`), then `f_8027ce10`, the draw (`f_8027c880`) with the frame's buffer index (`vfx+0x2238`) and `f_8027cdc0`. Rank 161 | read |
 | `f_8027d040` | `Effects_SetView` | From two 4×4 matrices and the target size: the view block the effects draw with (float work, and a call to `f_814e6be0`). Rank 136 | guess |
 | `f_8027ce80` | `Effects_PrepareGroup` | Per group of the pass: through `f_81271130` and `f_812b9c10`, gets the group's sets ready to draw (sorting, **guess**). Rank 335 | guess |
 | `f_8027c880` | `EffectGroup_Draw` | The group's sets (`vfx+0x50`): `f_81270d60` for each. Rank 243 | read |
@@ -241,8 +243,8 @@ execute node's OnEnter, OnUpdate and OnLeave.
 | `0x84ea2ea8` | `g_EffectMgr` | The effect manager (0x1b68 bytes), made by `f_8087c140`; GOT slot `0x84ca2bc8` | read |
 | `0x84c82468` | `EffectModule_vtable` | The engine's EffectModule: `+16` calc `f_83b525b0`, `+56` `f_83b51a00`, `+72` `f_83b50e10`, `+184` `f_83b53060`; its job hook (`+104`) is the empty default | read |
 | `0x84b3fe90` | `GameEffectModule_vtable` | The game effect module: `+16` calc `f_82bee380`, `+56` `f_8087ae60` | read |
-| `0x84c3e180` | `ELinkAssetExecutor_vtable` | The ELink asset executor: slot 7 `f_80128d70` (calc), slot 18 `f_80136b60` (activate) | guess |
-| `0x8488ad08` | `Vfx2PhysicsModule_vtable` | The vfx3 emitter module with gravity and air resistance: slot 103 `f_81281850` | guess |
+| `0x84c3e180` | `ELinkAssetExecutor_vtable` | The ELink asset executor: slot 7 `f_80128d70` (calc), slot 18 `f_80136b60` (activate) | read |
+| `0x8488ad08` | `Vfx2PhysicsModule_vtable` | The vfx3 emitter module with gravity and air resistance: slot 103 `f_81281850` | read |
 | `0x84a63f38` | `OneShotXLinkSearchAndEmit_vtable` | The node class `OneShotXLinkSearchAndEmit`: name getter `f_8297b660` (slot 19), slot 28 binds the ports (`f_803f8d20`), slot 39 `f_80c2dbd0` | read |
 | `0x84a64088` | `OneShotXLinkSearchAndEmitRepresentativeUserInstance_vtable` | The next node class in memory: name getter `f_8297ba80`, slot 28 `f_8297b8f0`, slot 39 `f_8297b700` | read |
 
@@ -259,14 +261,14 @@ execute node's OnEnter, OnUpdate and OnLeave.
 | `+0x1028` | The calc's done counter (atomic) | read |
 | `+0x1030` | The vfx3 system | read |
 | `+0x1360` | Calc mode: 1 gives the groups in `+0x141c` step 0, 2 calculates one group only | read |
-| `+0x1368` | The calc mask a set's `+0x358` must meet (set by the EffectModule's calc) | read |
-| `+0x1378` | Flags: bit 23 selects the upload in the slot jobs and stops the stage-0 path; bit 21 stops it after the group step | read |
+| `+0x1368` | The calc mask a set's `+0x358` must meet. Both the EffectModule's calc (`f_83b525b0`) and the game effect module's calc (`f_82bee380`) set it from a table, and set `+0x1370` from a second table | read |
+| `+0x1378` | Flags. Bit 23 stops the stage-0 path (`f_80764670` returns at once, the stage jobs and the join skip); bit 21 stops it after the group entries (and, with bit 23 clear, the upload `f_800ad2b0` does that work and `f_836d3640` itself). The upload runs in every case. Bit 1 skips the effects' draw pass (`f_8027c9e0`); bit 17 skips the `f_83539260` call (an empty function) | read |
 | `+0x1388`, `+0x138c` | The stage-0 jobs in and out | read |
 | `+0x1394` | Per group, the cores that calculated it (16 × 32 bits) | read |
 | `+0x13d4` | The groups calculated this frame | read |
-| `+0x1414` | The groups whose time runs (bit clear: step 0) | read |
+| `+0x1414` | The groups that run: the constructor sets all bits, then the game effect module's init clears it and sets groups 0 to 3 and group `[vfx+0x28] − 1`. `f_8002ec00` leaves a group with a clear bit off the calc list, so it is not calculated at all; the worker's step of 0 for a clear bit only applies if the bit changed after the list was built | read |
 | `+0x1418` | The groups not calculated at all | read |
-| `+0x1420` | The 16 groups' steps (floats), written by `f_82bee380` | read |
+| `+0x1420` | The 16 groups' steps (floats). `f_82bee380` writes groups 0 to 3 and group `[vfx+0x28] − 1` each frame; no writer of the other entries was found | read |
 | `+0x1460` | 16 group slots of 0x50 bytes (count at `+0x40` of each) | read |
 
 ### An emitter set (vfx3)
@@ -274,7 +276,7 @@ execute node's OnEnter, OnUpdate and OnLeave.
 | Offset | Field | Sure |
 |---|---|---|
 | `+0x1a` | Dead (byte) | read |
-| `+0x1c` | Holds the set alive while above 0 | guess |
+| `+0x1c` | Holds the set alive while above 0: the set is never marked dead (`f_812707c0`) meanwhile; `f_8126ff40`, at the start of the step, winds the emitters of a stopped set down and zeroes it | read |
 | `+0x5c` | Its index in the system's bit sets | read |
 | `+0x60` | Its group (0–15) | read |
 | `+0x70` | Its matrix (64 bytes, copied to inactive emitters) | read |
@@ -325,9 +327,11 @@ execute node's OnEnter, OnUpdate and OnLeave.
 
 Stage 0's fork in [jobs.md](jobs.md) (`f_80764670` → six `f_80adaba0` → `f_80bb62f0`) and the EffectModule's calc
 (`f_83b525b0` with `f_83b52550` jobs) run the same loop on the same manager. Bit 23 of `+0x1378` stops the stage-0
-path (with bit 21) and is the only way into the upload (`f_800ad2b0`, rank 251). The stage-0 functions are not in
-`hot_order.txt`, while `f_83b525b0` (208), `f_8007f100` (296) and the upload are, so bit 23 was set in the profiled play
-and the module path ran. What sets the bits was not found. **read** (the code), **guess** (which runs)
+path (bit 21 stops it after the group entries); with bit 21 set and bit 23 clear the upload (`f_800ad2b0`, rank 251)
+does that work and a per-group calc step itself. The upload runs in every case: its caller tests no flag. The stage-0
+functions are not in `hot_order.txt`, while `f_83b525b0` (208), `f_8007f100` (296) and the upload are, so the module
+path ran in the profiled play and stage 0 did not (a set bit 23 would explain that; nothing says it was set). What
+sets the bits was not found. **read** (the code), **guess** (which runs)
 
 ### Time above 60 fps
 

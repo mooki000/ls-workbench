@@ -60,7 +60,7 @@ programs), [effects.md](effects.md) (the particles' compute programs), `docs/des
 |---|---|---|---|
 | `Shader/%s%s%s.%s.bfsha`, filled with an archive's name (a list of up to 32), `.Product` (or `.All`), `.product` and `Nin_Ounce_NVN2` | nn::g3d shader archives (BNSH inside): the shared model shaders | `f_83b728f0`, through the resource system (`f_801b0950`) | read (the format and its arguments), guess (the names on disk) |
 | `Shader/ExternalBinaryString.bfres` | Shared strings for the archives' binary data | `f_83b728f0` | guess |
-| `Lib/agl/agl_resource.Nin_Ounce_NVN2.release.sarc`, `Lib/gsys/gsys_resource.….sarc` | agl's and gsys's own archives (`sharcb`, magic BAHS: the census reads them) | `f_83b728f0`; agl's programs by `f_80b72180`, gsys's G-buffer and utility ones by `f_80b7cc30` | read |
+| `Lib/agl/agl_resource.Nin_Ounce_NVN2.release.sarc`, `Lib/gsys/gsys_resource.….sarc` | agl's and gsys's own archives (`sharcb`, magic BAHS: the census reads them) | `f_83b728f0`; agl's programs by `f_80b72340` ([graphics.md](graphics.md)), gsys's G-buffer and utility ones by `f_80b7cc30` | read |
 | `gsys_minimum.bfsha`, and gsys's application packages (`gapkginfo`, `gapkglist`, `agl_sharc`, `%s_%02d`) | gsys's minimal model shader; packaged archives | `f_80c75b70`, `f_80722da0` | read (names), guess (roles) |
 | A model's `.bfres` | Its textures (`textures.bntx`) and, when it has one, an embedded file ending in `bfsha` | `f_804563b0`, `f_80455bc0` | guess |
 | `Layout2Shader/MergeShader.%s.Nin_Ounce_NVN2.bfsha` | The UI's (Layout2) shaders | `f_80fd0d10` | read |
@@ -192,8 +192,8 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_83b728f0` | `GraphicsModule_LoadShaderResources` | Under the name "grphics::GraphicsModule": opens `Lib/agl/agl_resource` and `Lib/gsys/gsys_resource` (`.Nin_Ounce_NVN2.release.sarc`), `Shader/ExternalBinaryString.bfres`, and for each name in a list of up to 32 (0x50 bytes each) formats `Shader/%s%s%s.%s.bfsha` with the name, `.Product` or `.All`, `.product` and `Nin_Ounce_NVN2`, then asks `f_801b0950` for it. No callers by BL (a vtable slot). Not ranked | read |
-| `f_80c75b70` | `GsysMinimum_Load` | Loads `gsys_minimum.bfsha` and gsys's configuration (`gsys` `gmsconf`, `f_80c76250`), calls the package loader `f_80722da0` and sets up a shader archive (`f_80c760d0` → `f_8017dd60`). Not ranked | read |
-| `f_8017dd60` | `GsysShaderArchive_Init` | Sets up a shader archive (`f_80796e40`), then its per-model data (`f_8017ed80`, 1,416 instructions). Called for a model's archive (`f_804566e0`), gsys's minimum one and by `f_83b71980` (engine::GraphicsModule) | guess |
+| `f_80c75b70` | `GsysMinimum_Load` | Makes the gsys object (0x901d8 bytes, built by `f_80cf7200`) and tail-calls `f_80c75be0`, which loads `gsys_minimum.bfsha` and gsys's configuration (`gsys` `gmsconf`, `f_80c76250`), calls the package loader `f_80722da0` and sets up a shader archive (`f_80c760d0` → `f_8017dd60`). Not ranked | read |
+| `f_8017dd60` | `GsysShaderArchive_Init` | Sets up a shader archive (`f_80796e40`), then its per-model data (`f_8017ed80`, 1,416 instructions). Called for a model's archive (`f_804566e0`), gsys's minimum one and by `f_83b71980` (engine::GraphicsModule) | read |
 | `f_80fd0d10` | `Layout2_LoadMergeShader` | Formats `Layout2Shader/MergeShader.%s.Nin_Ounce_NVN2.bfsha` and loads it through the UI's archive manager (`eui::ArcResourceMgr`, `f_80fd0f80`) | read |
 | `f_80fd42f0` | `TerrainModule_LoadResource` | Under "terrain::TerrainModule": loads `Lib/Terrain/tera_resource.Nin_Ounce_NVN2.release.sarc` | read |
 | `f_80f71360` | `Ndsr_LoadNetworks` | Loads `agl_ndsr.pck`, `agl_ndsr_vr.pck` and `agl_ndsr_vr_light.pck` with a `ndsr_tmp` work area, then sets up the library (`f_80f718a0` → `f_80f71a00`) | read |
@@ -219,12 +219,12 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_80443000` | `GsysMaterial_SelectProgram` | A material's program: collects the option and choice pairs (above), finds each in the model's dictionaries and writes it into the selector, then selects under a lock (`f_80442f00`). Also takes the meshlet process type from the shader object's `+0x22c` (its selector at `+0x90`). 1,684 instructions. Not ranked | read |
-| `f_8044db80` | `GsysMaterial_Setup` | Names the material (`%s>%s>%d(%s%s)`), sets up its parameters (`f_8044f420`) and its program (`f_80443000`) | guess |
-| `f_8044f420` | `GsysMaterial_SetupParams` | Reads the material's render state (`f_80451d60`, `f_80451460`), its assign type (`f_8044ed60`), its material id (`f_8044d470`) and names its lighting inputs (`gsys_area_env_data0`/`1`, `gsys_light_diffuse`, `gsys_light_specular`, `gsys_point_light_color`, `gsys_xlu_zprepass_alpha`, `enable_color_buffer`) | guess |
+| `f_8044db80` | `GsysMaterial_Setup` | Names the material (`%s>%s>%d(%s%s)`), sets up its parameters (`f_8044f420`) and its program (`f_80443000`) | read |
+| `f_8044f420` | `GsysMaterial_SetupParams` | Reads the material's render state (`f_80451d60`, `f_80451460`), its assign type (`f_8044ed60`), its material id (`f_8044d470`) and names its lighting inputs (`gsys_area_env_data0`/`1`, `gsys_light_diffuse`, `gsys_light_specular`, `gsys_point_light_color`, `gsys_xlu_zprepass_alpha`, `enable_color_buffer`) | read |
 | `f_80451d60` | `GsysMaterial_ReadRenderState` | Reads `gsys_render_state_mode` (`opaque`, `mask`, `translucent`, `custom`), `gsys_render_state_display_face`, the depth test (`gsys_depth_test_enable`, `_write`, `_func`), the blend (`gsys_color_blend_*`, `gsys_render_state_blend_mode`) and the alpha test | read |
 | `f_8155dc50` | `Layout2Material_BuildKey` | Builds a UI material's choices from its pane: `PaneType`, the texture count, `ShaderGraph_TextureBlendExpression`, the procedural shape, slicing and texture-mapping options (`o_*`, per texture 0 to 5) | read |
 | `f_8155ee00` | `Layout2Material_SelectProgram` | Sets up the selector (`f_8044f300`), writes the choices (`f_8155dc50`) and selects (`f_80442f00`) | read |
-| `f_8155e9c0` | `Layout2Material_Init` | Lays out a UI material's buffers (maps its buffer, `f_800a8df0`), then selects its program (`f_8155ee00`). Hot rank 965 | guess |
+| `f_8155e9c0` | `Layout2Material_Init` | Lays out a UI material's buffers (maps its buffer, `f_800a8df0`), ; it does not select the program: that is `f_8155ebe0` (`f_8155ee00`), tail-called from `f_815454c0`. Hot rank 965 | guess |
 
 ### Making programs (nn::gfx)
 
@@ -245,7 +245,7 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 | `f_8029f590` | `AglUniformBlock_Bind(block, ctx, location, index)` | Binds a slice (`index` × the aligned size) of a block's buffer to each stage whose byte in `location` is not `0xff`. Hot rank 846, 96 callers | read |
 | `f_80296c30` | `AglBufferBlock_Bind(block, ctx, location, index)` | The same for a block that is a uniform or a storage buffer by its kind (`BindUniformBuffer`, `BindStorageBuffer`). Hot rank 1111, 545 callers | read |
 | `f_802a67c0` | `AglSampler_Bind(…)` | Updates the program if it changed, then `nvnDeviceGetTextureHandle` and `BindTexture` per stage. Hot rank 627, 111 callers | read |
-| `f_80b72180` | `AglShaderHolder_Init` | "agl::detail::ShaderHolder": agl's own programs from its `sharc`/`sharcb` (`Common`), with their uniform and sampler names (`uProjViewWorld[0]`, `uColorMatrix[0]`, `cNV12DecodeParam1`, `uCasParam[0]`, …). 10,256 instructions | read |
+| `f_80b72180` | `AglProgram_AllocNameSlots(obj, count, heap)` | Allocates `count` 16-byte location slots from `heap` (or the current heap), each set to −1 and the name "Undefined", keeps them at `obj+0x30` (count `+0x28`), then does the same for each 0x170-byte entry of the list at `[obj+8]`. Called by `f_80b72340` (the agl shader holder, [graphics.md](graphics.md)) | read |
 | `f_80b7cc30` | `GsysUtilPrograms_Init` | gsys's agl programs: `common`, `g_buffer` (`g_buffer_clear_header`, `g_buffer_expand_material_id`, `g_buffer_fill_infinity_depth`, `clear_geometry_culling`, `analyze_miplevel`, …) | read |
 | `f_80b6c8a0` | `TeraPrograms_Init` | The terrain's agl programs (`tera_common`, `tera_develop`, `tera_debug`) and their names | read |
 | `f_80b696d0` | `AppPackagePrograms_Init` | The application package's `AglShader` and `FoliageShader` archives | guess |
@@ -254,7 +254,7 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_80f71a00` | `NdsrSmaa_Init` | Under "SDK MW+Nintendo+SMAA_For_NDSR-2_3_2-Release": a memory pool, samplers and three program sets made with program builders (`f_815023d0`, `f_81503280`, `f_81503ce0`) | read |
+| `f_80f71a00` | `NdsrSmaa_Init` | Under "SDK MW+Nintendo+SMAA_For_NDSR-2_3_2-Release": a memory pool, samplers and three program sets made with program builders (`f_815023d0`, `f_81503280`, `f_81503b80`) | read |
 | `f_81503720` | `NdsrSmaa_Dispatch` | Binds a program, images, textures, storage and uniform buffers, pushes compute constants, and dispatches (direct and indirect), with barriers and a buffer clear. Called from `f_802722b0` (rank 2050). Hot rank 1776 | read |
 | `f_82105e20` | `Ndve_MakeResources` | A memory pool, a sampler, a texture and programs made with a builder (`f_821066c0`); next to `f_821057e0`, which the NDVE output (`f_83b83360`, [rendering.md](rendering.md)) calls | guess |
 | `f_80c4acc0` | `DynamicUniformBlock_Init` | "agl::detail::DynamicUniformBlock": an NVN buffer over its memory (`nvnBufferInitialize`, `GetAddress`), made by `f_80c4a1c0` | read |

@@ -86,15 +86,15 @@ The task runs `f_80781ae0` ([physics.md](physics.md), `NavStep_Run`): a thunk th
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_80781b00` | `NavStep_Body(nav, &{step, mode})` | Hot rank 474. With mode 1 it steps everything on the calling thread (the world with `step`, the avoidance step through a trivial task queue). The module always passes mode 0, and then, in order: (1) when no world processing is pending (`nav+0x190`) and neither pool's worker is busy, applies queued changes (`f_80bf54d0`); (2) notes whether the CA worker is busy (bit 0 of `+0xe8` of each worker thread, which `JobGraph_Start` sets and `PoolB_SchedulerLoop` clears at 0x800823cc); (3) runs or starts Havok AI's world processing: a first part inline (`hkaiWorldProcessingTasks::makeContext`, a trivial task queue), the main part on the NavMeshDepWorker pool (`f_800711c0` on `nav+0x80` / `+0x88`), or, once that has finished and the CA worker is idle, a follow-up job (`nav+0x1f0`) on the same pool; (4) `hkaiWorld::doSynchronousProcessingRun` (`f_81f2b500`) inline, under the lock at `nav+0xc8`; (5) `f_83a06120` for each character with the "CA idle" flag; (6) only when the CA worker is idle: `f_83a05410` for each character, then builds the avoidance tasks (`f_820d1420`, the thread count the CA pool's worker count), wraps them (`f_839febe0` into `nav+0x120`, job `nav+0x128`) and starts them on the CA pool (`f_800711c0` on `nav+0x118`, at 0x80782664). It waits for neither pool | read |
-| `f_80bf54d0` | `NavSystem_ApplyPending(…)` | Applies the commands queued since the last time (adding and removing avoidance characters, their settings) through `f_80bf6560`, about 15 calls. Run only while no navigation work is in flight | guess |
+| `f_80bf54d0` | `NavSystem_ApplyPending(…)` | Applies the commands queued since the last time (adding and removing avoidance characters, their settings) through `f_80bf6560`, about 15 calls. Run only while no navigation work is in flight | read |
 | `f_80bf6560` | `NavSystem_ApplyCommand` | One queued change: names `setSteeringProperties`, `setRadius`; calls `System::addCharacter` (`f_80bf8224`, at 0x80bf6a80) and `removeCharacter` (`f_80bf8550`, at 0x80bf6b28) | read |
 | `f_80bf8224` | `hkaiCollisionAvoidance::System::addCharacter` | The game's copy of Havok's call ("void hkaiCollisionAvoidance::System::addCharacter(Character *)") | read |
 | `f_80bf8550` | `hkaiCollisionAvoidance::System::removeCharacter` | The same for removal | read |
-| `f_83a05410` | `NavCharacter_PushState(item, world)` | Hot rank 2395 (836 instructions). Before each avoidance step, for each of the game's navigation characters (the list `[[nav]+0x448]+0x20`, count `+0x28`): writes the game's position and velocities into its avoidance character (`item+0x10`; `setCurrentVelocity`, `setSurfaceVelocity`, and others from Havok's `hkaiCollisionAvoidanceCharacter.inl`) | read |
-| `f_83a06120` | `NavCharacter_Post(item, world, caIdle)` | Hot rank 1122 (764 instructions). Called for each navigation character after the synchronous processing, with whether the CA worker is idle. **guess**: reads the avoidance output back only when it is | read |
+| `f_83a05410` | `NavCharacter_PushState(item, world)` | Hot rank 2395 (835 instructions in this build). Before each avoidance step, for each of the game's navigation characters (the list `[[nav]+0x448]+0x20`, count `+0x28`): writes the game's position and velocities into its avoidance character (`item+0x10`; `setCurrentVelocity`, `setSurfaceVelocity`, and others from Havok's `hkaiCollisionAvoidanceCharacter.inl`) | read |
+| `f_83a06120` | `NavCharacter_Post(item, world, caIdle)` | Hot rank 1122 (677 instructions in this build). Called for each navigation character after the synchronous processing, with whether the CA worker is idle. **guess**: reads the avoidance output back only when it is | read |
 | `f_81f2b10c` | `hkaiWorld::isAsyncProcessing` | True when the world's stepping mode (`+0x4c8`) is 1, 2 or 3; otherwise reports "Unknown stepping mode". When false, the task turns async processing on (`f_81f29f9c`) | read |
 | `f_81f2a000` | `hkaiWorld::disableAsyncProcessing` | "TtdisableAsyncProcessing" | read |
-| `f_81f33dc0` | `hkaiWorldProcessingTasks::makeContext` | Hot rank 1186: makes the world processing's context (path requests, navigators), reached through the thunks at 0x81e9a4f0 to 0x81e9a500 | read |
+| `f_81f33dc0` | `hkaiWorldProcessingTasks::makeContext` | Hot rank 1186: makes the world processing's context (path requests, navigators), reached through the thunk at 0x81e9a4f0 (the thunks at 0x81e9a4f4 and 0x81e9a4fc go to `f_81f34570` and `f_81f34b20`) | read |
 | `f_81f35b80` | `hkaiWorldProcessingTasks::makeMainPhaseTaskGraph` | Hot rank 1477: the main phase's task graph, reached through the thunk at 0x81e9a504 | read |
 | `f_839fbe40` | `NavSystem_Destroy` | The only place found that waits on the two navigation pools (`PoolB_WaitPhase` at 0x839fbf08 for NavMeshDepWorker, 0x839fbf40 for NavMeshCAStepDepWorker), before freeing them | read |
 
@@ -186,8 +186,8 @@ A character's `+0xe0` is its boundary gatherer (null when the actor's IsEnableBo
 | Offset | Field | Sure |
 |---|---|---|
 | `+0x30` | The work ranges (`f_81708bc0`) | read |
-| `+0x70` | Per-slot range indices, room for 17 inline | read |
-| `+0x4c0` | The ranges, 64 bytes each: `{next, end}` claimed by an atomic add | read |
+| `+0x70` | An array header: a pointer (`+0x70`) to the per-slot range indices stored inline at `+0x80`, with room for 17 | read |
+| `+0x4c0` | A pointer to the ranges, stored inline from `+0x4d0`, 64 bytes each: `{next, end}` claimed by an atomic add | read |
 | `+0x910` | The character count | read |
 | `+0x914` | The thread count | read |
 | `+0x918` | The StepContext: its `+0x18` the System, `+0x20` the thread count, `+0x58` the solver entries (0x70 bytes each, count `+0x60`) | read |

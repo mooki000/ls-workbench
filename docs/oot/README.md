@@ -10,7 +10,8 @@ us, so an entry stays true however much LS changes; what can go stale is how it 
 these pages were started; LS's are written "LS #N".
 
 To find a function, search for its address: every function has one row, on one page. `python3 docs/oot/fnmap.py find
-f_833ec800` (or words) prints the page and the row.
+f_833ec800` (or words) prints the page and the row, and under the row how it was rechecked (or that it was not):
+[rechecks.md](rechecks.md).
 
 **The flags have a map of their own**, beside this one: [flags/README.md](flags/README.md), one row for every flag of the game's
 list (about 26,700: the Bool and Int flags co-op looks at or leaves out, the structs, the per-object keys and every other kind), with
@@ -61,6 +62,7 @@ words) prints the row. How the names are recovered is [flag-names.md](flag-names
 | [actors.md](actors.md) | The actor system: creation and deletion, the per-frame processes, resident and sleeping actors |
 | [resources.md](resources.md) | File and resource loading: mounts, archives, the Zstd decoder, the resource managers |
 | [sequences.md](sequences.md) | The script-node classes: registry, key hash, factory, vtable layout, parameter binding, catalogue |
+| [rechecks.md](rechecks.md) | The recheck of 17 November 2026: how every row that existed then was read against the lifted code, what the five verdicts mean, the counts per page and what the second pass will do; the per-row ledger is in `rechecks/` |
 
 ## What may go here
 
@@ -111,6 +113,8 @@ an issue or a pull request.
   pages mention it by address and link to that page.
 - **Hooks.** A function LS patches says so at the end of its row: `Hooked by patch_menu_focus` (in backticks, a
   function in `nx2/oot_*.py`). The patch's comment says what the patch changes; the row says what the game's function does.
+  A function patched through a module's list of sites says which: ``Hooked by `UI_SITES` of `nx2/oot_wide.py` ``. A patch that
+  only a co-op branch has is named in the row's prose, not as `Hooked by`, until the port's main has it.
 
 ## A page
 
@@ -184,7 +188,9 @@ and against the port's code (`LS_REPO` names the clone when `--repo` is left out
 - that every game function LS's code names (`nx2/oot_*.py`, `host/`) has a row, except the ones in `undocumented.txt`
   beside the script (named in the code, but not a function of this game: a comment about another one, or a place inside a
   function, which goes in its function's row as `at 0x…`). A function on that list that has a row fails too;
-- that every `patch_…` a page names is a function in `nx2/oot_*.py`;
+- that every `patch_…` a page names is a function in `nx2/oot_*.py`, and that every module a `Hooked by` names
+  (`nx2/oot_wide.py`, a path in the port) is a file there;
+- that every file of `rechecks/` has its header and, on every line, its columns and one of the five verdicts;
 - that every relative link resolves, and that this index lists every page.
 
 It also notes, without failing, each function `nx2/oot_patches.py` patches whose row does not say `Hooked by`. Run it

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Look up and check the map of the game's lifted functions (the pages beside this script).
 
-    fnmap.py find f_803edf70        the row of one function or data address, with its page
+    fnmap.py find f_803edf70        the row of one function or data address, with its page and, under it, its label in
+                                    rechecks/ (what the recheck of 2026-11-17 found, or why it could not check it)
     fnmap.py find "time of day"     rows whose name or text has the words (first 20); with no such row,
                                     the lines of the pages that have them (a thread or class name in the prose)
     fnmap.py check [--repo DIR] [--rev REV]
@@ -22,6 +23,12 @@ ROOT = PAGES.parents[1]
 ROW = re.compile(r"^\| `(f_[0-9a-f]{8}|0x[0-9a-f]{6,10})` \|")
 HEADERS = ("| Function | Name | What it does | Sure |", "| Address | Name | What it is | Sure |")
 SURE = {"tested", "read", "guess"}
+# What the recheck found for each row it looked at (see rechecks.md): one tab-separated file for each page.
+RECHECKS = PAGES / "rechecks"
+RECHECK_COLUMNS = ("page", "key", "kind", "verdict", "sure_before", "sure_after", "note", "checked", "build", "hooks_at", "origin")
+VERDICTS = {"agrees", "partly", "corrected", "wrong-address", "cannot-check"}
+# A module a 'Hooked by' names: a path in the port (nx2/oot_wide.py) or a bare oot_*.py module of nx2/.
+MODULE = re.compile(r"\b(?:(?:nx2|host|gpu)/[\w./-]*[\w-]\.(?:py|c|cpp|h)|oot_\w+\.py)\b")
 # Named in the port's code but not a function of this game (a comment about another one).
 NOT_OURS = PAGES / "undocumented.txt"
 
@@ -46,7 +53,44 @@ def table_rows():
                 yield page, number, m.group(1), [c.strip() for c in line.strip().strip("|").split(" | ")]
 
 
+def ledger_files():
+    return sorted(RECHECKS.glob("*.tsv")) if RECHECKS.is_dir() else []
+
+
+def rechecks():
+    """The ledger's rows by address (a function or data row), or None when there is no ledger."""
+    files = ledger_files()
+    if not files:
+        return None
+    rows = {}
+    for path in files:
+        for line in path.read_text(encoding="utf-8").splitlines()[1:]:
+            cells = line.split("\t")
+            if len(cells) == len(RECHECK_COLUMNS):
+                row = dict(zip(RECHECK_COLUMNS, cells))
+                if re.fullmatch(r"f_[0-9a-f]{8}|0x[0-9a-f]{6,10}", row["key"]):
+                    rows[row["key"]] = row
+    return rows
+
+
+def recheck_label(ledger, address):
+    """The line under a row that says how it was rechecked; None when there is no ledger at all."""
+    if ledger is None:
+        return None
+    row = ledger.get(address)
+    if row is None:
+        return "not rechecked: the row was added after the first pass (rechecks.md)"
+    if row["verdict"] == "cannot-check":
+        return "cannot-check yet: %s" % row["note"]
+    sure = row["sure_after"]
+    if row["sure_before"] and row["sure_before"] != sure:
+        sure += ", raised from " + row["sure_before"]
+    label = "rechecked %s: %s (%s)" % (row["checked"], row["verdict"], sure)
+    return label if row["verdict"] == "agrees" else "%s: %s" % (label, row["note"])
+
+
 def find(query):
+    ledger = rechecks()
     query = query.strip().strip("`")
     exact = re.fullmatch(r"(f_)?(0x)?([0-9a-fA-F]{6,10})", query)
     words = query.lower().split()
@@ -60,6 +104,9 @@ def find(query):
                 hit = ROW.match(line) and all(w in line.lower() for w in words)
             if hit:
                 print("%s:%d\n  %s" % (page.relative_to(ROOT), number, line))
+                label = recheck_label(ledger, ROW.match(line).group(1))
+                if label:
+                    print("  " + label)
                 shown += 1
                 if shown == 20:
                     return 0
@@ -79,6 +126,25 @@ def find(query):
 
 def git(repo, *args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
+
+
+def has_file(repo, rev, path):
+    return subprocess.run(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (rev, path)], capture_output=True).returncode == 0
+
+
+def ledger_problems():
+    """What is wrong with the ledger's lines (its format only), or nothing when there is none."""
+    problems = []
+    for path in ledger_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if lines[:1] != ["\t".join(RECHECK_COLUMNS)]:
+            problems.append("rechecks/%s: the first line is not the header (%s)" % (path.name, ", ".join(RECHECK_COLUMNS)))
+            continue
+        problems.extend("rechecks/%s:%d: a line needs %d columns and a verdict of %s" % (
+            path.name, n, len(RECHECK_COLUMNS), ", ".join(sorted(VERDICTS)))
+            for n, line in enumerate(lines[1:], 2)
+            if len(line.split("\t")) != len(RECHECK_COLUMNS) or line.split("\t")[3] not in VERDICTS)
+    return problems
 
 
 def check(repo, rev):
@@ -119,6 +185,13 @@ def check(repo, rev):
     text = "\n".join(p.read_text(encoding="utf-8") for p in pages() if p.name != "README.md")
     for name in sorted(set(re.findall(r"Hooked by `(patch_\w+)`", text)) - patches):
         problems.append("a page says 'Hooked by `%s`', which nx2/ does not define at %s" % (name, rev))
+    problems.extend(ledger_problems())
+    for page, number, address, cells in table_rows():   # (a 'Hooked by' that names a module: the module has to be in the port)
+        hooked = re.search(r"Hooked by ((?:[^:;.]|\.(?!\s|$))*)", cells[2] if len(cells) > 2 else "")
+        for module in sorted(set(MODULE.findall(hooked.group(1)))) if hooked else ():
+            if not has_file(repo, rev, module if "/" in module else "nx2/" + module):
+                problems.append("%s:%d: %s says 'Hooked by' %s, which the port does not have at %s" % (
+                    page.name, number, address, module, rev))
     for f in sorted(sites):
         row = next((c for _, _, a, c in table_rows() if a == f), None)
         if row and "Hooked by" not in row[2]:

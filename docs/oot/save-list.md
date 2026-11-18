@@ -16,16 +16,16 @@ capture panes)
 |---|---|---|---|
 | `f_83420ef0` | `LoadListScreen_Factory_Name` | The factory's name getter: returns "UISystemLoadListScreen" | read |
 | `f_83420f00` | `LoadListScreen_Create` | The factory's create: makes the screen object (0x2c8 bytes, vtable `0x84c0eba0`) | read |
-| `f_83420810` | `LoadListScreen_OnOpen` | Vtable slot 98, run as the list opens. Sets the list's length to the caption manager's slot capacity: `f_83793510(wrapper, load32(arr + 4))`, 6, at 0x834208a4. Then restores the cursor to the last picked index (the game data int 0xa2995097, read by `f_80857070`, clamped to the count) and moves it there with `f_837935d0` | tested |
+| `f_83420810` | `LoadListScreen_OnOpen` | Vtable slot 98, run as the list opens. Calls `f_80228350` and the part's vtable +112 (with 1) on each wrapped card. Sets the list's length to the caption manager's slot capacity: `f_83793510(wrapper, load32(arr + 4))`, 6, at 0x834208a4. Then restores the cursor to the last picked index (the game data int 0xa2995097, read by `f_80857070`, clamped to the count) and moves it there with `f_837935d0`. Last, writes -1 into CaptionData's picked field (struct 0x46926d32, field 0xd13d898b, through `f_809d3eb0` / `f_809d39e0`) | tested |
 | `f_83420b40` | `LoadListScreen_MakeSlideList` | Vtable slot 35: a factory for the pane named "N_SlideList_00". Allocates the list's 0x80-byte wrapper (vtables `0x84c0ef08` / `0x84c0efd8`) and keeps it at `screen+688` | read |
-| `f_83420410` | `LoadListScreen_WrapCards` | Vtable slot 93: wraps the slide list's card parts, each through `f_834206d0` | read |
-| `f_834206d0` | `LoadListScreen_WrapCard` | Wraps one card part of the slide list in a card object (the array: count at `wrapper+96`, pointers at `+104`) | read |
+| `f_83420410` | `LoadListScreen_WrapCards` | Vtable slot 93: builds the screen's parts. Calls `f_834206d0` once for the slide list's wrapper (that function loops over the cards), then makes the scroll bar object (0x50 bytes, kept at `screen+696`) on the layout's `Pa_ScrollBar_00` part, with the panes `P_ScrollBar_00`, `P_Base_00` and `P_ListBg_00` | read |
+| `f_834206d0` | `LoadListScreen_WrapCards_Loop` | Wraps every card part of the slide list: gets the part count (`f_80c6a490`), allocates the array (count at `wrapper+96`, pointers at `+104`), and for each part allocates a 0x290-byte card, builds it with `f_833eb450` and `f_833eb610`, then disables its part (vtable +320 with 1) and sets bit 2 of the part's flags (`+64`) | read |
 | `f_83420c70` | `LoadListScreen_FillEntry({entry, pane})` | The slide list's "fill this entry" callback (the wrapper's vtable slot 18). Finds the card for the pane (`f_8379beb0`) and tail-calls `f_833ec800(card, entry)` | tested |
 | `f_83420ab0` | `LoadListScreen_OnDecide` | Vtable slot 50: A on a card. Gets the entry from the pane (`f_83793b10`), calls `f_833ee110(card, pane, entry)`, then, unless the card is disabled (`f_83791f90`), clears `screen+704` | tested |
-| `f_834209d0` | `LoadListScreen_OnCursor` | Vtable slot 46: the cursor moved to a card. Plays the card's CursorLoop (`f_833ee1e0`) and writes the focused slot (or -1) to `[0x849e5eb0]+1344` | read |
-| `f_83420970` | `LoadListScreen_vt104` | Vtable slot 104: sets `screen+704` to 1 | read |
+| `f_834209d0` | `LoadListScreen_OnCursor` | Vtable slot 46: the cursor moved to a pane. Plays CursorLoop (`f_833ee1e0`) on the card whose part is the pane and stops it on the others, then writes the focused slot to `[[0x84c9e2a8]]+1344` (the object at `[0x84e9cfa8]`): the record's slot (`rec+4`, from `f_833cd490`), or -1 when the entry is negative, the lookup fails or the card is disabled | read |
+| `f_83420970` | `LoadListScreen_vt104` | Vtable slot 104: sets `screen+704` to 1 and calls `f_802edef0(card, 1)` on every wrapped card | read |
 | `f_802f0fd0` | `UIScreen_OnAnimRequest` | Slot 11 (+88) of the screen's vtable, the "animation request" hook; empty | read |
-| `f_8331b8c0` | `SeqQueryIsClosableLoadListScreen_Declare` | Declares the sequence query SeqQueryIsClosableLoadListScreen (output "IsClosable") | read |
+| `f_8331b8c0` | `SeqQueryIsClosableLoadListScreen_Name` | The sequence query's name getter (slot 19 of its vtable, base `0x84bead48`): returns "SeqQueryIsClosableLoadListScreen". The output "IsClosable" is declared by its slot 28 (`f_80de8180`) | read |
 
 ## The confirm screen
 
@@ -35,8 +35,8 @@ The save confirm screen is a separate screen, `UISystemSaveLoadScreen` (layout `
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_83425080` | `SaveLoadScreen_Fill` | Fills the confirm screen. In mode `+684 == 1` (load): reads the picked slot from CaptionData and the index 0xa2995097, fills the card with `f_833ec800`, shows message 1001. Otherwise (save): fills the card from the current game (`f_833ed200`), message 1000 | read |
-| `f_83424eb0` | `SaveLoadScreen_Setup` | Part of the screen's setup | read |
-| `f_83425520` | `SaveLoadScreen_Setup2` | Part of the screen's setup | read |
+| `f_83424eb0` | `SaveLoadScreen_BuildParts` | Slot 93 of the confirm screen's vtable (base `0x84c0f840`), its parts: makes the two check buttons (0x68 bytes each, `Pa_CheckButton_00` and `Pa_CheckButton_01`, at `screen+696` and `+704`), looks up three animations (`screen+712` In, `+720` Save, `+728` SaveEnd) and makes the one card (0x290 bytes, `Pa_DataFile_00`, at `screen+736`) with `f_833eb450` and `f_833eb610` | read |
+| `f_83425520` | `SaveLoadScreen_Factory_Name` | The factory's name getter: returns "UISystemSaveLoadScreen" | read |
 
 ## Save cards
 
@@ -46,9 +46,9 @@ initialised by `f_833eb610`. The initialiser looks up the card's animations and 
 
 | Function | Name | What it does | Sure |
 |---|---|---|---|
-| `f_833eb450` | `SaveCard_Create` | Makes a card object (0x290 bytes) | read |
+| `f_833eb450` | `SaveCard_Ctor(card, part, index)` | The card object's constructor (0x290 bytes, allocated by the caller `f_834206d0`): base constructor `f_80f99810`, vtable `0x84c02a18`, clears the fields, and sets the entry (`+600`) to -1 | read |
 | `f_833eb610` | `SaveCard_Init` | Initialises a card: looks up its animations and parts by name (the card's fields below) | read |
-| `f_833ec800` | `SaveCard_Fill(card, entry)` | Fills a card for an entry. Entry < 0: hides it. Otherwise stores it at `card+600` and looks up the slot's caption (`f_833cd490`). If the lookup fails, returns without touching the card, so a reused card keeps what it showed. If the record is unusable (`rec+640` bit 1 clear, or no screenshot, `rec+240 == -1`): the empty look (Failure, `card+112`) and disabled. Otherwise: Decide on layer 4 and `f_833ec8f0` | tested |
+| `f_833ec800` | `SaveCard_Fill(card, entry)` | Fills a card for an entry. Entry < 0: clears the card's disabled look (the part's vtable +320 with 0) and does nothing else. Otherwise stores it at `card+600` and looks up the slot's caption (`f_833cd490`). If the lookup fails, returns without touching the card, so a reused card keeps what it showed. If the record is unusable (`rec+640` bit 1 clear, or no screenshot, `rec+240 == -1`): the empty look (Failure, `card+112`) and disabled. Otherwise: Decide on layer 4, enabled, and `f_833ec8f0` | tested |
 | `f_833ec8f0` | `SaveCard_FillFromRecord(card)` | The full fill. Screenshot (`rec+240` → `f_8045b700`, `f_80e6b660`, PicLoad at 1 with `f_80bcce80`), date (`rec+448…464` into message arguments with `f_80183b70`, Time_AM/PM from `LayoutMsg/SystemSaveLoad_00`, into `T_Day_00`), place (`rec+480` through `f_80a8a480` into `T_Place_00`), AutoSave (`rec+472`), Clear (`rec+473`), hearts (`rec+1408`, `+1412`, `+1432`), medallions (`rec+1384…`) | read |
 | `f_833ed200` | `SaveCard_FillFromGame(card)` | Fills a card from the game being played, for the save confirm screen | read |
 | `f_833d92c0` | `SaveCard_SetHeart(heart, health, max)` | Sets one heart part: its fill (`heart+56`) and whether it shows (`heart+64`). A heart past the maximum gets both stopped | read |
@@ -86,7 +86,7 @@ The game's generic scrolling list. Every slide list in the game goes through `f_
 | `0x84c0ef08` | `LoadListWrapper_vtable` | One of the slide list wrapper's two vtables (made by `f_83420b40`) | read |
 | `0x84c0efd8` | `LoadListWrapper_vtable2` | The wrapper's other vtable | read |
 | `0x84c416e8` | `CardPart_vtable` | The vtable of a card's part pane (`card+48`) | read |
-| `0x849e5eb0` | `g_SaveListFocus` | A pointer to the object whose `+1344` holds the save list's focused slot (or -1) | read |
+| `0x84e9cfa8` | `g_GameStateObject` | The pointer that the GOT cell `0x84c9e2a8` (`g_GameStateHolder`, [player.md](player.md)) holds: the game-state object whose `+1344` holds the save list's focused slot (or -1). The address `0x849e5eb0` that an earlier row gave for this pointer is not read by anything | read |
 
 ## Structures
 

@@ -30,10 +30,10 @@ slots and captions), [events.md](events.md) (`f_829df380`, the change of map)
 |---|---|---|---|
 | `f_80eefdb0` | `Entitlement_Create` | Makes the entitlement object (0x100 bytes, vtable `0x84bf86d0`; layout below), called from `nnMain` (`f_81222ce0`, [graphics.md](graphics.md)). `+208`, `+212` and `+216` start at 0. The holder is `0x84e97e48`, and `nnMain` copies the pointer to `0x84eb5f40` at about 0x81223140 | read |
 | `f_83392a00` | `Entitlement_OnBootPhase(obj, phase)` | Slot 5 (`+40`) of the vtable; the phase is a byte in `w1`. **Phase 2 is the add-on check:** `CountAddOnContent()`; below 1 (errors count as 0) the list call is skipped; otherwise `n = min(count, 32)`, a 128-byte buffer on the stack is zeroed and `ListAddOnContent(buffer, 0, n)` is called (its result is ignored). If any of the first `n` entries is exactly **1**, it stores 1 at `+216` and stops looking. It never clears `+216`. Both paths then start "BootupBackgroundWorkThread" (`f_8338f290`). Phases 3, 10, 19, 21, 28, 43, 44 and 51 set bits in `[[0x84e96868]+48]`, which has nothing to do with add-ons | read |
-| `f_8517d900` | `nn::aoc::CountAddOnContent` | The import's stub (PLT `f_83c62340`). Its only caller is `f_83392a00`, at 0x83392a38 | read |
-| `f_8517d950` | `nn::aoc::ListAddOnContent` | The import's stub, `(int *out, int offset, int count)` (PLT `f_83c62350`). Its only caller is `f_83392a00`, at 0x83392a70 | read |
+| `f_8517d900` | `nn::aoc::CountAddOnContent` | The import's stub (a host stub, not a lifted function; PLT `f_83c62340`). Its only caller is `f_83392a00`, at 0x83392a34 | read |
+| `f_8517d950` | `nn::aoc::ListAddOnContent` | The import's stub (a host stub), `(int *out, int offset, int count)` (PLT `f_83c62350`). Its only caller is `f_83392a00`, at 0x83392a6c | read |
 | `f_8338f290` | `BootupWorker_Start` | Starts "BootupBackgroundWorkThread" (`[0x84e96868]`) after the check | read |
-| `f_83392c80` | `Entitlement_vt6` | Slot 6: sets `+208` to 1 or 2 and clears bit 0 of `+212`. Called through `0x84eb5f40` from `f_80706be0`. Not add-on related | read |
+| `f_83392c80` | `Entitlement_vt6` | Slot 6: sets `+208` to 1 or 2 and clears bit 0 of `+212`. Called through `0x84eb5f40` from `f_80706be0`. Not add-on related. It reads a parameter block (`x1`): the value is 2 when a looked-up bit and a byte are both set, else 1; it ends in a tail jump through a virtual of a global object. | read |
 | `f_83392250` | `Entitlement_Destroy` | Clears `0x84e97e48` | read |
 
 The phases come from the ModuleSystem's boot, `f_83b7a2c0` ([graphics.md](graphics.md)), through the copy at `0x84eb5f40`:
@@ -51,8 +51,8 @@ vtable `0x84c85650`), which calls it once and then runs a frame loop that never 
 | `f_80fb1560` | `RegionLanguageMgr_Create` | Makes the region and language manager (0x68 bytes, layout below); its holder is `0x84e9f558` | read |
 | `f_80fb14b0` | `RegionLanguageMgr_Load` | Loads `System/RegionLangMask.txt` and `Local/System/RegionLangConfig.txt` | read |
 | `f_80fb1600` | `RegionLanguageMgr_ParseMask` | Starts from "dev". With the file's data, it splits it into lines (`f_810c4420`, CRLF), parses one token with `f_810c4d60` into `+16`, then sets `+64` to 1 | read |
-| `f_810c4d30` | `RegionLanguageMgr_GetVersion` | `+16` when `+64` is set, otherwise the default at `0x83f44d10` (0x7fffffff). About 40 functions call it | read |
-| `f_810c4d60` | `ReleaseVersion_Parse(text)` | A release-version token to a number: "dev" gives 0x7fffffff, otherwise, **guess**, the digits (so "120" is 120) | read |
+| `f_810c4d30` | `RegionLanguageMgr_GetVersion` | `+16` when `+64` is set, otherwise the default at `0x83f44d10` (0x7fffffff). One direct caller (`f_810c4c90`); about 14 more functions (among them `f_8331a710`, `f_809d8f00` and `f_80e5c020`) read the holder `0x84e9f558` and these two fields inline | read |
+| `f_810c4d60` | `ReleaseVersion_Parse(text)` | A release-version token to a number: "dev" gives 0x7fffffff; a token of exactly three characters is read in base 36 (`0` to `9`, then `A` to `Z` or `a` to `z`): `d0*1296 + d1*36 + d2`, so "120" is 1368, "111" is 1333 and "110" is 1332; any other length gives 0xffffffff. Called by `f_810c4420`, `f_810c4bf0` and `f_810c4c90` | read |
 | `f_810c4bf0` | `ReleaseVersion_Init120` | Stores `ReleaseVersion_Parse("120")` at `0x84e49438`, the threshold for the ".120" resources. `f_810c4c90` compares the version with "110" the same way | read |
 
 Earlier notes called this value a region code. It is a release version that the game keeps in `RegionLangMask.txt`. On
@@ -186,7 +186,7 @@ So the title has no Master Quest button in this data: the choice is most likely 
 
 LS doesn't implement `nn::aoc`. Unimplemented imports go to `a64_unimplemented`
 (`third_party/a64-kit/rt/a64_rt.c`), which logs the import once and returns 0 in `x0`. The log shows the
-boot check: `unimplemented import _ZN2nn3aoc17CountAddOnContentEv (lr 0x83392a38)`. A count of 0 skips the list call,
+boot check: `unimplemented import _ZN2nn3aoc17CountAddOnContentEv (lr 0x83392a38)` (the log's `lr` is the return address; the call is at 0x83392a34). A count of 0 skips the list call,
 `+216` stays 0, and `SeqOneShotSetMQMode` refuses Master Quest mode. **tested** (the log), **read** (the rest)
 
 ### What an nn::aoc implementation must return
