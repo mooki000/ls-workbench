@@ -89,7 +89,8 @@ def cmd_plan(a):
     costs = {'fps_floor': a.fps_floor} if a.fps_floor else None
     over = {k: v for k, v in (('dwell_s', a.dwell), ('settle_s', a.settle), ('min_frames', a.min_frames)) if v is not None}
     if a.save_proof:
-        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix, env=parse_env(a.env))
+        go = {'after_s': a.go_after, 'for_s': a.go_for} if a.go_for else None
+        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix, env=parse_env(a.env), go=go, pin=a.pin)
     elif a.sweep:
         yaws = [float(x) for x in a.yaws.split(',') if x]
         runs = planner.plan_sweep(lib, ids, yaws, run_budget_s=a.run_budget, dwell_s=a.dwell or 3.0, prefix=a.prefix)
@@ -141,7 +142,10 @@ def run_one(a, run, outdir, cap_s=None):
     sock, live = ctl / 'c.sock', ctl / 'live.txt'
     live.write_text('')
     env = [('HOS_CONTROL', str(sock)), ('HOS_INPUT_LIVE', str(live)), ('RX_VK_FRAME_TRACE', '1'), ('HOS_PROFILE_DIR', str(out / 'trace'))]
-    env += list(FIXED_COST_ENV) + [tuple(p) for p in run['env']]
+    env += list(FIXED_COST_ENV) + [(k, str(v).replace('{run}', str(out))) for k, v in run['env']]   # ({run}: this run's folder, for a recorder's path)
+    for k, v in env:
+        if '{run}' in str(dict(run['env']).get(k, '')):
+            Path(v).parent.mkdir(parents=True, exist_ok=True)
     seen, uniq = set(), []
     for k, v in reversed(env):   # (a later entry wins: the run's own switches over the fixed ones)
         if k not in seen:
@@ -155,6 +159,10 @@ def run_one(a, run, outdir, cap_s=None):
     if cap_s is not None:
         wall = min(wall, max(60, int(cap_s)))   # (the hold's own end: the game is over before its waiter's timeout)
     cmd = [a.hs_run, a.copy, tag, str(wall), '--user', save] + [f'{k}={v}' for k, v in env]
+    pin = run.get('pin')
+    if pin:
+        cmd = ['taskset', '-c', str(pin)] + cmd   # (the wrapper and the game inherit the mask)
+    go_files = [dict(env)['HOS_CHAIN'] + '.go'] if 'HOS_CHAIN' in dict(env) else []
     say(f"run {run['id']}: {tag} wall {wall}s save {Path(save).name}; env " + ' '.join(f'{k}={v}' for k, v in run['env']))
     (out / 'launch.txt').write_text(' '.join(cmd) + '\n')
     stdout = open(out / 'hs-run.out', 'w')
@@ -176,7 +184,7 @@ def run_one(a, run, outdir, cap_s=None):
             if pid is None:
                 say(f"run {run['id']}: the game's pid was not found by its HOS_CONTROL: no CPU record")
             drv = Driver(bridge, live, log, out, run_id=run['id'], deadline_ns=started + (wall - 40) * 10**9, log=say,
-                         cpu=cpumod.Sampler(pid) if pid else None)
+                         cpu=cpumod.Sampler(pid) if pid else None, go_files=go_files)
             drv.run(run['ops'])
             result['aborted'] = drv.aborted
             bridge.close()
@@ -212,7 +220,7 @@ def run_one(a, run, outdir, cap_s=None):
                         shutil.copy2(run_dir / 'present.csv', dest / 'presents.csv')
         shutil.rmtree(ctl, ignore_errors=True)
     meta = {'id': run['id'], 'tag': tag, 'copy': a.copy, 'save': run['save'], 'env': env, 'area': run['area'], 'tod': run['tod'], 'wall_s': wall,
-            'plan_est_s': run['est_s'], 'label': 'ordinary run, no speed claim', **result}
+            'plan_est_s': run['est_s'], 'pin': pin, 'label': 'ordinary run, no speed claim', **result}
     (out / 'run.json').write_text(json.dumps(meta, indent=1) + '\n')
     return meta
 
@@ -320,6 +328,9 @@ def main(argv=None):
     p.add_argument('--min-frames', type=int, help='at least this many presents in each window (1300 for pass timing)')
     p.add_argument('--fps-floor', type=float, help='the frame rate the planner assumes when it turns --min-frames into seconds (default 60: set 25 on a loaded PC)')
     p.add_argument('--sweep', action='store_true', help='scout runs: each viewpoint looked at in each of --yaws, reading the draws (no conditions)')
+    p.add_argument('--go-after', type=float, default=0.0, help="save-proof stands: the recorder's go file (HOS_CHAIN=<path>.go) is made this many seconds into the window")
+    p.add_argument('--go-for', type=float, help='... and kept this long (the recorder writes its file when it goes away); with --env HOS_CHAIN={run}/chain/chain.bin')
+    p.add_argument('--pin', help="save-proof stands: launch the game under taskset -c <cpu list> (a small CPU's contention; both arms of a pair are pinned alike)")
     p.add_argument('--save-proof', action='store_true', help="runs that boot each viewpoint's own save and check where Link stands (no !pos)")
     p.add_argument('--yaws', default='0,60,120,180,240,300')
     p.add_argument('--prefix', default='r', help="the runs' ids start with this (so that plans can be merged)")

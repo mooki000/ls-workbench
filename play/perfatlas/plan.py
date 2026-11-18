@@ -222,6 +222,10 @@ def summary(holds):
             n_walk = sum(1 for o in ops if o['op'] == 'walk')
             n_rel = sum(1 for o in ops if o['op'] in ('actors', 'actors_clear') and o.get('reload'))
             env = ' '.join(f'{k}={v}' for k, v in r['env']) or '(no extra switches)'
+            if r.get('pin'):
+                env += f" pinned to CPUs {r['pin']}"
+            if any(o.get('go') for o in ops):
+                env += ' with a go window'
             lines.append(f"  run {r['id']}: {n_pos} viewpoint visits, {n_walk} walks, {n_rel} area reloads, about {r['est_s']:.0f} s; {env}")
     return '\n'.join(lines)
 
@@ -262,10 +266,12 @@ def plan_sweep(lib, vp_ids, yaws, run_budget_s=420.0, dwell_s=3.0, costs=None, p
     return runs
 
 
-def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=()):
+def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=(), go=None, pin=None):
     """one run that boots each viewpoint's own save and checks where Link stands (no `!pos`): the proof that a save made for a viewpoint reaches
     play at that place. Each viewpoint needs its own area (its own save) in the library; one run for each, in the order given. Estimates only.
-    `env` ((name, value) pairs) goes on every run's launch line: a long stand with HOS_PROFILE=1 is a profile run."""
+    `env` ((name, value) pairs) goes on every run's launch line: a long stand with HOS_PROFILE=1 is a profile run; `{run}` in a value is the run's output
+    folder (a recorder's path). `go` ({'after_s', 'for_s'}): the stand makes the recorder's go file (HOS_CHAIN's `<path>.go`) for that part of its window.
+    `pin`: a CPU list ('0-11') the game is launched under (taskset): a small CPU's contention, an arm of its own."""
     costs = {**DEFAULT_COSTS, **(costs or {})}
     runs = []
     for i, vid in enumerate(vp_ids, 1):
@@ -277,5 +283,10 @@ def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=()):
         ops = [{'op': 'boot', 'map': a.map},
                {'op': 'stand', 'cond': 'save-proof', 'vp': vid, 'visit': 1, 'expect': [vp.pos[0], vp.pos[2]], 'aim': vp.aim(), 'settle_s': 2.0,
                 'dwell_s': dwell_s, 'shot': True, 'tod': vp.tod}, {'op': 'quit'}]
-        runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [list(e) for e in env], 'ops': ops, 'est_s': round(seconds_of(ops, costs), 1)})
+        if go:
+            if go['after_s'] + go['for_s'] > dwell_s:
+                raise PlanError(f'the go window ({go["after_s"]} + {go["for_s"]} s) does not fit the dwell of {dwell_s} s')
+            ops[1]['go'] = dict(go)
+        runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [list(e) for e in env], 'ops': ops,
+                     'est_s': round(seconds_of(ops, costs), 1), 'pin': pin})
     return runs

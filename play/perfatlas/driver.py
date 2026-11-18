@@ -38,7 +38,7 @@ class RunAborted(RuntimeError):
 
 class Driver:
     def __init__(self, bridge, live_path, log_path, out_dir, run_id='r1', clock=None, deadline_ns=None, poll_s=0.5, on_live=None,
-                 boot_timeout_s=240.0, log=None, cpu=None):
+                 boot_timeout_s=240.0, log=None, cpu=None, go_files=()):
         self.bridge = bridge
         self.live_path = Path(live_path)
         self.log_path = Path(log_path)
@@ -54,6 +54,7 @@ class Driver:
         self.options_failed = {}   # (a live setting the game would not take: every window until its restore says so)
         self.n = 0
         self.aborted = None
+        self.go_files = [Path(g) for g in go_files]   # (a recorder that runs only while its `<file>.go` exists: HOS_CHAIN's; a stand's op `go` makes them for part of its window)
         self.cpu = cpu                      # (cpu.Sampler: the game's and the machine's CPU, for the quiet record and CPU ms a frame)
         self.aimer = Aimer(bridge, sleep=self.sleep, status=self.status)   # (the right stick's handedness and rate, learned by the first push)
         (self.out / 'shots').mkdir(parents=True, exist_ok=True)
@@ -276,8 +277,11 @@ class Driver:
         r = self.bridge.shot(path)
         return str(path) if r.get('ok') else None
 
-    def dwell(self, dwell_s, min_frames):
-        """stand for dwell_s wall seconds and at least min_frames presents (at most 4 x dwell_s); sample the status each poll"""
+    def dwell(self, dwell_s, min_frames, go=None):
+        """stand for dwell_s wall seconds and at least min_frames presents (at most 4 x dwell_s); sample the status each poll. `go` ({'after_s', 'for_s'}):
+        the driver's go files exist from after_s of the window for for_s seconds (a recorder that writes what it saw when its file goes away); the
+        times they were made and removed are kept in `self.go_times`"""
+        self.go_times = None
         t0 = self.now()
         cpu = self.cpu_start()
         st0 = self.status()
@@ -291,9 +295,42 @@ class Driver:
             self.cpu_mid(cpu)
             elapsed = (self.now() - t0) / 1e9
             frames = (st.get('frame') or f0) - f0
+            if go and self.go_files:
+                if self.go_times is None and elapsed >= go['after_s']:
+                    for g in self.go_files:
+                        g.write_text('')
+                    self.go_times = {'start_ns': self.now(), 'end_ns': None}
+                if self.go_times and self.go_times['end_ns'] is None and elapsed >= go['after_s'] + go['for_s']:
+                    self.stop_go()
             if (elapsed >= dwell_s and frames >= min_frames) or self.now() >= hard:
+                self.stop_go()
                 self.cpu_end(cpu)
                 return t0, self.now(), samples, st0, st, cpu
+
+    def stop_go(self):
+        """remove the go files (the recorder writes its file when its own goes away); once"""
+        if self.go_times and self.go_times['end_ns'] is None:
+            for g in self.go_files:
+                g.unlink(missing_ok=True)
+            self.go_times['end_ns'] = self.now()
+
+    def go_outputs(self, timeout_s=90.0):
+        """after the window: wait for the recorders' files (a go file `x.go` makes `x`), sizes in bytes (None: it did not appear in time)"""
+        out = {}
+        end = self.clock.now_ns() + int(timeout_s * 1e9)
+        for g in self.go_files:
+            f = g.with_suffix('') if g.suffix == '.go' else g
+            size = None
+            last = -1
+            while self.clock.now_ns() < end:
+                if f.exists():
+                    size = f.stat().st_size
+                    if size > 0 and size == last:   # (written and not growing)
+                        break
+                    last = size
+                self.sleep(0.5)
+            out[str(f.name)] = size if size and size == last else None
+        return out
 
     # ---- CPU: snapshots with the threads at the window's two ends, the machine's and the game's totals between
     def cpu_start(self):
@@ -365,14 +402,16 @@ class Driver:
         self.sleep(op.get('settle_s', 3.0))
         log0 = self.log_size()
         name = f"{self.run_id}-{self.n + 1:03d}-{op['cond']}-{op['vp']}-v{op['visit']}.png" if op.get('shot') else None
-        t0, t1, samples, st0, st1, cpu = self.dwell(op['dwell_s'], op.get('min_frames', 0))
+        t0, t1, samples, st0, st1, cpu = self.dwell(op['dwell_s'], op.get('min_frames', 0), go=op.get('go'))
+        go_times = self.go_times
         log1 = self.log_size()
         shot = self.shot(name) if name else None   # (after the window: the picture's own frame stays out of the numbers)
+        go_out = self.go_outputs() if go_times else None   # (the recorder's file: written when its go file went away, a second or two on; the window's numbers are taken)
         rec = self.write_window(kind='viewpoint', cond=op['cond'], vp=op['vp'], visit=op['visit'], tod=op.get('tod'), t0_ns=t0, t1_ns=t1,
                                 log0=log0, log1=log1, frame0=st0.get('frame'), frame1=st1.get('frame'),
                                 status0=self.snapshot(st0), status1=self.snapshot(st1), arrived=pos_ok, camera_ok=cam_ok, aim=aim, aimed_pushes=pushes,
                                 shot=shot, moved_m=self.moved(samples), event_seen=any(s.get('event') for s in samples), samples=len(samples), cpu=cpu,
-                                options_failed=sorted(self.options_failed))
+                                options_failed=sorted(self.options_failed), go=go_times, go_outputs=go_out)
         return {'ok': pos_ok, 'window': rec['n'], 'camera_ok': cam_ok, 'camera': cam}
 
     def op_sweep(self, op):

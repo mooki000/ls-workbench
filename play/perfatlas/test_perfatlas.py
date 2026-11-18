@@ -7,6 +7,7 @@ rehearsal of `atlas.py hold` with a stand-in for the run wrapper. No game, no GP
 """
 import json
 import math
+import os
 import sys
 import tempfile
 import time
@@ -1023,6 +1024,37 @@ class Rehearsal(unittest.TestCase):
             self.assertIn('--maps', cmd)
             with self.assertRaises(ValueError):
                 profmod.window_args(out2 / 's1')   # (a run that set no HOS_PROFILE has no profile folder)
+            # a recorder that runs only while its go file exists (HOS_CHAIN's), a pinned launch and a run folder in a switch's value
+            cpu0 = min(os.sched_getaffinity(0))
+            plan4 = tmp / 'plan4.json'
+            with self.assertRaises(planner.PlanError):   # (a go window that does not fit the dwell)
+                planner.plan_save_proof(model.load_library(json.loads(lib3.read_text())), ['tv'], dwell_s=4.0, go={'after_s': 3.0, 'for_s': 2.0})
+            self.assertEqual(atlas.main(['plan', str(lib3), '--save-proof', '--area', 't', '--tod', 'day', '--viewpoints', 'tv', '--dwell', '6', '--env', 'HOS_CHAIN={run}/chain/chain.bin',
+                                         '--go-after', '1', '--go-for', '2', '--pin', str(cpu0), '--prefix', 'c', '--out', str(plan4)]), 0)
+            run4 = json.loads(plan4.read_text())['holds'][0]['runs'][0]
+            self.assertEqual(run4['pin'], str(cpu0))
+            self.assertEqual(run4['ops'][1]['go'], {'after_s': 1.0, 'for_s': 2.0})
+            self.assertIn('pinned to CPUs', planner.summary(json.loads(plan4.read_text())['holds']))
+            out4 = tmp / 'out4'
+            rc = atlas.main(['hold', str(plan4), '--hold', 'h1', '--copy', str(copy), '--out', str(out4), '--hs-run', str(HERE / 'rehearsal' / 'fake_hs_run.sh'),
+                             '--saves', str(saves), '--wall', '120'])
+            self.assertEqual(rc, 0)
+            rd4 = out4 / 'c1'
+            meta4 = json.loads((rd4 / 'run.json').read_text())
+            self.assertEqual(meta4['pin'], str(cpu0))
+            chain_path = dict(meta4['env'])['HOS_CHAIN']
+            self.assertEqual(chain_path, str(rd4 / 'chain' / 'chain.bin'))   # ({run} became this run's folder)
+            self.assertTrue(Path(chain_path).exists() and Path(chain_path).read_text().startswith('HOSCHAIN1'))   # (written when the go file went away)
+            self.assertFalse(Path(chain_path + '.go').exists())
+            win4 = [json.loads(ln) for ln in (rd4 / 'windows.jsonl').read_text().splitlines() if ln.strip()]
+            self.assertEqual(len(win4), 1)   # (one window: the recorder's output is a field of it, not a second line)
+            go = win4[0]['go']
+            self.assertTrue(go['end_ns'] > go['start_ns'] > win4[0]['t0_ns'])
+            self.assertAlmostEqual((go['end_ns'] - go['start_ns']) / 1e9, 2.0, delta=1.5)
+            self.assertLess(go['end_ns'], win4[0]['t1_ns'] + 1)
+            self.assertTrue(win4[0]['go_outputs']['chain.bin'] > 0, win4[0]['go_outputs'])
+            affinities = [(p.read_text().strip()) for p in (Path(copy) / 'runs').glob(f"*{meta4['tag']}*/affinity.txt")]
+            self.assertEqual(affinities, [str(cpu0)])   # (the launch ran under taskset: the game inherited the one CPU)
             # the plan's own socket folder is gone after the run
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
 

@@ -162,6 +162,24 @@ srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(sockpath)
 srv.listen(4)
 srv.settimeout(0.5)
+def chain_thread():
+    """HOS_CHAIN=<path>: records while <path>.go exists and writes <path> when it goes away (one recording a run), polling every 0.1 s as the game does"""
+    path = env['HOS_CHAIN']
+    go = path + '.go'
+    seen = False
+    while not S['quit']:
+        time.sleep(0.1)
+        if os.path.exists(go):
+            seen = True
+        elif seen:
+            Path(path).write_text('HOSCHAIN1\nrecords 0\n')
+            say(f'chain: 0 records of 0 threads written to {path}')
+            return
+
+
+(run_dir / 'affinity.txt').write_text(','.join(str(c) for c in sorted(os.sched_getaffinity(0))) + '\n')   # (a taskset-wrapped launch: the mask the game inherited)
+if env.get('HOS_CHAIN'):
+    threading.Thread(target=chain_thread, daemon=True).start()
 threading.Thread(target=frames_thread, daemon=True).start()
 threading.Thread(target=live_thread, daemon=True).start()
 while not S['quit'] and time.monotonic() - start < wall:
