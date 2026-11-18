@@ -84,12 +84,13 @@ def cmd_plan(a):
     ids = [s for s in a.viewpoints.split(',') if s] if a.viewpoints else []
     wids = [s for s in a.walks.split(',') if s] if a.walks else []
     conds = model.conditions_for(lib, [s for s in a.conditions.split(',') if s])
+    costs = {'fps_floor': a.fps_floor} if a.fps_floor else None
     over = {k: v for k, v in (('dwell_s', a.dwell), ('settle_s', a.settle), ('min_frames', a.min_frames)) if v is not None}
     if a.sweep:
         yaws = [float(x) for x in a.yaws.split(',') if x]
         runs = planner.plan_sweep(lib, ids, yaws, run_budget_s=a.run_budget, dwell_s=a.dwell or 3.0, prefix=a.prefix)
     else:
-        runs = planner.plan_runs(lib, ids, conds, wids, area=a.area, tod=a.tod, run_budget_s=a.run_budget, env=parse_env(a.env), over=over, prefix=a.prefix)
+        runs = planner.plan_runs(lib, ids, conds, wids, area=a.area, tod=a.tod, run_budget_s=a.run_budget, env=parse_env(a.env), over=over, prefix=a.prefix, costs=costs)
     holds = planner.plan_holds(runs, a.hold_limit)
     fams = {c.id: (c.family or c.kind) for c in conds}
     Path(a.out).write_text(json.dumps({'schema_version': 1, 'kind': 'perfatlas-plan', 'area': a.area, 'tod': a.tod, 'holds': holds, 'families': fams,
@@ -279,6 +280,7 @@ def main(argv=None):
     p.add_argument('--dwell', type=float, help="dwell seconds for every viewpoint (over the library's)")
     p.add_argument('--settle', type=float)
     p.add_argument('--min-frames', type=int, help='at least this many presents in each window (1300 for pass timing)')
+    p.add_argument('--fps-floor', type=float, help='the frame rate the planner assumes when it turns --min-frames into seconds (default 60: set 25 on a loaded PC)')
     p.add_argument('--sweep', action='store_true', help='scout runs: each viewpoint looked at in each of --yaws, reading the draws (no conditions)')
     p.add_argument('--yaws', default='0,60,120,180,240,300')
     p.add_argument('--prefix', default='r', help="the runs' ids start with this (so that plans can be merged)")

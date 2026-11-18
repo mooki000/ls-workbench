@@ -150,31 +150,33 @@ def plan_runs(lib, vp_ids, conditions, walk_ids=(), area=None, tod=None, run_bud
         run.pop('blocks')
         return run
 
-    # ---- the main process: baseline first, the conditions, the baseline again when something was reloaded
-    base = model.Condition('baseline', 'baseline', 'as the game plays', 'baseline')
-    seq = [c for c in plain if c.id != 'baseline']
-    order = [base] + seq
-    if any(c.kind in ('actors', 'time') for c in seq):
-        order.append(model.Condition('baseline-again', 'baseline', 'as the game plays, after the reloads', 'baseline'))
-    cur, previous, n, baselines = new_run(f'{prefix}1', ()), None, 1, 0
-    for cond in order:
-        if cond.kind == 'baseline':
-            baselines += 1   # (the visit number of a baseline block: 1 at the start, 2 after the reloads)
-        visit = baselines if cond.kind == 'baseline' else 1
-        block = condition_block(lib, cond, vp_ids, walk_ids, a.map, visit, previous, over)
-        block_s = seconds_of(block, costs)
-        run_s = seconds_of(cur['ops'] + [{'op': 'quit'}], costs)
-        if run_s + block_s > run_budget_s and len(cur['ops']) > 1:
-            runs.append(close(cur))   # (a process that ends needs no undoing: the rules die with it)
-            n += 1
-            cur, previous = new_run(f'{prefix}{n}', ()), None
+    # ---- the main process: baseline first, the conditions, the baseline again when something was reloaded (none when every condition is a launch switch:
+    # those get a process each, and a baseline process only when 'baseline' is named)
+    if plain:
+        base = model.Condition('baseline', 'baseline', 'as the game plays', 'baseline')
+        seq = [c for c in plain if c.id != 'baseline']
+        order = [base] + seq
+        if any(c.kind in ('actors', 'time') for c in seq):
+            order.append(model.Condition('baseline-again', 'baseline', 'as the game plays, after the reloads', 'baseline'))
+        cur, previous, n, baselines = new_run(f'{prefix}1', ()), None, 1, 0
+        for cond in order:
+            if cond.kind == 'baseline':
+                baselines += 1   # (the visit number of a baseline block: 1 at the start, 2 after the reloads)
+            visit = baselines if cond.kind == 'baseline' else 1
             block = condition_block(lib, cond, vp_ids, walk_ids, a.map, visit, previous, over)
-        if seconds_of(block + [{'op': 'boot', 'map': a.map}, {'op': 'quit'}], costs) > run_budget_s:
-            raise PlanError(f'condition {cond.id} alone needs {seconds_of(block, costs):.0f} s: more than the run budget {run_budget_s:.0f} s '
-                            f'(fewer viewpoints, shorter dwells or a longer budget)')
-        cur['ops'] += block
-        previous = cond
-    runs.append(close(cur))
+            block_s = seconds_of(block, costs)
+            run_s = seconds_of(cur['ops'] + [{'op': 'quit'}], costs)
+            if run_s + block_s > run_budget_s and len(cur['ops']) > 1:
+                runs.append(close(cur))   # (a process that ends needs no undoing: the rules die with it)
+                n += 1
+                cur, previous = new_run(f'{prefix}{n}', ()), None
+                block = condition_block(lib, cond, vp_ids, walk_ids, a.map, visit, previous, over)
+            if seconds_of(block + [{'op': 'boot', 'map': a.map}, {'op': 'quit'}], costs) > run_budget_s:
+                raise PlanError(f'condition {cond.id} alone needs {seconds_of(block, costs):.0f} s: more than the run budget {run_budget_s:.0f} s '
+                                f'(fewer viewpoints, shorter dwells or a longer budget)')
+            cur['ops'] += block
+            previous = cond
+        runs.append(close(cur))
     # ---- one process for each distinct env
     groups = {}
     for c in envs:

@@ -194,6 +194,18 @@ class Plan(unittest.TestCase):
         self.assertEqual([(o['dwell_s'], o['min_frames']) for o in pos], [(20, 1300)] * 2)
         self.assertGreater(planner.op_seconds(pos[0], planner.DEFAULT_COSTS), 20)
 
+    def test_env_conditions_alone_get_no_baseline_process_unless_named(self):
+        only = planner.plan_runs(self.lib, ['v1'], model.conditions_for(self.lib, ['occlusion-queries', 'no-cull']), [], run_budget_s=2000)
+        self.assertEqual([r['env'] for r in only], [[['RX_VK_OCC_QUERIES', '1']], [['RX_VK_NOCULL', '1']]])
+        named = planner.plan_runs(self.lib, ['v1'], model.conditions_for(self.lib, ['baseline', 'no-cull']), [], run_budget_s=2000)
+        self.assertEqual([r['env'] for r in named], [[], [['RX_VK_NOCULL', '1']]])
+
+    def test_a_low_fps_floor_makes_a_frame_count_window_longer(self):
+        conds = model.conditions_for(self.lib, ['pass-timing'])
+        fast = planner.plan_runs(self.lib, ['v1'], conds, [], run_budget_s=2000, over={'dwell_s': 5, 'min_frames': 1300})[-1]['est_s']
+        slow = planner.plan_runs(self.lib, ['v1'], conds, [], run_budget_s=2000, over={'dwell_s': 5, 'min_frames': 1300}, costs={'fps_floor': 25.0})[-1]['est_s']
+        self.assertGreater(slow, fast + 20)   # (1300 presents are 22 s at 60 a second and 52 s at 25)
+
     def test_budget_splits_runs(self):
         runs = planner.plan_runs(self.lib, ['v1', 'v2'], self.conds[:2], [], run_budget_s=200)
         self.assertGreater(len(runs), 1)
