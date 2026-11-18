@@ -175,6 +175,23 @@ observations: the sampler perturbs the run, so a profile ranks and never prices.
 5. **Rank candidates** with the function map: for each, the family's cpu and chain ms (the bound), the code place (the game's function rows and the port's source), what would change for the
    player (nothing, or a setting), the risk, and the proof plan (viewpoint, bands, null pair first, A B A B, number of holds).
 
+## 5b. The true critical path, and what the sleeps really last
+
+A sampled profile attributes; a **chain recording** walks. `HOS_CHAIN=<file>` records every wait, signal, sleep and present of the game's threads while `<file>.go` exists
+(about 2 million records and then it stops: 3 to 4 seconds of a busy scene, so record a few seconds, not the window) and writes `<file>` when the go file goes away. The atlas makes
+the go file for part of a stand: `plan --save-proof --env 'HOS_CHAIN={run}/chain/chain.bin' --go-after 10 --go-for 4` (`{run}` is the run's folder). The game repository's
+`scripts/chain.py <chain> [<the profile's all.txt of the same run>]` then walks each frame back from its present: the path's time by thread and kind (running, sleeping, waiting for a
+virtual core, signal to running), the hand-offs on it and, with the samples, the functions on it. Read it before believing any "waiting" theory: in one scene the wake-ups were 4 us each
+(0.24 ms of an 18.9 ms path) and the path was 91% running.
+
+`atlas.py sleeps <chain>` reads the same file for what each sleep really lasted against what it asked, by length class and thread group, and (`--sites N`, game addresses: keep local) by
+caller. A floor in the short sleeps (a 20 us sleep that lasts 73 us at its median) is the kernel's **timer slack** (50 us unless a thread sets it; a thread inherits it from its
+creator). A launch arm sets it before the game exists: `plan --save-proof --timerslack 1` (a few lines of Python call `prctl(PR_SET_TIMERSLACK)` and exec the run wrapper). Procfs does not show another
+thread's slack (the per-task file is not there and the process's needs CAP_SYS_NICE): the evidence that every sleeping thread has it is the sleeps table by thread group.
+
+`plan --save-proof --pin 0-7` launches under `taskset`: a small CPU's contention as an arm (the harness inherits the mask; `hardware_concurrency` and the helper-thread counts follow it). Pair it with the unpinned
+arm in the same hold, and say how many cores the others used.
+
 ## 6. Pitfalls found on the way
 
 - The actor tools remove only what the layout offers; geometry, doors, sensors and tied people stay. A table of "people off" is the tool's partial answer: quote the left-out count beside it.
@@ -187,6 +204,8 @@ observations: the sampler perturbs the run, so a profile ranks and never prices.
 - The field is a few players' evenings and its figures are averages under fps caps: use it to rank, never to price.
 - A walk that gets stuck (an obstacle, a person in the way) ends at its stuck rule and the window is marked `NO`: keep the row, take the next route; the run goes on.
 - A game build with the profiling mode keeps a present-trace switch the wrapper already set: the atlas copies the run's own present trace into the profile folder so the report and the windows share one first present.
+- A profile run's own sampler thread uses 60 to 77% of a core and is named like its creator ('MainThread'): the CPU totals of a sampled run are inflated by it, and `HOS_SAMPLE=<name>` takes the first thread whose name contains the text (it sampled the game's `sead::MainThread`, not the host thread that had the same suffix).
+- A launch switch is not an arm until its default is read: `RX_VK_OCC_QUERIES` was already on, `RX_VK_NOCULL` is face culling (`gpu/vk/switches.def` says what each does and its default).
 - One bridge fault ends a run on purpose (an uncertain input is not repeated); a refused or late step is recorded and the run goes on.
 
 ## 7. Prove it: the exclusive paired hold at a viewpoint
