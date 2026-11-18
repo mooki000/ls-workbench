@@ -262,9 +262,10 @@ def plan_sweep(lib, vp_ids, yaws, run_budget_s=420.0, dwell_s=3.0, costs=None, p
     return runs
 
 
-def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v'):
+def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v', env=()):
     """one run that boots each viewpoint's own save and checks where Link stands (no `!pos`): the proof that a save made for a viewpoint reaches
-    play at that place. Each viewpoint needs its own area (its own save) in the library; one run, in the order given. Estimates only."""
+    play at that place. Each viewpoint needs its own area (its own save) in the library; one run for each, in the order given. Estimates only.
+    `env` ((name, value) pairs) goes on every run's launch line: a long stand with HOS_PROFILE=1 is a profile run."""
     costs = {**DEFAULT_COSTS, **(costs or {})}
     runs = []
     for i, vid in enumerate(vp_ids, 1):
@@ -276,5 +277,5 @@ def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v'):
         ops = [{'op': 'boot', 'map': a.map},
                {'op': 'stand', 'cond': 'save-proof', 'vp': vid, 'visit': 1, 'expect': [vp.pos[0], vp.pos[2]], 'aim': vp.aim(), 'settle_s': 2.0,
                 'dwell_s': dwell_s, 'shot': True, 'tod': vp.tod}, {'op': 'quit'}]
-        runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [], 'ops': ops, 'est_s': round(seconds_of(ops, costs), 1)})
+        runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [list(e) for e in env], 'ops': ops, 'est_s': round(seconds_of(ops, costs), 1)})
     return runs

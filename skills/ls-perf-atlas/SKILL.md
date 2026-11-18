@@ -117,6 +117,15 @@ waited ten minutes in the GPU gate behind another agent's 27-minute game and the
 Draw counts at one view moved 2,494 to 2,686 between windows (1 to 3 scene lines inside a window): a difference under about 150 draws is not a price.
 A hold that waits for the gate holds both locks: `atlas.py hold --gate-wait` (default 150 s) ends the run and the hold when no game log appears.
 
+**The dry run of the scene worked (hold 4, 18 Nov):** the save made with `--start` booted to the place (Link read 0.00 m from it in all 9 samples, the camera
+already at the save's heading, so the aim needed no push), the driver pressed A through the title 9 times while no map was up, control came 22 s after the first
+present on a busy PC (load 52), the stamp was accepted (`(source b9daf11e)` in the log), the validator printed `scene ok`, and the frame clock covered the window (first
+present 6.1 s after the start; 219 frames in a 5-second window ending at 100 s of a 110-second run). **A pass-timing window shows the GPU side**
+(not quiet, shares only): of 10.6 ms of GPU spans a frame at the square, the draws are 2.9 ms, the memory sync 2.0, the compute dispatches 1.8, the barriers 1.8
+(400 spans a frame: much of that is the timestamps themselves), the readback refresh 0.7; the GPU total (4 to 9 ms) is well under the 14 to 16 ms a frame, so a GPU-side
+change cannot move the frame on a 4090 unless the CPU side is cut first: price it on a GPU-bound card. By day the machine stayed at 22 to 28 other cores in every window
+of holds 2 to 4: no daytime window is quiet; the exclusive hold needs the night.
+
 **What a quiet window showed (hold 2, two windows with the quiet rule met, ordinary, no speed claim):** the square view at 2048x1152 on this PC read 16 ms and
 14 ms a frame (60 to 70 fps; the field's Castle Town sessions average 34 fps on other hardware); the actor executors (6 threads) took 38 of the 89 CPU ms
 a frame, the module workers 14, the renderer's replay and recorder threads 11 and 10; the main thread was on CPU 4.6 ms and blocked 12.4 ms. With people off the next

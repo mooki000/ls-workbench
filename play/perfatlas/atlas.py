@@ -87,7 +87,7 @@ def cmd_plan(a):
     costs = {'fps_floor': a.fps_floor} if a.fps_floor else None
     over = {k: v for k, v in (('dwell_s', a.dwell), ('settle_s', a.settle), ('min_frames', a.min_frames)) if v is not None}
     if a.save_proof:
-        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix)
+        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix, env=parse_env(a.env))
     elif a.sweep:
         yaws = [float(x) for x in a.yaws.split(',') if x]
         runs = planner.plan_sweep(lib, ids, yaws, run_budget_s=a.run_budget, dwell_s=a.dwell or 3.0, prefix=a.prefix)
