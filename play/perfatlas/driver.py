@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from .bridge import BridgeError
+from .camera import Aimer
 
 
 class Clock:
@@ -53,7 +54,7 @@ class Driver:
         self.n = 0
         self.aborted = None
         self.cpu = cpu                      # (cpu.Sampler: the game's and the machine's CPU, for the quiet record and CPU ms a frame)
-        self.cam_sign, self.cam_rate = None, 1.2   # (the right stick's handedness, learned by the first push; degrees a frame at full push, a first guess)
+        self.aimer = Aimer(bridge, sleep=self.sleep, status=self.status)   # (the right stick's handedness and rate, learned by the first push)
         (self.out / 'shots').mkdir(parents=True, exist_ok=True)
         self.windows_f = open(self.out / 'windows.jsonl', 'a', buffering=1)
         self.ops_f = open(self.out / 'ops.jsonl', 'a', buffering=1)
@@ -257,44 +258,13 @@ class Driver:
             self.sleep(0.25)
         return pos_ok, st
 
-    def push_camera(self, x, frames):
-        """the right stick: x in -1..1 for `frames` presents (the reply comes when the input is over); then a short wait for the camera to
-        stop easing, and a fresh status"""
-        self.bridge.stick(x, 0.0, frames=frames, which='R', wait=True)
-        self.sleep(0.4)
-        return self.status()
+    @property
+    def cam_sign(self):
+        return self.aimer.sign
 
     def aim(self, yaw, tol=10.0, tries=8):
-        """turn the camera to `yaw` degrees (the bridge's camera heading: 0 toward +z, 90 toward +x) with the right stick, closed loop
-        on the game's own reading: the first push learns the stick's handedness and rate (as hsap's `camera to` does). Link's own
-        heading is not touched: `!pos`'s facing and camera angles did not take effect in the game (their run, 17 Nov). Returns
-        (camera_ok, camera yaw, pitch, pushes)"""
-        st = self.status()
-        pushes = 0
-        for _ in range(tries):
-            g = st.get('game') or {}
-            cam = g.get('camera')
-            if cam is None:
-                return False, None, g.get('camera_pitch'), pushes
-            err = wrap(yaw - cam)
-            if abs(err) <= tol:
-                return True, cam, g.get('camera_pitch'), pushes
-            if self.cam_sign is None:   # (calibrate: a short push to the right, read what it did)
-                before = cam
-                st = self.push_camera(1.0, 12)
-                pushes += 1
-                after = (st.get('game') or {}).get('camera')
-                if after is not None and abs(wrap(after - before)) >= 1.0:
-                    self.cam_sign = 1.0 if wrap(after - before) > 0 else -1.0
-                    self.cam_rate = max(0.2, abs(wrap(after - before)) / 12.0)
-                continue
-            direction = 1.0 if err * self.cam_sign > 0 else -1.0
-            frames = int(max(2, min(120, round(abs(err) / self.cam_rate * 0.85))))
-            st = self.push_camera(direction, frames)
-            pushes += 1
-        g = st.get('game') or {}
-        cam = g.get('camera')
-        return (cam is not None and abs(wrap(yaw - cam)) <= tol), cam, g.get('camera_pitch'), pushes
+        """turn the camera to `yaw` degrees with the right stick (camera.Aimer); returns (camera_ok, camera yaw, pitch, pushes)"""
+        return self.aimer.aim(yaw, tol, tries)
 
     def shot(self, name):
         path = (self.out / 'shots' / name).resolve()

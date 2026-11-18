@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner  # noqa: E402
+from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner, scene, timing  # noqa: E402
 from perfatlas.bridge import BridgeError  # noqa: E402
 
 PRE = '[hos host] '
@@ -669,6 +669,131 @@ class Coverage(unittest.TestCase):
         self.assertEqual([(k, c) for k, c, _ in nxt], [('b', 'stand'), ('c', 'stand'), ('d', 'stand')])
         with self.assertRaises(ValueError):
             coverage.load_cells({'cells': {'a|stand': {'state': 'done'}}})
+
+
+class SceneAndTiming(unittest.TestCase):
+    SPEC = {'map': 'AreaA', 'aim_yaw': 120.0, 'aim_tol': 10.0, 'pos': [10.0, 20.0], 'pos_tol_m': 1.0, 'control_by_s': 50, 'ready_by_s': 53, 'sample_every_s': 10.0}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.clock = FakeClock()
+        self.bridge = FakeBridge(self.clock)
+        self.bridge.pos = [10.0, 5.0, 20.0]
+        self.bridge.state = 'menu'
+
+    def drive(self, spec=None, until_s=100):
+        spec = dict(spec or self.SPEC)
+        first = self.clock.t / 1e9 - 20.0   # (the game's first present was 20 s ago on the fake clock)
+        clock = lambda: self.clock.t / 1e9
+        return scene.drive(self.bridge, self.tmp.name, spec, first, until_s, clock=clock, sleep=self.clock.sleep)
+
+    def test_a_good_scene_validates(self):
+        self.bridge.press('A')   # (the boot script's presses: the fake game is in play after one)
+        rec = self.drive()
+        self.assertIsNotNone(rec['controllable_at_s'])
+        self.assertTrue(rec['aim']['ok'])
+        self.assertLessEqual(rec['ready_at_s'], 53)
+        self.assertGreaterEqual(len(rec['samples']), 3)
+        self.assertEqual(scene.validate(rec), [])
+        self.assertEqual(scene.validate(json.loads((Path(self.tmp.name) / 'actions.json').read_text())), [])
+        self.assertEqual(scene.main(['validate', self.tmp.name]), 0)
+
+    def test_validator_names_each_way_a_scene_goes_wrong(self):
+        self.bridge.press('A')
+        rec = self.drive()
+        for mutate, text in ((lambda r: r['samples'][1].update(camera=-60.0), 'the camera read'),
+                             (lambda r: r['samples'][1].update(pos=[40.0, 5.0, 20.0]), 'Link read'),
+                             (lambda r: r['samples'][0].update(event=True), 'event=True'),
+                             (lambda r: r['samples'][0].update(map='Other'), 'map Other'),
+                             (lambda r: r.update(ready_at_s=60.0), 'ready at 60.0'),
+                             (lambda r: r['aim'].update(ok=False), 'did not reach'),
+                             (lambda r: r.update(samples=[]), 'no status sample')):
+            bad = json.loads(json.dumps(rec))
+            mutate(bad)
+            problems = scene.validate(bad)
+            self.assertTrue(any(text in p for p in problems), (text, problems))
+        self.assertEqual(scene.validate({'spec': self.SPEC, 'controllable_at_s': None, 'errors': ['x']}), ['x', 'never controllable'])
+
+    def test_a_game_that_never_gets_controllable_is_recorded(self):
+        # the title is never passed (no press): the fake stays in the menu
+        rec = self.drive({**self.SPEC, 'control_by_s': 8})
+        self.assertIsNone(rec['controllable_at_s'])
+        self.assertTrue(rec['errors'])
+        self.assertTrue(scene.validate(rec))
+
+    def test_a_bridge_loss_is_an_error_not_a_crash(self):
+        self.bridge.press('A')
+        self.bridge.fail_after = 5
+        rec = self.drive()
+        self.assertTrue(any('bridge:' in e for e in rec['errors']))
+        self.assertTrue(scene.validate(rec))
+
+    def test_spec_needs_its_fields(self):
+        with self.assertRaises(ValueError):
+            scene.spec_of({'atlas_scene': {'map': 'A'}})
+        self.assertEqual(scene.spec_of({'atlas_scene': {k: 1 for k in scene.REQUIRED}})['aim_tol'], 10.0)
+
+    def test_first_present_reads_the_trace(self):
+        p = Path(self.tmp.name) / 'present.csv'
+        self.assertIsNone(scene.first_present_s(p))
+        p.write_text('frame,return_ns\n1,5000000000,0\n')
+        self.assertEqual(scene.first_present_s(p), 5.0)
+
+    # ---- the worker's inputs
+    def scenario(self, **kw):
+        base = dict(label='atlas-test', save='/saves/x', scene=self.SPEC, good_max=30.0, bad_min=36.0, from_s=60, to_s=105)
+        base.update(kw)
+        return timing.make_scenario(**base)
+
+    def test_scenario_demands_bands_and_a_window_that_fits(self):
+        sc = self.scenario()
+        self.assertEqual(sc['schema_version'], 1)
+        self.assertEqual(sc['measure'], {'name': 'mean_ms', 'direction': 'higher-worse', 'good_max': 30.0, 'bad_min': 36.0})
+        self.assertEqual((sc['run']['anchor'], sc['run']['from'], sc['run']['to']), ('first', 60, 105))
+        self.assertEqual(sc['run']['env']['HOS_DYNRES'], '0')
+        self.assertEqual(sc['run']['atlas_scene']['aim_yaw'], 120.0)
+        for kw, text in (({'good_max': None}, 'bands'), ({'bad_min': 20.0}, 'below'), ({'to_s': 120}, 'window'), ({'from_s': 54}, 'aim must be done')):
+            with self.assertRaises(timing.TimingError) as c:
+                self.scenario(**kw)
+            self.assertIn(text, str(c.exception))
+
+    def test_plan_fits_the_cap_and_orders_the_arms(self):
+        cmd = timing.run_command('python3', '/x/scene.py', '/h/regress', '/c')
+        self.assertEqual(cmd[:4], ['python3', '-I', '-u', '/x/scene.py'])
+        self.assertIn('{scenario}', cmd)
+        outs = [str(Path(self.tmp.name) / f'o{i}') for i in range(4)]
+        plan = timing.null_pair_plan('lab', '/copy', 'abc', outs, '/s.json', cmd)
+        self.assertEqual([e['role'] for e in plan['entries']], ['reference', 'candidate', 'reference', 'candidate'])
+        self.assertEqual({(e['copy'], e['commit']) for e in plan['entries']}, {('/copy', 'abc')})   # (a null pair: one build)
+        self.assertEqual(4 * (plan['seconds'] + plan['grace_seconds']) + 10, 470)
+        self.assertEqual(plan['avoid'], [timing.AVOID_WIDGET])
+        with self.assertRaises(timing.TimingError):
+            timing.null_pair_plan('lab', '/copy', 'abc', outs, '/s.json', cmd, seconds=120)   # (4 x 125 + 10 = 510 s: over the cap)
+        with self.assertRaises(timing.TimingError):
+            timing.make_plan([('reference', 'l', 'c', 'k', outs[0]), ('reference', 'l', 'c', 'k', outs[1])] * 2, '/s.json', cmd)
+        Path(outs[1]).mkdir()
+        with self.assertRaises(timing.TimingError):
+            timing.null_pair_plan('lab', '/copy', 'abc', outs, '/s.json', cmd)   # (an output folder exists)
+
+    def test_null_pair_verdicts(self):
+        def runs(vals, valid=True, disturbed=False):
+            return [{'role': r, 'result': {'valid': valid, 'disturbed': disturbed, 'value': v, 'others_cores_window': 0.5, 'others_cores_peak': 1.0}}
+                    for r, v in zip(['reference', 'candidate'] * 2, vals)]
+        v = timing.null_pair_verdict(runs([30.0, 30.3, 30.2, 29.9]))
+        self.assertEqual(v['verdict'], 'usable')
+        self.assertAlmostEqual(v['gap'], abs((30.3 + 29.9) / 2 - (30.0 + 30.2) / 2) / 30.1)
+        v = timing.null_pair_verdict(runs([30.0, 30.3, 32.0, 29.9]))   # (the reference's repeats are 6.7% apart)
+        self.assertEqual(v['verdict'], 'noisy')
+        self.assertTrue(any('reference spread' in r for r in v['reasons']))
+        v = timing.null_pair_verdict(runs([30.0, 31.5, 30.1, 31.6]))   # (spreads small, the arms 5% apart: the same build)
+        self.assertEqual(v['verdict'], 'noisy')
+        self.assertTrue(any('arm gap' in r for r in v['reasons']))
+        self.assertEqual(timing.null_pair_verdict(runs([30.0, 30.3, 30.2, 29.9], disturbed=True))['verdict'], 'invalid')
+        self.assertEqual(timing.null_pair_verdict(runs([30.0, 30.3, 30.2, 29.9], valid=False))['verdict'], 'invalid')
+        self.assertEqual(timing.null_pair_verdict(runs([30.0, 30.3])[:2])['verdict'], 'invalid')
+        self.assertEqual(len(timing.null_pair_verdict(runs([30.0, 30.3, 30.2, 29.9]))['rows']), 4)   # (every row is kept)
+        self.assertIsNone(timing.spread([1.0]))
 
 
 class Rehearsal(unittest.TestCase):

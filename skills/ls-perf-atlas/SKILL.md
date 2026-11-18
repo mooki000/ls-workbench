@@ -136,7 +136,17 @@ window agrees before spending an hour on the renderer.
 - The field is a few players' evenings and its figures are averages under fps caps: use it to rank, never to price.
 - One bridge fault ends a run on purpose (an uncertain input is not repeated); a refused or late step is recorded and the run goes on.
 
-## 7. Add an area
+## 7. Prove it: the exclusive paired hold at a viewpoint
+
+The ordinary holds find and rank; only the worker decides. For one viewpoint (`timing.py`, `scene.py`; nothing else times anything):
+
+1. **A save for the place.** A build on main has no `!pos`: make a save that starts Link at the viewpoint (`hs_make_save.py --from <entry> --out lib:<name> --start <Map>:x,y,z,yaw --time day`), prove it boots to that place (a start within 3 m of a person or 2.5 m of an object never reaches play), and let the **scene driver** turn the camera to the viewpoint's heading with the right stick before the window. The same scene then runs on any build.
+2. **The scenario** (`timing.make_scenario`): fixed-cost env, `anchor: first`, a window of `from`..`to` seconds after the first present (the aim must be done two seconds before `from`; 55 to 105 with 110-second runs fits four runs in 470 s), `atlas_scene` (map, aim yaw, where Link must read, control and ready deadlines), `validator_command` = `scene.py validate {output}` (a run whose camera moved, whose Link was elsewhere, that had an event or a load, or that was not controllable in time is **invalid**, not slow). The decision measure (`mean_ms`) and its bands `good_max < bad_min` are required arguments: write them before any result.
+3. **The plan** (`timing.make_plan`): reference, candidate, reference, candidate; fit rule `n * (seconds + grace) + 10 <= 480`; the desktop widget's avoid window; new output folders. The queue: quiet-window lock, measuring lock, then the gate with `--exclusive` and the worker's `_hold` (`ls-hold-chain`, `ls-regression-hunt` section 3), only with the main session's word for that one hold.
+4. **The first hold at a scene is a null pair** (`timing.null_pair_plan`: one copy, one commit, all four runs) and its verdict (`timing.null_pair_verdict`): usable when all four runs are valid and not disturbed, both same-arm spreads are at most 5% and the arm gap at most 3%; otherwise the scene cannot decide a change smaller than the larger of those, and the hold is kept as a result (an earlier Market hold had 7.35% between repeats). Every row is kept.
+5. **Then** a pricing pair (a part off versus on, one build, a launch switch only) and proof pairs (main versus main plus the change, both built the same way; the perf-tools game is never an arm).
+
+## 8. Add an area
 
 1. Name the map and its saves: `hs_make_save.py --from <entry> --out lib:<name> --start keep|<Map>:x,y,z,yaw --time day|night` (a new save is untried until a game boots from it).
 2. Write the library entry (`areas`, saves by time of day), pick viewpoints as above, `check` it.
