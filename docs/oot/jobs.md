@@ -128,10 +128,14 @@ UIScreenMulticoreUpdateEndJob, UIScreenUpdateJob_%d) are added elsewhere (`f_80b
 | Function | Name | What it does | Sure |
 |---|---|---|---|
 | `f_809667b0` | `Framework_Frame` | The frame, under `nnMain` (`f_81222ce0`, [graphics.md](graphics.md)) through `f_80f48c30`: calls `f_8348c680` | read |
-| `f_8348c680` | `Framework_RunFrame` | The framework's frame: the calc tree (`f_802eabd0`), then the draw (`f_802eb020`) | read |
+| `f_8348c8d0` | `Framework_ProcFrame` | The framework's frame entry (slot `+0xe0` of the class at `0x84c167e0`): the timers (`f_8348c600`), the variable-refresh check (slot `+0x128`, `f_8348c660`), then a tail call of `Framework_RunFrame` | read |
+| `f_8348c660` | `Framework_VrrCheck` | When `fw+0x88` is set, tail-calls `Display_VrrEnabled` (`f_804fc0f0`, [frame-time.md](frame-time.md)) | read |
+| `f_8348c680` | `Framework_RunFrame` | The framework's frame (slot `+0x130`). In order: the method-tree work, the calc tree (slot `+0xf0`, `f_802eabd0`), the end-of-calc callbacks (slot `+0x70`), the window acquire (slot `+0x120`, `f_81207a50`), the draw tree (slot `+0xe8`, `f_802eb020`) and the frame limiter (slot `+0x110`, `f_8042cd20`). It stamps the frame's CPU times at `fw+0x100`, `+0x108` and `+0x148` | read |
 | `f_802eabd0` | `CalcTree_Run` | Runs the calc tree, recursing through `f_802eacc0` (four levels in the stacks) to the ModuleSystem's calc | read |
 | `f_802eacc0` | `CalcTree_Node` | One level of the calc tree | read |
-| `f_802eb020` | `DrawTree_Run` | The draw: through `f_8066fc80` and `f_80665980` to `f_806668b0` | read |
+| `f_8348d430` | `Framework_RunEndOfCalcCallbacks` | Slot `+0x70`: when `fw+0x8` is 1 it runs the callbacks queued during the calc tree, then clears them. Called between the calc tree and the window acquire | read |
+| `f_81207a50` | `Framework_AcquireTexture` | Slot `+0x120` of the framework: `nvnWindowAcquireTexture` and `nvnWindowSetCrop` | read |
+| `f_802eb020` | `DrawTree_Run` | The draw: through `f_8066fc80` and `f_80665980` to `f_806668b0`. After the draw tree it ends the recording of the primary command buffer (`g_GfxDevice+0x40`, the handle kept at `+0x60`), then does the submit and present directly or sends a message to the Presentation Thread (`fw+0x1b8`) | read |
 | `f_806668b0` | `Draw_Wait` | Where the draw waits (about 7% of the main thread's blocked time) | read |
 | `f_80441560` | `FrameLimit_Phase` | From the limiter (`f_8042cd20`, [frame-time.md](frame-time.md)) through `f_80441630` to `f_80070d30`: one more pool B phase | read |
 
@@ -176,6 +180,7 @@ The jobs that run while the main thread waits in the module phase and at most tw
 | `0x83f90ae0` | `BaseProcPhaseNames` | The BaseProc phases: `PreCalc`, `PostCalc`, `PostSensor`, `PostUpdateMatrix` | read |
 | `0x84e9f510` | `g_PoolASleepTicks` | The sleep of pool A's designated participant, in ticks, set at run time | read |
 | `0x84e9f4f0` | `g_PoolBSleepTicks` | The same for pool B | read |
+| `0x84c167e0` | `Framework_vtable` | The framework class's vtable: `+0xe0` `Framework_ProcFrame`, `+0xe8` `DrawTree_Run`, `+0xf0` `CalcTree_Run`, `+0xf8` `Framework_SubmitAndPresent` (`f_805902c0`), `+0x100` the present (`f_8348c9b0` here; `f_80547f20` in the class that runs, [nvn-calls.md](nvn-calls.md)), `+0x110` `Frame_Limit`, `+0x118` the GPU timestamps (`f_8348cb20`), `+0x120` `Framework_AcquireTexture`, `+0x130` `Framework_RunFrame` | read |
 
 ## Structures
 

@@ -41,10 +41,11 @@ words) prints the row. How the names are recovered is [flag-names.md](flag-names
 | [camera.md](camera.md) | The player camera's update, yaw and pitch, its follow, the gameplay view |
 | [frame-time.md](frame-time.md) | The frame step, the game clock, the frame limiter, movies, and the sites examined above 60 fps |
 | [jobs.md](jobs.md) | The job phase: the thread pools, the job record and graphs, the frame on the main thread, the critical path |
-| [graphics.md](graphics.md) | Resolution, the output size, the render targets' memory and the save picture's viewport |
+| [graphics.md](graphics.md) | Resolution, the output size, the graphics memory (pools, the target allocator, the dynamic allocators, texture helpers), the graphics queues and the save picture's viewport |
 | [rendering.md](rendering.md) | The render pipeline: its switches, the frame's order, the named render targets by pass, what the renderer recognises and fixes |
 | [drawing.md](drawing.md) | What the CPU does to issue the frame's GPU work: parallel draw-list batches, per-draw binding and its cost, the draw loops, submission |
 | [nvn-calls.md](nvn-calls.md) | The NVN boundary: every NVN function the game calls, how often and from where, the inline-command flag, and what LS's recorder does per call |
+| [nvn-driver.md](nvn-driver.md) | The NVN driver: what the SDK's implementation does behind each NVN call: the proc table, memory pools and buffers, textures and their layout, handles and descriptor pools, command buffers and their records, drawing, queues, syncs, events and barriers |
 | [physics.md](physics.md) | Havok physics, cloth and navigation: the world step and its jobs, substeps and time step, the hot collision and cloth functions |
 | [navigation.md](navigation.md) | Navigation and Havok AI: the navigation task, the collision-avoidance character step and its workers, path finding |
 | [effects.md](effects.md) | Particle effects (nn::vfx3 and ELink): the effect manager, the per-emitter-set calc and its threads, CPU and GPU particles, effect time, the caps |

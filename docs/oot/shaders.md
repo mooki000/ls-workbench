@@ -258,7 +258,7 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 | `f_81503720` | `NdsrSmaa_Dispatch` | Binds a program, images, textures, storage and uniform buffers, pushes compute constants, and dispatches (direct and indirect), with barriers and a buffer clear. Called from `f_802722b0` (rank 2050). Hot rank 1776 | read |
 | `f_82105e20` | `Ndve_MakeResources` | A memory pool, a sampler, a texture and programs made with a builder (`f_821066c0`); next to `f_821057e0`, which the NDVE output (`f_83b83360`, [rendering.md](rendering.md)) calls | guess |
 | `f_80c4acc0` | `DynamicUniformBlock_Init` | "agl::detail::DynamicUniformBlock": an NVN buffer over its memory (`nvnBufferInitialize`, `GetAddress`), made by `f_80c4a1c0` | read |
-| `f_802eb390` | `DrawTree_SetupCommands` | A command buffer of its own: the memories, `BeginRecording`, an event signal and wait, a timestamp, `SetSamplerPool`, `SetTexturePool`, `SetShaderScratchMemory`, `EndRecording`, then `QueueSubmitCommands`. From `f_802eb020` ([jobs.md](jobs.md)). Hot rank 3675 | read |
+| `f_802eb390` | `DrawTree_SetupCommands` | Opens the frame's primary command buffer (`g_GfxDevice+0x40`): the memories, `BeginRecording`, a CPU `EventSignal` that resets the frame's gate event, a `WaitEvent` (gate equal to 1), a timestamp, `SetSamplerPool`, `SetTexturePool` and `SetShaderScratchMemory`. With `+0xa0` bit 0 set it also ends that buffer and submits it at once (`EndRecording`, `QueueSubmitCommands`); otherwise `DrawTree_Run` ends it after the draw tree. From `f_802eb020` ([jobs.md](jobs.md)); the call sites were seen in a run. Hot rank 3675 | read |
 
 ## Data
 
@@ -267,7 +267,7 @@ gives (on [textures.md](textures.md) as `Tera_Programs`): `tera_material`, `tera
 | `0x84cf0008` | `ShaderVariation_KindOffsets` | Three offsets in a shader variation, in the order tried: `0x10` (binary), `0x8` (intermediate), `0` (source); read through `[0x84cad160]` | read |
 | `0x83e7a9f0` | `GfxShaderProgram_StageOffsets` | Eight offsets (`8` to `0x40`) of a program's stage records, by nn::gfx's stage (read by `f_8017ed50`) | read |
 | `0x84d63100` | `g_AglRegisterUboName` | Points at "RegisterUBO", the uniform block `f_806569a0` looks for first | read |
-| `0x84e9f6c8` | `g_GfxDevice` | The graphics object (through the GOT slot `0x84cacc98`): `+0x170` the NVN device, `+0x1a0` the sampler pool and `+0x180` the texture pool, `+0xa8` and `+0xb0` the shader scratch memory's pool and size | read |
+| `0x84e9f6c8` | `g_GfxDevice` | The graphics object (through the GOT slot `0x84cacc98`): `+0x30` the queue object, `+0x40` the frame's primary command buffer, `+0x50` and `+0x58` its memory used, `+0x60` its handle, `+0x68` the graphics queue, `+0xa8` and `+0xb0` the shader scratch memory's pool and size, `+0xb8` the fence ring (parity `+0x168`), `+0xe0` the two gate events (64 bytes each), `+0x164` the frame event index, `+0x170` the NVN device, `+0x180` the texture pool, `+0x1a0` the sampler pool, `+0x220` the submit mutex, `+0x2a8` the recording selector | read |
 
 ## Structures
 

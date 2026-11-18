@@ -48,12 +48,18 @@ the budget and eviction), `gpu/vk/vk_memory.cpp` (which guest pages changed),
 | `f_800634b0` | `Texture_MakeAndRegister` | Makes a texture and registers it in the texture pool; called by the sky (`SkyInscatter`) and other rendering set-up | read |
 | `f_800662e0` | `Texture_MakeAndRegister2` | The same pair, for render passes' targets (`bilateral_grid_tmp` and others) | read |
 | `f_8348fcc0` | `Device_MakeSystemTextures` | Makes and registers textures as the NVN device is set up (its caller uses `nvnDeviceInitialize`) | guess |
-| `f_83a6d8f0` | `Texture_Upload` | Fills a texture from the CPU: `nvnTextureWriteTexels` and `nvnCommandBufferCopyBufferToTexture` (the game's only other place to write texels from the CPU is `f_8353d560`) | read |
+| `f_83a6d8f0` | `Texture_Upload` | Fills a texture from the CPU, by the texture's pool. A CPU-visible pool: `nvnTextureWriteTexels` and `FlushTexels`. Otherwise a temporary pool (NVN 0x24) and a buffer over it, filled through `BufferMap` and `FlushMappedRange`, then `nvnCommandBufferCopyBufferToTexture`, and both finalised. The game's only other place to write texels from the CPU is `f_8353d560`. Seen: 3,449 `CopyBufferToTexture` in the first 20 s of a start, none in play | tested |
 | `f_8353d560` | `Texture_WriteTexels` | Writes texels into a texture from the CPU (`nvnTextureWriteTexels`) | read |
 | `f_83b82200` | `MovieRenderer_Upload` | The movie renderer's frames, copied into a texture (`nvnCommandBufferCopyBufferToTexture`) | read |
+| `f_809e9d60` | `Texture_WriteTexelsRange` | `nvnTextureWriteTexels` plus `FlushTexels` for a view; 7 callers | read |
+| `f_80c17040` | `TextureResource_LoadAndUpload` | A texture loader: Zstd decompression (`f_8010b380`), `Texture_Make`, `Texture_Upload` | read |
+| `f_83a6d540` | `Texture_Readback` | Reads a texture back: `ReadTexels` when its pool is CPU-visible, else a temporary 0x24 pool, a buffer, `CopyTextureToBuffer`, a wait, an invalidate and a map | read |
+| `f_80bd22b0` | `Texture_ReadbackToBuffer` | A texture to a buffer through its own command buffer: submit, `QueueFinish`, invalidate, read. Used by the texture serialisers (`f_80bd1d00` JPG, `f_8353da20` TGA, `f_8353dd60` PNG): the save picture and the screenshots | read |
+| `f_809f43c0` | `Tera_FeedbackRead` | Beside `Tera_DrawCompressed`: rounds a ring slot to 64 bytes, invalidates the pool range when it is CPU-cached, reads it; also three uniform updates | guess |
 
 Finalizing a texture (`nvnTextureFinalize`) does not free its storage: the memory pool's owner does that, or reuses it. The
-render-target pool maps physical pages into a virtual pool and back as targets come and go (`f_8005ed00`).
+render-target pool's physical pages are mapped into its virtual pool once, at start (`f_811c9ba0`); the allocator (`f_8005ed00`)
+then hands out ranges of that pool as targets come and go ([graphics.md](graphics.md)).
 
 ## The terrain
 
@@ -170,7 +176,7 @@ is needed (Hyrule Field, Lost Woods), still with the keep rule off, to show it o
 
 | Address | Name | What it is | Sure |
 |---|---|---|---|
-| `0x84d673a8` | `pfn_nvnMemoryPoolMapVirtual` | The game's pointer to `nvnMemoryPoolMapVirtual` (one call, in `f_8005ed00`) | read |
+| `0x84d673a8` | `pfn_nvnMemoryPoolMapVirtual` | The game's pointer to `nvnMemoryPoolMapVirtual` (two sites; the one that runs, once at the start, is in `f_811c9ba0`, and the site count of [nvn-calls.md](nvn-calls.md) puts the other in `f_8005ed00`, where none ran) | read |
 | `0x84d676b0` | `pfn_nvnTextureInitialize` | The same for `nvnTextureInitialize` (17 places) | read |
 | `0x84d673d8` | `pfn_nvnTexturePoolRegisterTexture` | The same for `nvnTexturePoolRegisterTexture` (12 places) | read |
 | `0x84d676c0` | `pfn_nvnTextureFinalize` | The same for `nvnTextureFinalize` (10 places) | read |

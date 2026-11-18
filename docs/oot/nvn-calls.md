@@ -12,7 +12,8 @@ game's threads matters. Looked at in November 2026 by static analysis of the bin
 `host/rx_backend.c`, `gpu/vk/vk_replay.cpp` (the replay),
 `nx2/standalone.py` (`nvn_exports`: the SDK's NVN functions hooked)
 **See also:** [drawing.md](drawing.md) (the game's draw loops), [culling.md](culling.md) (the query and condition
-calls), [textures.md](textures.md) (textures and pools), [jobs.md](jobs.md) (the threads that record), [rendering.md](rendering.md)
+calls), [textures.md](textures.md) (textures and pools), [jobs.md](jobs.md) (the threads that record), [rendering.md](rendering.md),
+[nvn-driver.md](nvn-driver.md) (what the SDK's driver does behind each call)
 
 ## In short
 
@@ -282,9 +283,11 @@ is where most of the counter and condition places are. **read**
 | `f_800a8df0` | `GpuBuffer_Map(buf)` | `nvnBufferMap(buf+8)`. Hot rank 1623, 81 callers | read |
 | `f_800a9510` | `GpuBuffer_Flush(buf, offset, size)` | `nvnBufferFlushMappedRange(buf+8, …)` when `buf+1` bit 1 is set; a no-op handler in LS. Hot rank 2331, 62 callers | read |
 | `f_80527e90` | `Queue_SubmitOne(queue, handles)` | `f_80527f00`, then `nvnQueueSubmitCommands(queue, 1, handles)`. Hot rank 452 | read |
-| `f_80527f00` | `Queue_SubmitPending` | `nvnQueueSubmitCommands` and `nvnQueueFlush`. Hot rank 427 | guess |
-| `f_805902c0` | `Queue_SubmitFenced` | `nvnQueueWaitSync`, `nvnQueueSubmitCommands`, `nvnQueueFenceSync`, `nvnQueueFlush`, `nvnEventGetValue`, in that order. Hot rank 261 | read |
-| `f_80547f20` | `Framework_PresentFrame(fw)` | When the framework's state word (`fw+80`) is 2 and the byte at `[fw+384]+16` is 1 (and after a virtual call on the object at `fw+400`, when that is not null) it calls `nvnQueuePresentTexture` through the import slot `0x84d67138` with the queue `[[0x84e9f000+1736]]+104`, the texture `[[fw+384]+112]` and the index `[[fw+384]+128]`, then stores the index at `[[fw+384]+132]` and tail-calls `f_80547fc0`. The port's present hook (`hos_oot_coop_present`, from `nvnQueuePresentTexture` in `host/nvn_native.c`) therefore runs on the thread that makes this call | read |
+| `f_80527f00` | `Queue_SubmitPending` | One queue's pending slots sorted by the order key at `slot+0x68`, then one `nvnQueueSubmitCommands` and an `nvnQueueFlush`. Called three times by the Presentation Thread's flush (`f_834bf400`); the thread and the call sites were seen in a run. Hot rank 427 | read |
+| `f_805902c0` | `Framework_SubmitAndPresent` | The frame's submit and present, slot `+0xf8` of the framework: locks `g_GfxDevice+0x220`; `nvnQueueWaitSync(gfxQueue, acquire sync)`; `nvnQueueSubmitCommands` of the final command buffer's handle at `g_GfxDevice+0x60` (or a callback at `fw+0x250`); `nvnQueueFenceSync`; `nvnQueueFlush`; optional polling of the frame's event (`nvnEventGetValue`); then the present slot `+0x100`. Run by the Presentation Thread, or by the main thread when `fw+0x228` bit 0 is clear; the thread and the return addresses were seen in a run. Formerly `Queue_SubmitFenced`. Hot rank 261 | read |
+| `f_80547f20` | `Framework_PresentFrame(fw)` | Slot `+0x100` of the framework class that runs (vtable `0x84c84040`), called by `Framework_SubmitAndPresent` (`f_805902c0`) on the Presentation Thread. When the framework's state word (`fw+80`) is 2 and the byte at `[fw+384]+16` is 1 (and after a virtual call on the object at `fw+400`, when that is not null) it calls `nvnQueuePresentTexture` through the import slot `0x84d67138` with the queue `[[0x84e9f000+1736]]+104`, the texture `[[fw+384]+112]` and the index `[[fw+384]+128]`, then stores the index at `[[fw+384]+132]` and tail-calls the swap-chain re-make `f_80547fc0`. The port's present hook (`hos_oot_coop_present`, from `nvnQueuePresentTexture` in `host/nvn_native.c`) therefore runs on the thread that makes this call, the Presentation Thread | tested |
+| `f_8348c9b0` | `Framework_PresentFrame2(fw)` | The same code as `f_80547f20`, in slot `+0x100` of the other framework class (vtable `0x84c167e0`); it did not run in the traced frames | read |
+| `f_800ae150` | `PresentationThread_Body` | The Presentation Thread's callable: a tail call of the framework's slot `+0xf8` (`f_805902c0`); `f_800ae110` is the functor's call thunk | read |
 
 ## Notes
 
