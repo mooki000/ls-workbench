@@ -46,7 +46,7 @@ crowds can fail the 5% same-arm tolerance (an earlier exclusive Market hold had 
 | Pass timing | GPU time per pass, program and copy | `RX_VK_PASS_TIMING=1\|2`, logged every 600 presents, no file | every span waits for the GPU: spans add up to more than an unprofiled frame, read shares only |
 | Scene lines | draws, dispatches, passes, barriers, uploads, textures, GPU time, replay ms by part | always on, every 120 presents | averages of the last 120 presents |
 | Draw statistics | one frame's draws by program | `RX_VK_DRAW_STATS=<folder>`, touch `<folder>/draw_stats.now` | one frame |
-| `HOS_PROFILE=1` (cpu.csv, all-thread sampler) | where the CPU goes | `scripts/profile_report.py <folder>` | it switches on pass timing and a 2 ms sampler: it perturbs timing, never time with it |
+| `HOS_PROFILE=1` (cpu.csv, all-thread sampler) | where the CPU goes | a `stand` run with `--env HOS_PROFILE=1`; `atlas.py profile <run>` (the report's own `--from-s/--to-s` for the run's window), `atlas.py families` (section 5a) | it switches on pass timing and a 2 ms sampler and the game's CPU a frame rose by about a third: it perturbs timing, never time with it |
 | Perf summaries (#1383) | per-map, per-second frame and GPU ms | player telemetry | position and angle fields are wrong (bin middles, wrong object and units), cutscenes sampled: a coarse survey only |
 | Perf monitor (`perf.csv`) | sampled GPU/CPU/memory | `--perf` | the writer is not on main: a main build writes no file |
 | Dispatcher | priorities of queued waiters | `reports/tools/gpu_priority.py` (the main session's): a waiter is ranked by the first `ORDER` text found in its working directory or command line; **a new topic needs its own entry** or it ranks 10, behind everything; a waiter whose command line has `nx2navi-gpu-slot --exclusive` stays stopped until 22:00 (night only) | never CONT a waiter; kill only a recorded pid |
@@ -148,6 +148,33 @@ the camera is off its aim, Link moved over a metre, an event ran, or it has fewe
 Read with the field: where players lose frames the game's own split puts most of the frame in `game` (about three quarters in the Castle Town sessions): check whether the
 window agrees before spending an hour on the renderer.
 
+## 5a. Where the frame goes: a profile run, then families
+
+The cost table says which viewpoint is dear and which family of actors takes the price; a profile says which code the frame is made of. Both are
+observations: the sampler perturbs the run, so a profile ranks and never prices.
+
+1. **Run it.** A one-viewpoint stand with the profiling mode and a long dwell (`plan --save-proof --env HOS_PROFILE=1 --dwell 60`). `atlas.py hold` copies the
+   folder the game makes (`<copy>/logs/profile-*`) into `<run>/profile/` with the run's game log and present trace. `atlas.py profile <run> --script <game repo>/scripts/profile_report.py
+   --maps <game folder> --run` names the window of the run in the report's seconds (from the first present, as `windows.jsonl` counts) and runs the report.
+2. **Read the report's `At a glance`, `Threads` and per-thread `ours` tables** for the shape: how much of the frame the main thread is blocked, which thread groups are busy and
+   how long (a worker pool at 40% busy is waiting for something, not short of cores), which leaf functions lead. Look every `f_<address>` up in the function map before naming it.
+3. **Charge the samples to families** with `atlas.py families <profile folder> --scripts <game repo>/scripts --maps <game folder> --families f.json --frame-ms <the report's mean frame>`.
+   The families file lists game thread name prefixes, the main thread's name and ordered families of marker substrings (the first family with a marker anywhere in a stack wins):
+
+   ```json
+   {"game_threads": ["Exec", "Worker"], "main_thread": "Main",
+    "families": [{"name": "cloth", "markers": ["f_aaaa0001", "ClothStep"]}, {"name": "physics", "markers": ["f_bbbb0002"]}]}
+   ```
+
+   Two numbers a family: **cpu** (ms of CPU a frame) and **chain** (the instants when the main thread is blocked, each running game thread weighing 1/k for the k running: what the
+   frame waits for), with the part at k of one or two (the tail). Large cpu with a small chain is a cost in cores, not frame time on a big PC: it matters on a small CPU
+   (price that with the game pinned to fewer cores, a separate pair). The chain share is an upper bound for what the family could give, since the wake-ups between jobs stay.
+4. **What a profile cannot say**, found the hard way: a thread that runs alone while the main thread waits is not necessarily what it waits for (a task that nothing waits for looks the same, as do
+   wake-up gaps); the true walk back from each present is the chain recorder (`HOS_CHAIN` and the game repository's `scripts/chain.py`). A thread with a big CPU share in the
+   threads table and no samples in the window is missing from the sampler's list: sample it by name (`HOS_SAMPLE=<name>`) before trusting the totals. One sampled run is one run.
+5. **Rank candidates** with the function map: for each, the family's cpu and chain ms (the bound), the code place (the game's function rows and the port's source), what would change for the
+   player (nothing, or a setting), the risk, and the proof plan (viewpoint, bands, null pair first, A B A B, number of holds).
+
 ## 6. Pitfalls found on the way
 
 - The actor tools remove only what the layout offers; geometry, doors, sensors and tied people stay. A table of "people off" is the tool's partial answer: quote the left-out count beside it.
@@ -158,6 +185,8 @@ window agrees before spending an hour on the renderer.
 - A new copy starts cold (4 to 7 minutes of pipelines): reflink a warm copy's caches only when the translator stamp is the same.
 - Path-valued switches (`RX_VK_FRAME_LOG`, `HOS_PROFILE_DIR`, `*_FILE`) go in the real environment, not the env file.
 - The field is a few players' evenings and its figures are averages under fps caps: use it to rank, never to price.
+- A walk that gets stuck (an obstacle, a person in the way) ends at its stuck rule and the window is marked `NO`: keep the row, take the next route; the run goes on.
+- A game build with the profiling mode keeps a present-trace switch the wrapper already set: the atlas copies the run's own present trace into the profile folder so the report and the windows share one first present.
 - One bridge fault ends a run on purpose (an uncertain input is not repeated); a refused or late step is recorded and the run goes on.
 
 ## 7. Prove it: the exclusive paired hold at a viewpoint
@@ -193,3 +222,8 @@ driver arrived, reloaded areas with actor rules (people off: 16 left out, animal
 apply (above), and the PC was busy. Hold 2 ran the camera aim (6 of 6 sweeps and all 10 windows reached their yaw within 10 degrees), the sweep, the actor families with their left-out counts
 (people 16, animals 14, all offered 111) and the CPU record, which also says which windows were quiet (the first two were: other work 2.7 cores mean,
 2.8 peak). The PC was then busy again (others up to 30 cores) and the later windows are not comparable.
+Hold 4 passed the dry run of the timing scene on a stamped main copy (controllable 22 s after the first present, aimed, the place read to the centimetre in 9 of 9 samples,
+the frame clock covering the window) and showed the GPU is not the limit at the busiest view (a pass-timing block: the draws are a third of the spans). Hold 5 ran a 60 s profile of
+one viewpoint: the frame was the game's CPU code with the main thread blocked two thirds of it and few job threads running then, and the largest family (a physics-driven cloth) held
+14% of the game CPU and 13% of the chain; the families tool reproduced an independent script's CPU numbers to the hundredth. Two launch-switch arms of that hold asked nothing (one
+switch was already the default, the other is a face-culling debug picture): read `switches.def` for what a switch does and for its default before planning an arm.

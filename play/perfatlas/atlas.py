@@ -9,6 +9,7 @@
   atlas.py hold PLAN.json --hold h1 --copy <game copy> --out OUT [--hs-run <path>] [--saves <folder>] [--wall <s>]
   atlas.py table RUNDIR... [--library LIB.json] [--md out.md] [--json out.json]
   atlas.py profile RUNDIR --script .../scripts/profile_report.py --maps <game folder> [--run]   a HOS_PROFILE run's window as the report's --from-s/--to-s
+  atlas.py families PROFILE --scripts .../scripts --maps <game folder> --families f.json --frame-ms N   CPU and chain time by family (made-up markers in the tests)
   atlas.py coverage --field field.json --areas areas.json [--cells cells.json] [--next N]
 
 `hold` runs the plan's hold: for each run a private control folder, the game through the workbench's run wrapper (`hs-run.sh`, which asks
@@ -280,6 +281,11 @@ def cmd_profile(a):
     return 0
 
 
+def cmd_families(a):
+    from perfatlas import families
+    return families.main(a.rest)
+
+
 def cmd_coverage(a):
     field = read_json(a.field)
     areas = read_json(a.areas)
@@ -348,6 +354,9 @@ def main(argv=None):
     p.add_argument('--maps', required=True, help="a game folder of the same build (its binaries name the samples' frames)")
     p.add_argument('--run', action='store_true', help='run the report (CPU only) instead of printing its command')
     p.set_defaults(fn=cmd_profile)
+    p = sub.add_parser('families', help='a profile folder charged to named families: CPU a frame and time on the frame chain (see families.py)')
+    p.add_argument('rest', nargs=argparse.REMAINDER)
+    p.set_defaults(fn=cmd_families)
     p = sub.add_parser('coverage')
     p.add_argument('--field', required=True)
     p.add_argument('--areas', required=True)

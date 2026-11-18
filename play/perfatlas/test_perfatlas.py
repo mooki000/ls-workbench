@@ -15,7 +15,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner, profile as profmod, scene, timing  # noqa: E402
+from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, families, model, parse, plan as planner, profile as profmod, scene, timing  # noqa: E402
 from perfatlas.bridge import BridgeError  # noqa: E402
 
 PRE = '[hos host] '
@@ -1025,6 +1025,96 @@ class Rehearsal(unittest.TestCase):
                 profmod.window_args(out2 / 's1')   # (a run that set no HOS_PROFILE has no profile folder)
             # the plan's own socket folder is gone after the run
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
+
+
+STUB_PROF = """
+def load_symbols():
+    return {'game': ([0x000, 0x100, 0x200, 0x300], ['f_aaaa0001', 'f_bbbb0002', 'f_cccc0003', 'wait_here'])}
+def module_name(m):
+    return m
+def demangle(n):
+    return n
+def waiting(leafmod, named):
+    return any('wait_here' in n for n in named)
+"""
+STUB_SAMPLES = """
+def lines(path):
+    with open(path) as fh:
+        for ln in fh:
+            if not ln.startswith('#'):
+                yield ln
+"""
+
+
+class Families(unittest.TestCase):
+    """samples charged to families: the chain weights, the tail, the first-marker rule, and the file path through stub game-repository modules"""
+    CONFIG = {'game_threads': ['Exec', 'Mod'], 'main_thread': 'Main',
+              'families': [{'name': 'cloth', 'markers': ['f_aaaa0001']}, {'name': 'physics', 'markers': ['f_bbbb0002', 'hk_step']}]}
+
+    def test_attribute(self):
+        run = lambda *names: (True, list(names))
+        wait = (False, ['wait_here'])
+        ticks = {
+            1: {'Main': wait, 'Exec1': run('leaf', 'f_aaaa0001'), 'Exec2': run('leaf', 'f_bbbb0002'), 'Mod1': run('leaf', 'x'), 'Gfx': run('leaf', 'f_aaaa0001')},   # k=3
+            2: {'Main': wait, 'Exec1': run('leaf', 'f_bbbb0002', 'f_aaaa0001')},                                                                         # k=1, first family wins: cloth
+            3: {'Main': run('f_cccc0003'), 'Exec1': run('leaf', 'f_bbbb0002')},                                                                         # main running: cpu only
+            4: {'Main': wait, 'Exec1': wait},                                                                                                         # nobody runs
+        }
+        res = families.attribute(ticks, self.CONFIG, frame_ms=20.0)
+        rows = {r['name']: r for r in res['rows']}
+        self.assertEqual(res['instants'], 4)
+        self.assertAlmostEqual(res['main_blocked_share'], 0.75)
+        # cpu: cloth 2 samples (t1 Exec1, t2 Exec1), physics 2 (t1 Exec2, t3 Exec1), other 1 (Mod1); 'Gfx' is no game thread, 'Main' is not in game_threads
+        self.assertAlmostEqual(rows['cloth']['cpu_ms'], 2 / 4 * 20.0)
+        self.assertAlmostEqual(rows['physics']['cpu_ms'], 2 / 4 * 20.0)
+        self.assertAlmostEqual(rows['other']['cpu_ms'], 1 / 4 * 20.0)
+        self.assertAlmostEqual(res['cpu_ms'], 5 / 4 * 20.0)
+        # chain: t1 weighs 1/3 each (cloth, physics, other), t2 weighs 1 (cloth); t3's main is running, t4 has no running game thread
+        self.assertAlmostEqual(rows['cloth']['chain_ms'], (1 / 3 + 1) / 4 * 20.0)
+        self.assertAlmostEqual(rows['physics']['chain_ms'], (1 / 3) / 4 * 20.0)
+        self.assertAlmostEqual(rows['other']['chain_ms'], (1 / 3) / 4 * 20.0)
+        self.assertAlmostEqual(rows['cloth']['chain_le2_ms'], 1 / 4 * 20.0)   # only t2 has k <= 2
+        self.assertAlmostEqual(rows['physics']['chain_le2_ms'], 0.0)
+        self.assertEqual(res['running_hist'], {0: 1 / 3, 1: 1 / 3, 3: 1 / 3})
+        md = families.to_markdown(res, 20.0)
+        self.assertIn('| cloth |', md)
+        self.assertIn('no speed claim', md)
+        with self.assertRaises(ValueError):
+            families.attribute({}, self.CONFIG, 20.0)
+
+    def test_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            scripts = tmp / 'scripts'
+            scripts.mkdir()
+            (scripts / 'prof.py').write_text(STUB_PROF)
+            (scripts / 'samples.py').write_text(STUB_SAMPLES)
+            folder = tmp / 'profile-x'
+            folder.mkdir()
+            t0 = 1_000_000_000
+            origin = t0 + 2_000_000_000   # the first present 2 s after the sampler's start
+            (folder / 'presents.csv').write_text('frame,return_ns,interval_ns\n1,%d,0\n2,%d,16000000\n' % (origin, origin + 16_000_000))
+            rows = ['# t0_ns %d' % t0]
+            for ms in range(0, 6000, 10):   # 0 to 6 s of the sampler's clock; the window below is 1 s to 2 s after the first present = 3000..4000 ms
+                in_win = 3000 <= ms <= 4000
+                rows.append('%d Main|game+300' % ms)                                             # the main thread waits ('wait_here' at 0x300)
+                rows.append('%d Exec1|game+10;game+%s' % (ms, '0' if in_win else '100'))         # in the window f_aaaa0001 (cloth); out of it f_bbbb0002
+            (folder / 'all.txt').write_text('\n'.join(rows) + '\n')
+            cfg = tmp / 'fam.json'
+            cfg.write_text(json.dumps(self.CONFIG))
+            lo, hi = families.window_ms(folder, 1.0, 2.0)
+            self.assertEqual((lo, hi), (3000.0, 4000.0))
+            outj = tmp / 'out.json'
+            rc = families.main([str(folder), '--scripts', str(scripts), '--maps', str(tmp), '--families', str(cfg), '--frame-ms', '16.0',
+                                '--from-s', '1', '--to-s', '2', '--json', str(outj)])
+            self.assertEqual(rc, 0)
+            res = json.loads(outj.read_text())
+            rows = {r['name']: r for r in res['rows']}
+            self.assertEqual(res['instants'], 101)                        # 3000, 3010 ... 4000
+            self.assertAlmostEqual(rows['cloth']['cpu_ms'], 16.0)         # one running game thread at every instant, in cloth
+            self.assertAlmostEqual(rows['physics']['cpu_ms'], 0.0)        # the other family's samples are outside the window
+            self.assertAlmostEqual(rows['cloth']['chain_ms'], 16.0)       # the main thread waits at every instant, one thread runs
+            self.assertAlmostEqual(res['main_blocked_share'], 1.0)
 
 
 if __name__ == '__main__':
