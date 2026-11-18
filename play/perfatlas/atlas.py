@@ -8,6 +8,7 @@
   atlas.py merge PLAN.json ... --hold-limit 1100 --out plan.json   (several legs, each planned with its own --prefix, packed again)
   atlas.py hold PLAN.json --hold h1 --copy <game copy> --out OUT [--hs-run <path>] [--saves <folder>] [--wall <s>]
   atlas.py table RUNDIR... [--library LIB.json] [--md out.md] [--json out.json]
+  atlas.py profile RUNDIR --script .../scripts/profile_report.py --maps <game folder> [--run]   a HOS_PROFILE run's window as the report's --from-s/--to-s
   atlas.py coverage --field field.json --areas areas.json [--cells cells.json] [--next N]
 
 `hold` runs the plan's hold: for each run a private control folder, the game through the workbench's run wrapper (`hs-run.sh`, which asks
@@ -28,7 +29,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import costtable, coverage, cpu as cpumod, model, plan as planner  # noqa: E402
+from perfatlas import costtable, coverage, cpu as cpumod, model, plan as planner, profile as profmod  # noqa: E402
 from perfatlas.bridge import Bridge, BridgeError  # noqa: E402
 from perfatlas.driver import Driver  # noqa: E402
 
@@ -159,6 +160,7 @@ def run_one(a, run, outdir, cap_s=None):
     proc = subprocess.Popen(cmd, stdout=stdout, stderr=subprocess.STDOUT, start_new_session=True)
     run_dir = Path(a.copy) / 'runs' / tag
     result = {'aborted': None}
+    wall_start = time.time()
     try:
         log = find_log(run_dir, a.gate_wait, proc)
         started = time.monotonic_ns()
@@ -196,6 +198,17 @@ def run_one(a, run, outdir, cap_s=None):
         logs = sorted(run_dir.glob('*_log.txt'))
         if logs:
             shutil.copy2(logs[0], out / 'game_log.txt')
+        if any(k == 'HOS_PROFILE' for k, _ in env):   # (the profiling mode's own folder, made in the copy's logs/ during this run)
+            for d in sorted((Path(a.copy) / 'logs').glob('profile-*')):
+                if d.is_dir() and d.stat().st_mtime >= wall_start - 5:
+                    dest = out / 'profile' / d.name
+                    shutil.copytree(d, dest)
+                    if logs and not (dest / 'game.log').exists():
+                        shutil.copy2(logs[0], dest / 'game.log')
+                    if not (dest / 'presents.csv').exists() and (run_dir / 'present.csv').exists():
+                        # (the wrapper sets HOS_PRESENT_TRACE itself, and the profiling mode keeps a switch that is already set: the run's own present
+                        # trace is the one the report and the windows can both take their first present from)
+                        shutil.copy2(run_dir / 'present.csv', dest / 'presents.csv')
         shutil.rmtree(ctl, ignore_errors=True)
     meta = {'id': run['id'], 'tag': tag, 'copy': a.copy, 'save': run['save'], 'env': env, 'area': run['area'], 'tod': run['tod'], 'wall_s': wall,
             'plan_est_s': run['est_s'], 'label': 'ordinary run, no speed claim', **result}
@@ -254,6 +267,16 @@ def cmd_table(a):
         if sw:
             Path(a.json).with_suffix('.sweep.json').write_text(json.dumps(sw, indent=1))
     print(md)
+    return 0
+
+
+def cmd_profile(a):
+    args = profmod.window_args(a.rundir, a.window)
+    cmd = profmod.report_command(args, a.script, a.maps)
+    print(' '.join(cmd))
+    print(f"window {a.window}: {args['seconds']} s, from {args['from_s']} to {args['to_s']} s of the first present; profile {args['folder']}")
+    if a.run:
+        return subprocess.run(cmd).returncode
     return 0
 
 
@@ -318,6 +341,13 @@ def main(argv=None):
     p.add_argument('--md')
     p.add_argument('--json')
     p.set_defaults(fn=cmd_table)
+    p = sub.add_parser('profile')
+    p.add_argument('rundir')
+    p.add_argument('--window', type=int, default=1)
+    p.add_argument('--script', required=True, help="the game repository's scripts/profile_report.py")
+    p.add_argument('--maps', required=True, help="a game folder of the same build (its binaries name the samples' frames)")
+    p.add_argument('--run', action='store_true', help='run the report (CPU only) instead of printing its command')
+    p.set_defaults(fn=cmd_profile)
     p = sub.add_parser('coverage')
     p.add_argument('--field', required=True)
     p.add_argument('--areas', required=True)

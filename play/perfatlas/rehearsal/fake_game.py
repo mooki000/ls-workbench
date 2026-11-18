@@ -20,6 +20,7 @@ run_dir = Path(copy) / 'runs' / tag
 run_dir.mkdir(parents=True, exist_ok=True)
 log = open(run_dir / 'fake_log.txt', 'a', buffering=1)
 start = time.monotonic()
+first_present_ns = time.monotonic_ns()
 lock = threading.Lock()
 S = {'map': 'AreaA', 'state': 'menu', 'pos': [0, 0, 0], 'facing': 0.0, 'camera': 0.0, 'pitch': 0.0, 'loading': False, 'options': {'resolution': 1},
      'pending': None, 'quit': False}
@@ -151,6 +152,10 @@ def serve(conn):
             return
 
 
+if env.get('HOS_PROFILE'):   # (the profiling mode's folder in the copy's logs/, as the host makes it)
+    prof = Path(copy) / 'logs' / 'profile-20260101-000000'
+    prof.mkdir(parents=True, exist_ok=True)
+    (prof / 'process.json').write_text('{}')
 say('vk: present: 2048x1152')
 sockpath = env['HOS_CONTROL']
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -168,4 +173,4 @@ while not S['quit'] and time.monotonic() - start < wall:
 time.sleep(0.3)
 (run_dir / 'summary.txt').write_text(f'hs-run {tag} exit=0 wall={time.monotonic() - start:.1f}s fake\n')
 (run_dir / 'exit.txt').write_text('0\n')
-(run_dir / 'present.csv').write_text('frame,return_ns,interval_ns,present_begin_ns,renderer_begin_ns,renderer_end_ns,vcore_back_ns\n')
+(run_dir / 'present.csv').write_text('frame,return_ns,interval_ns,present_begin_ns,renderer_begin_ns,renderer_end_ns,vcore_back_ns\n1,%d,0,0,0,0,0\n' % first_present_ns)

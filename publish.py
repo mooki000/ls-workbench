@@ -80,7 +80,7 @@ GROUPS = {
                              'playbench/test_playbench.py', 'playbench/rehearsal/fake_game.py', 'playbench/rehearsal/fake_hs_run.sh',
                              'playbench/rehearsal/hsap_wrap.py', 'playbench/rehearsal/rehearse.py', 'playbench/rehearsal/rehearse_pilot.py',
                              'perfatlas/__init__.py', 'perfatlas/atlas.py', 'perfatlas/bridge.py', 'perfatlas/costtable.py', 'perfatlas/coverage.py',
-                             'perfatlas/camera.py', 'perfatlas/cpu.py', 'perfatlas/driver.py', 'perfatlas/model.py', 'perfatlas/parse.py', 'perfatlas/plan.py', 'perfatlas/scene.py', 'perfatlas/test_perfatlas.py', 'perfatlas/timing.py',
+                             'perfatlas/camera.py', 'perfatlas/cpu.py', 'perfatlas/driver.py', 'perfatlas/model.py', 'perfatlas/parse.py', 'perfatlas/plan.py', 'perfatlas/profile.py', 'perfatlas/scene.py', 'perfatlas/test_perfatlas.py', 'perfatlas/timing.py',
                              'perfatlas/rehearsal/fake_game.py', 'perfatlas/rehearsal/fake_hs_run.sh')),
     'regress': ('regress', ('regress.py', 'build_case.py', 'run_case.py', 'test_regress.py', 'test_longshot_names.py')),
     'perf': ('perf', ('hs_perf.py', 'test_hs_perf.py')),

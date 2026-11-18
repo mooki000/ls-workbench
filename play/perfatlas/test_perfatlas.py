@@ -15,7 +15,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner, scene, timing  # noqa: E402
+from perfatlas import atlas, costtable, coverage, cpu as cpumod, driver, model, parse, plan as planner, profile as profmod, scene, timing  # noqa: E402
 from perfatlas.bridge import BridgeError  # noqa: E402
 
 PRE = '[hos host] '
@@ -997,6 +997,32 @@ class Rehearsal(unittest.TestCase):
             self.assertTrue(all(r['draws'] == 900.0 and r['arrived'] and r['camera_ok'] for r in sw), sw)
             self.assertEqual(atlas.main(['table', str(rd2), '--md', str(tmp / 'sweep.md'), '--json', str(tmp / 'sweep.json')]), 0)
             self.assertIn('Scout', (tmp / 'sweep.md').read_text())
+            # a profile run: the host's own profiling folder is copied out with the run's log, and the window is named in the report's seconds
+            plan3 = tmp / 'plan3.json'
+            obj3 = json.loads(lib.read_text())
+            obj3['areas']['t'] = {'map': 'AreaA', 'age': 'child', 'saves': {'day': 'save-day'}}
+            obj3['viewpoints'].append({'id': 'tv', 'area': 't', 'pos': [0, 0, 9], 'camera': {'yaw': 0}, 'dwell_s': 5})
+            lib3 = tmp / 'lib3.json'
+            lib3.write_text(json.dumps(obj3))
+            self.assertEqual(atlas.main(['plan', str(lib3), '--save-proof', '--area', 't', '--tod', 'day', '--viewpoints', 'tv', '--dwell', '4', '--env', 'HOS_PROFILE=1',
+                                         '--prefix', 'f', '--out', str(plan3)]), 0)
+            out3 = tmp / 'out3'
+            rc = atlas.main(['hold', str(plan3), '--hold', 'h1', '--copy', str(copy), '--out', str(out3), '--hs-run', str(HERE / 'rehearsal' / 'fake_hs_run.sh'),
+                             '--saves', str(saves), '--wall', '120'])
+            self.assertEqual(rc, 0)
+            rd3 = out3 / 'f1'
+            folders = profmod.profile_folders(rd3)
+            self.assertEqual([f.name for f in folders], ['profile-20260101-000000'])
+            self.assertTrue((folders[0] / 'game.log').exists())
+            self.assertTrue((folders[0] / 'presents.csv').exists())   # (copied from the run's own present trace)
+            args = profmod.window_args(rd3)
+            self.assertTrue(0 <= args['from_s'] < args['to_s'], args)
+            self.assertAlmostEqual(args['seconds'], 4.0, delta=2.5)
+            cmd = profmod.report_command(args, '/x/profile_report.py', '/m')
+            self.assertEqual(cmd[cmd.index('--from-s') + 1], str(args['from_s']))
+            self.assertIn('--maps', cmd)
+            with self.assertRaises(ValueError):
+                profmod.window_args(out2 / 's1')   # (a run that set no HOS_PROFILE has no profile folder)
             # the plan's own socket folder is gone after the run
             self.assertEqual(list(Path('/tmp').glob('pa-*/c.sock')), [])
 
