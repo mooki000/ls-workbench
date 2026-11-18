@@ -17,6 +17,7 @@ from pathlib import Path
 
 CAP_S = 480
 RESERVE_S = 10
+LAG_S = 12   # (first present after the game's start: 6 to 12 s in the atlas's holds; the window's `to` must leave this much of the wall)
 FIXED_ENV = {'HOS_OUTPUT_RES': '2048x1152', 'HOS_DYNRES': '0', 'HOS_FPS_MAX': '240', 'RX_VK_DLSS': '0', 'RX_VK_FRAMEGEN': '0',
              'RX_VK_AUTO_TUNE': '0', 'RX_VK_AUTO_PRESET': '0', 'RX_VK_SHOT_EVERY': '1000000'}
 SPREAD_MAX = 0.05
@@ -28,7 +29,7 @@ class TimingError(ValueError):
     pass
 
 
-def make_scenario(label, save, scene, good_max, bad_min, from_s=55, to_s=105, boot_input=None, measure='mean_ms',
+def make_scenario(label, save, scene, good_max, bad_min, from_s=45, to_s=95, boot_input=None, measure='mean_ms',
                   env=None, seconds=110, grace_seconds=5, repetitions=2, extra_expect=()):
     """the scenario JSON for one viewpoint. `scene` is the atlas_scene object (map, aim_yaw, pos [x, z], control_by_s, ready_by_s, ...).
     good_max and bad_min are the decision bands in the measure's own unit (worseness: higher is worse); both are required."""
@@ -36,8 +37,9 @@ def make_scenario(label, save, scene, good_max, bad_min, from_s=55, to_s=105, bo
         raise TimingError('the decision bands (good_max, bad_min) are set before the results: pass both')
     if not good_max < bad_min:
         raise TimingError(f'good_max {good_max} must be below bad_min {bad_min}')
-    if not 0 < from_s < to_s <= seconds - 3:
-        raise TimingError(f'the window {from_s}..{to_s} must lie inside the run ({seconds} s) with 3 s to spare')
+    if not 0 < from_s < to_s <= seconds - LAG_S:
+        raise TimingError(f'the window {from_s}..{to_s} must end {LAG_S} s before the run does ({seconds} s): the frame clock starts when the game '
+                          f'first presents (6 to 12 s after its start in the first holds) and the wall limit counts from the start')
     if scene.get('ready_by_s', 1e9) > from_s - 2:
         raise TimingError(f"the aim must be done by {from_s - 2} s (the window starts at {from_s}): ready_by_s is {scene.get('ready_by_s')}")
     run_extra = {'input': boot_input} if boot_input else {}   # (default: no input script: the scene driver presses A through the title itself)

@@ -578,7 +578,14 @@ class Cpu(unittest.TestCase):
 
 
 class CostTable(unittest.TestCase):
-    def make_run(self, root, name='r1'):
+    @staticmethod
+    def cpu_snaps(others, secs=10, game_cores=4.0):
+        """two snapshots secs apart in which the game used `game_cores` and everything else `others` cores"""
+        hz = cpumod.HZ
+        return [{'t_ns': 0, 'sys_busy': 0, 'sys_total': 1, 'threads': {'1': ['BaseProcExecutor0', 0]}},
+                {'t_ns': int(secs * 1e9), 'sys_busy': int((game_cores + others) * hz * secs), 'sys_total': 1, 'threads': {'1': ['BaseProcExecutor0', int(game_cores * hz * secs)]}}]
+
+    def make_run(self, root, name='r1', others=(0.5, 0.5, 0.5)):
         d = Path(root) / name
         (d / 'trace').mkdir(parents=True)
         log_lines = []
@@ -611,7 +618,7 @@ class CostTable(unittest.TestCase):
                     log(ln.replace('6.50 ms', '6.60 ms'))
             wins.append({'run': name, 'n': n, 'kind': 'viewpoint', 'cond': cond, 'vp': 'v1', 'visit': visit, 'tod': 'day', 't0_ns': t0, 't1_ns': t + 1,
                          'log0': log0, 'log1': log_off, 'frame0': 0, 'frame1': 0, 'status0': {}, 'status1': {}, 'arrived': True, 'camera_ok': True,
-                         'shot': None, 'moved_m': 0.0, 'event_seen': False})
+                         'shot': None, 'moved_m': 0.0, 'event_seen': False, 'cpu': self.cpu_snaps(others[n - 1])})
             t += 500_000_000
         (d / 'game_log.txt').write_text('\n'.join(log_lines) + '\n')
         (d / 'trace' / 'frames.csv').write_text('\n'.join(rows) + '\n')
@@ -646,13 +653,69 @@ class CostTable(unittest.TestCase):
             prices = costtable.family_prices(rows, {'actors-people': 'people', 'baseline': 'baseline'})
             self.assertAlmostEqual(prices['people']['frame_ms'], -2.0)
             self.assertAlmostEqual(costtable.drift(rows)[('r1', 'v1')], 10.4 / 10.0 - 1)
+            self.assertTrue(all(r['valid']['timing'] for r in rows))
+            self.assertEqual(prices['people']['timing_pairs'], 1)
             md = costtable.markdown(rows, {'actors-people': 'people', 'baseline-again': 'baseline'})
             self.assertIn('ordinary run, no speed claim', md)
             self.assertIn('What each part took away', md)
             self.assertIn('Revisit drift', md)
-            self.assertIn('| r1 | v1 | 4.0% | yes |', md)
+            self.assertIn('| r1 | v1 | 4.0% | 0.0% | yes |', md)
+            self.assertIn('3 met the quiet rule', md)
             data = json.loads(costtable.to_json(rows))
             self.assertEqual(len(data), 3)
+
+    def test_a_window_that_was_not_quiet_keeps_its_counts_but_not_its_frame_ms(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self.make_run(root, others=(0.5, 12.0, 0.5))   # the people window ran beside 12 other cores
+            rows = costtable.build_rows([costtable.Run(d)])
+            base, people, again = rows
+            self.assertEqual([r['valid']['timing'] for r in rows], [True, False, True])
+            self.assertTrue(people['valid']['counts'])
+            self.assertTrue(any('quiet rule not met' in w for w in people['valid']['why']))
+            costtable.add_deltas(rows)
+            self.assertFalse(people['delta']['timing_valid'])
+            self.assertTrue(people['delta']['counts_valid'])
+            prices = costtable.family_prices(rows, {'actors-people': 'people'})
+            self.assertEqual((prices['people']['pairs'], prices['people']['timing_pairs'], prices['people']['count_pairs']), (1, 0, 1))
+            self.assertIsNone(prices['people']['frame_ms'])           # (no quiet pair: no frame ms is claimed)
+            self.assertEqual(prices['people']['draws'], -100)         # (a count is still a reading of the scene)
+            self.assertIn('| 1 | 0 | - |', costtable.markdown(rows, {'actors-people': 'people'}))
+            # the drift of frame ms counts quiet visits only: here both baseline visits are quiet, the people window is not a baseline
+            self.assertIn(('r1', 'v1'), costtable.drift(rows))
+
+    def test_a_window_that_was_not_as_asked_is_not_valid_at_all(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self.make_run(root)
+            w = [json.loads(ln) for ln in (d / 'windows.jsonl').read_text().splitlines()]
+            w[1]['arrived'] = False
+            w[2]['camera_ok'] = False
+            (d / 'windows.jsonl').write_text('\n'.join(json.dumps(x) for x in w) + '\n')
+            rows = costtable.build_rows([costtable.Run(d)])
+            self.assertEqual([(r['valid']['counts'], r['valid']['timing']) for r in rows], [(True, True), (False, False), (False, False)])
+            self.assertIn('| NO |', costtable.markdown(rows))
+
+    def test_an_old_run_gets_its_refused_settings_from_the_ops_record(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self.make_run(root)
+            ops = [{'op': {'op': 'option', 'name': 'resolution', 'value': 6}, 'result': {'ok': False, 'error': 'failed'}},
+                   {'op': {'op': 'pos', 'vp': 'v1'}, 'result': {'ok': True, 'window': 2}},
+                   {'op': {'op': 'option_restore', 'name': 'resolution'}, 'result': {'ok': True}},
+                   {'op': {'op': 'pos', 'vp': 'v1'}, 'result': {'ok': True, 'window': 3}}]
+            (d / 'ops.jsonl').write_text('\n'.join(json.dumps(o) for o in ops) + '\n')
+            rows = costtable.build_rows([costtable.Run(d)])
+            self.assertEqual([r['valid']['counts'] for r in rows], [True, False, True])
+            self.assertTrue(any('NOT taken' in f for f in rows[1]['flags']))
+
+    def test_no_cpu_record_means_quiet_unknown_not_quiet(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self.make_run(root)
+            w = [json.loads(ln) for ln in (d / 'windows.jsonl').read_text().splitlines()]
+            for x in w:
+                x.pop('cpu')
+            (d / 'windows.jsonl').write_text('\n'.join(json.dumps(x) for x in w) + '\n')
+            rows = costtable.build_rows([costtable.Run(d)])
+            self.assertTrue(all(r['valid']['counts'] and not r['valid']['timing'] for r in rows))
+            self.assertTrue(all(any('no CPU record' in x for x in r['valid']['why']) for r in rows))
 
     def test_cpu_row_per_frame_and_groups(self):
         hz = cpumod.HZ
@@ -779,7 +842,7 @@ class SceneAndTiming(unittest.TestCase):
 
     # ---- the worker's inputs
     def scenario(self, **kw):
-        base = dict(label='atlas-test', save='/saves/x', scene=self.SPEC, good_max=30.0, bad_min=36.0, from_s=60, to_s=105)
+        base = dict(label='atlas-test', save='/saves/x', scene=self.SPEC, good_max=30.0, bad_min=36.0, from_s=60, to_s=95)
         base.update(kw)
         return timing.make_scenario(**base)
 
@@ -787,12 +850,12 @@ class SceneAndTiming(unittest.TestCase):
         sc = self.scenario()
         self.assertEqual(sc['schema_version'], 1)
         self.assertEqual(sc['measure'], {'name': 'mean_ms', 'direction': 'higher-worse', 'good_max': 30.0, 'bad_min': 36.0})
-        self.assertEqual((sc['run']['anchor'], sc['run']['from'], sc['run']['to']), ('first', 60, 105))
+        self.assertEqual((sc['run']['anchor'], sc['run']['from'], sc['run']['to']), ('first', 60, 95))
         self.assertNotIn('input', sc['run'])   # (no input script: the scene driver presses A itself)
         self.assertEqual(self.scenario(boot_input='5:A')['run']['input'], '5:A')
         self.assertEqual(sc['run']['env']['HOS_DYNRES'], '0')
         self.assertEqual(sc['run']['atlas_scene']['aim_yaw'], 120.0)
-        for kw, text in (({'good_max': None}, 'bands'), ({'bad_min': 20.0}, 'below'), ({'to_s': 120}, 'window'), ({'from_s': 54}, 'aim must be done')):
+        for kw, text in (({'good_max': None}, 'bands'), ({'bad_min': 20.0}, 'below'), ({'to_s': 120}, 'window'), ({'to_s': 100}, 'first presents'), ({'from_s': 54}, 'aim must be done')):
             with self.assertRaises(timing.TimingError) as c:
                 self.scenario(**kw)
             self.assertIn(text, str(c.exception))

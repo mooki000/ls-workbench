@@ -22,6 +22,7 @@ The code is `play/perfatlas/` (live: `playthrough/perfatlas/`); its tests use a 
 | Level | What | How it is obtained | May be said |
 |---|---|---|---|
 | observation | counts (draws, passes, barriers, uploads), pass shares, CPU-versus-GPU split, pictures | ordinary gated run, `atlas.py hold` | "ordinary run, no speed claim"; never a frame rate as a verdict |
+| valid observation | a window that was **as asked** (arrived, camera at the aim, still, no event, the setting taken, frames present): `counts`; and also **quiet** over its own span (other work under 3 cores mean, at most 6 in any 5-second stretch, from the CPU record): `timing` | `atlas.py table` marks every row `timing`, `counts` or `NO` | frame ms and CPU ms are quoted from `timing` windows only; draws, passes and the split from `counts` windows; a `NO` window is not used |
 | lead | a part that looks expensive, ranked | the cost table | where to spend an exclusive hold |
 | priced | what a part costs at a viewpoint | exclusive paired run, off versus on, A B A B | the gap with its same-arm spread |
 | proven | an optimization is faster | exclusive paired run, main versus main plus the change, same viewpoint, same settings, pictures equal | the paired result and the rows |
@@ -48,6 +49,7 @@ crowds can fail the 5% same-arm tolerance (an earlier exclusive Market hold had 
 | `HOS_PROFILE=1` (cpu.csv, all-thread sampler) | where the CPU goes | `scripts/profile_report.py <folder>` | it switches on pass timing and a 2 ms sampler: it perturbs timing, never time with it |
 | Perf summaries (#1383) | per-map, per-second frame and GPU ms | player telemetry | position and angle fields are wrong (bin middles, wrong object and units), cutscenes sampled: a coarse survey only |
 | Perf monitor (`perf.csv`) | sampled GPU/CPU/memory | `--perf` | the writer is not on main: a main build writes no file |
+| Dispatcher | priorities of queued waiters | `reports/tools/gpu_priority.py` (the main session's): a waiter is ranked by the first `ORDER` text found in its working directory or command line; **a new topic needs its own entry** or it ranks 10, behind everything; a waiter whose command line has `nx2navi-gpu-slot --exclusive` stays stopped until 22:00 (night only) | never CONT a waiter; kill only a recorded pid |
 | Regression worker | paired timing | `regress.py hunt` or `_hold` with a scenario | `ls-regression-hunt` |
 | Route library, pilot, BugHunter | walks, stuck places; detectors flag present gaps and visual faults | `ls-scripted-play` | no perf cell in PlayBench; the Go-Explore archive is unmerged |
 | Field data | where players lose frames | `ls_field.py perf --by map`, `hitches --by map` | `ls-field-data`: sessions and hours beside every figure |
@@ -109,6 +111,12 @@ part 0.3 to 1.1 ms; GPU 4 to 9 ms; the main thread was blocked 74 to 80% of the 
 the CPU record, the **CPU ms a frame by thread group**, which does not move with other work the way wall time does. Use ordinary windows for counts,
 pictures, CPU per frame and the split; keep every frame-ms comparison for the exclusive worker.
 
+**Hold 3 (ordinary, render rows at two places): not quiet, counts only.** All ten windows ran beside 20 to 28 other cores; the Render resolution row at 33% was
+**refused** with the game's own upscaler (`failed`: its arrow steps do not reach 33 there), so that block ran at the earlier value; the GPU pass timing run
+waited ten minutes in the GPU gate behind another agent's 27-minute game and the hold was ended by its owner (never run: pass timing, launch switches).
+Draw counts at one view moved 2,494 to 2,686 between windows (1 to 3 scene lines inside a window): a difference under about 150 draws is not a price.
+A hold that waits for the gate holds both locks: `atlas.py hold --gate-wait` (default 150 s) ends the run and the hold when no game log appears.
+
 **What a quiet window showed (hold 2, two windows with the quiet rule met, ordinary, no speed claim):** the square view at 2048x1152 on this PC read 16 ms and
 14 ms a frame (60 to 70 fps; the field's Castle Town sessions average 34 fps on other hardware); the actor executors (6 threads) took 38 of the 89 CPU ms
 a frame, the module workers 14, the renderer's replay and recorder threads 11 and 10; the main thread was on CPU 4.6 ms and blocked 12.4 ms. With people off the next
@@ -120,7 +128,9 @@ bridge's `draws` (a count: it does not move with the machine's load). Look at th
 
 ## 5. Reading the cost table
 
-Every row is a window. Frame ms is the renderer trace's interval (headless: CPU after the offscreen submit). `game`, `render`, `gpu wait`,
+Read the **valid** column first (`timing`: as asked and quiet; `counts`: as asked, not quiet or not recorded; `NO`: not as asked) and the header line that
+counts them. Only `timing` rows feed the family prices' frame, game, render and GPU ms and the drift of frame ms; draws are averaged over `counts` pairs. A
+run made before the driver recorded refused settings gets them back from its ops record. Every row is a window. Frame ms is the renderer trace's interval (headless: CPU after the offscreen submit). `game`, `render`, `gpu wait`,
 `pace` are the FPS counter's split; **bound** names the longest of them (`pace` when pacing is over 30% of the frame). Draws, GPU ms
 and the replay parts come from the scene lines inside the window. The pass table is the clean pass-timing blocks (the first block in a
 window covers earlier frames and is dropped; a window that holds one block is marked partial). The family table is the mean difference of
@@ -146,10 +156,16 @@ window agrees before spending an hour on the renderer.
 The ordinary holds find and rank; only the worker decides. For one viewpoint (`timing.py`, `scene.py`; nothing else times anything):
 
 1. **A save for the place.** A build on main has no `!pos`: make a save that starts Link at the viewpoint (`hs_make_save.py --from <entry> --out lib:<name> --start <Map>:x,y,z,yaw --time day`), prove it boots to that place (a start within 3 m of a person or 2.5 m of an object never reaches play), and let the **scene driver** turn the camera to the viewpoint's heading with the right stick before the window. The same scene then runs on any build.
-2. **The scenario** (`timing.make_scenario`): fixed-cost env, `anchor: first`, a window of `from`..`to` seconds after the first present (the aim must be done two seconds before `from`; 55 to 105 with 110-second runs fits four runs in 470 s), `atlas_scene` (map, aim yaw, where Link must read, control and ready deadlines), `validator_command` = `scene.py validate {output}` (a run whose camera moved, whose Link was elsewhere, that had an event or a load, or that was not controllable in time is **invalid**, not slow). The decision measure (`mean_ms`) and its bands `good_max < bad_min` are required arguments: write them before any result.
+2. **The scenario** (`timing.make_scenario`): fixed-cost env, `anchor: first`, a window of `from`..`to` seconds on the frame clock (the aim must be done two seconds before `from`; the game starts presenting 6 to 12 s after its start and the wall limit counts from the start, so `to` must be at least 12 s below `seconds`: 45 to 95 with 110-second runs fits four runs in 470 s), `atlas_scene` (map, aim yaw, where Link must read, control and ready deadlines), `validator_command` = `scene.py validate {output}` (a run whose camera moved, whose Link was elsewhere, that had an event or a load, or that was not controllable in time is **invalid**, not slow). The decision measure (`mean_ms`) and its bands `good_max < bad_min` are required arguments: write them before any result.
 3. **The plan** (`timing.make_plan`): reference, candidate, reference, candidate; fit rule `n * (seconds + grace) + 10 <= 480`; the desktop widget's avoid window; new output folders. The queue: quiet-window lock, measuring lock, then the gate with `--exclusive` and the worker's `_hold` (`ls-hold-chain`, `ls-regression-hunt` section 3), only with the main session's word for that one hold.
 4. **The first hold at a scene is a null pair** (`timing.null_pair_plan`: one copy, one commit, all four runs) and its verdict (`timing.null_pair_verdict`): usable when all four runs are valid and not disturbed, both same-arm spreads are at most 5% and the arm gap at most 3%; otherwise the scene cannot decide a change smaller than the larger of those, and the hold is kept as a result (an earlier Market hold had 7.35% between repeats). Every row is kept.
-5. **Then** a pricing pair (a part off versus on, one build, a launch switch only) and proof pairs (main versus main plus the change, both built the same way; the perf-tools game is never an arm).
+   **The dry run comes first, in an ordinary hold:** the same scene, scene driver, adapter and validator as a `game-check` (pass/fail, relaxed control deadlines) on the stamped
+   copy, with a picture of the save's place from the atlas driver (`plan --save-proof`, op `stand`: no `!pos`, Link's place read back). It checks what an exclusive hold must not
+   discover: the save boots to the place, the stamp is in the log, the scene is controllable and aimed in time, the frame clock covers the window. Its record names the real times.
+5. **The timing base** is a copy built by the shared build adapter from a donor with the same lift key **and** a host that links (a key match was not enough once: the donor's
+   generated stubs and a newer `host/` source both defined the same imports and the link failed; build from the donor nearest the target commit, or a full lift). Stamp and
+   binary hashes go in the receipt; the perf-tools copy is never an arm.
+6. **Then** a pricing pair (a part off versus on, one build, a launch switch only) and proof pairs (main versus main plus the change, both built the same way; the perf-tools game is never an arm).
 
 ## 8. Add an area
 

@@ -47,12 +47,31 @@ class Run:
         self.meta = json.loads((self.dir / 'run.json').read_text()) if (self.dir / 'run.json').exists() else {}
         self.windows = [json.loads(ln) for ln in (self.dir / 'windows.jsonl').read_text().splitlines() if ln.strip()] if (self.dir / 'windows.jsonl').exists() else []
         self.ops = [json.loads(ln) for ln in (self.dir / 'ops.jsonl').read_text().splitlines() if ln.strip()] if (self.dir / 'ops.jsonl').exists() else []
+        self.backfill_options_failed()
         log = self.dir / 'game_log.txt'
         self.records = parse.parse_log(parse.read_lines(log)) if log.exists() else []
         trace = self.dir / 'trace' / 'frames.csv'
         self.trace = parse.read_trace(trace) if trace.exists() else []
         present = self.dir / 'present.csv'
         self.present = parse.read_present(present) if present.exists() else []
+
+    def backfill_options_failed(self):
+        """windows of a run made before the driver recorded `options_failed` get it from the ops record: a live setting the game refused
+        (an option op with ok false) stays unmet in every later window until its restore"""
+        if any('options_failed' in w for w in self.windows):
+            return
+        failed, by_n = set(), {}
+        for rec in self.ops:
+            op, res = rec.get('op') or {}, rec.get('result') or {}
+            if op.get('op') == 'option' and res.get('ok') is False:
+                failed.add(op.get('name'))
+            elif op.get('op') == 'option_restore':
+                failed.discard(op.get('name'))
+            elif op.get('op') in ('pos', 'stand') and 'window' in res:
+                by_n[res['window']] = sorted(failed)
+        for w in self.windows:
+            if by_n.get(w.get('n')):
+                w['options_failed'] = by_n[w['n']]
 
     @property
     def id(self):
@@ -141,10 +160,29 @@ def window_row(run, w):
     if ps and ps['partial']:
         flags.append('pass timing: one block only (it covers earlier frames)')
     cpu = cpu_row(w.get('cpu'), st['n'])
+    valid = validity(flags, cpu, rows)
     return {'run': run.id, 'n': w['n'], 'kind': w['kind'], 'cond': w['cond'], 'vp': w['vp'], 'visit': w.get('visit', 1), 'tod': w.get('tod'),
             'dwell_s': round((w['t1_ns'] - w['t0_ns']) / 1e9, 1), 'source': source, 'frame': st, 'parts': parts,
             'bound': classify_bound(parts, st['mean']) if source == 'trace' else None, 'log': log, 'pass': ps,
-            'cpu': cpu, 'shot': w.get('shot'), 'flags': flags, 'status0': w.get('status0'), 'status1': w.get('status1')}
+            'cpu': cpu, 'valid': valid, 'shot': w.get('shot'), 'flags': flags, 'status0': w.get('status0'), 'status1': w.get('status1')}
+
+
+COUNT_FLAGS = ('no frame file', 'did not arrive', 'camera not at', 'moved', 'an event ran', 'was NOT taken', 'walk ')
+
+
+def validity(flags, cpu, rows):
+    """what a window can be used for. `counts`: it was where and as asked (arrived, camera at the aim, still, no event, the setting taken, frames
+    present): its counts (draws, passes, uploads), its picture and its game split are readings of that scene. `timing`: also the quiet rule was met
+    over the window (the CPU record: other work under 3 cores mean, at most 6 in any 5-second stretch): only then are its frame ms and CPU ms an
+    observation of the game rather than of the machine. A window with no CPU record has an unknown quiet and is not `timing`. Neither is a
+    speed result: that is the paired exclusive worker's."""
+    why = [f for f in flags if any(f.startswith(k) or k in f for k in COUNT_FLAGS)]
+    counts = not why
+    if cpu is None:
+        why.append('no CPU record: the quiet rule is unknown')
+    elif not cpu['quiet']:
+        why.append(f"quiet rule not met (other work {cpu['others_mean']:.1f} cores mean, {cpu['others_peak']:.1f} peak)")
+    return {'counts': counts, 'timing': counts and cpu is not None and bool(cpu['quiet']), 'why': why}
 
 
 def cpu_row(snaps, frames):
@@ -210,7 +248,8 @@ def reference_rows(rows):
 
 def add_deltas(rows):
     """each row gets 'delta' against the same viewpoint's baseline in its own run (else in another run, marked cross_run): the frame
-    mean, the game and render parts, the draws and the GPU time; None where either side lacks the number"""
+    mean, the game and render parts, the draws and the GPU time; None where either side lacks the number. `timing_valid` says both windows
+    met the quiet rule and were as asked (a cross-run pair never does); `counts_valid` that both were as asked."""
     own, anyrun = reference_rows(rows)
 
     def d(a, b):
@@ -225,6 +264,8 @@ def add_deltas(rows):
             r['delta'] = None
             continue
         r['delta'] = {'cross_run': cross, 'against': f"{ref['run']}/{ref['cond']}",
+                      'counts_valid': r['valid']['counts'] and ref['valid']['counts'],
+                      'timing_valid': (not cross) and r['valid']['timing'] and ref['valid']['timing'],
                       'frame_ms': d(r['frame']['mean'], ref['frame']['mean']), 'game_ms': d(r['parts'].get('game_ms'), ref['parts'].get('game_ms')),
                       'render_ms': d(r['parts'].get('render_ms'), ref['parts'].get('render_ms')), 'draws': d(r['log']['draws'], ref['log']['draws']),
                       'gpu_ms': d(r['log']['gpu_ms'], ref['log']['gpu_ms']), 'frame_pct': (None if d(r['frame']['mean'], ref['frame']['mean']) is None
@@ -232,30 +273,44 @@ def add_deltas(rows):
     return rows
 
 
-def drift(rows):
-    """per viewpoint and run, the spread of the frame mean over the baseline visits ((max / min) - 1); {(run, vp): spread}"""
+def drift(rows, key='frame', valid='timing'):
+    """per viewpoint and run, the spread ((max / min) - 1) of the baseline visits' frame mean (key 'frame') or draws (key 'draws'), over the
+    windows valid for `valid` ('timing': quiet and as asked; 'counts': as asked); {(run, vp): spread}, only where at least two such visits exist"""
     groups = {}
     for r in rows:
-        if r['cond'] in ('baseline', 'baseline-again') and r['frame']['mean']:
-            groups.setdefault((r['run'], r['vp']), []).append(r['frame']['mean'])
+        if r['cond'] not in ('baseline', 'baseline-again') or not r['valid'][valid]:
+            continue
+        v = r['frame']['mean'] if key == 'frame' else r['log']['draws']
+        if v:
+            groups.setdefault((r['run'], r['vp']), []).append(v)
     return {k: max(v) / min(v) - 1 for k, v in groups.items() if len(v) >= 2}
 
 
 def family_prices(rows, families):
-    """{family: {'viewpoints': n, 'frame_ms': mean delta, 'draws': mean delta, 'game_ms': ...}} over the rows of conditions with that
-    family (families: {condition id: family}); only same-run deltas, the others are not mixed in"""
+    """{family: {'pairs': all same-run pairs, 'timing_pairs': those that met the quiet rule on both sides and were as asked, 'count_pairs',
+    'frame_ms': mean difference over the timing pairs only (None when there is none), 'draws': mean difference over the count pairs, ...}} for
+    the conditions with that family (families: {condition id: family}). Pairs against another run's baseline are not mixed in."""
     acc = {}
     for r in rows:
         fam = families.get(r['cond'])
         dl = r.get('delta')
         if not fam or fam == 'baseline' or not dl or dl['cross_run']:
             continue
-        a = acc.setdefault(fam, {'frame_ms': [], 'game_ms': [], 'render_ms': [], 'draws': [], 'gpu_ms': [], 'conds': set()})
-        for k in ('frame_ms', 'game_ms', 'render_ms', 'draws', 'gpu_ms'):
-            a[k].append(dl[k])
+        a = acc.setdefault(fam, {'pairs': 0, 'timing': [], 'counts': [], 'conds': set()})
+        a['pairs'] += 1
         a['conds'].add(r['cond'])
-    return {fam: {'viewpoints': len([x for x in a['frame_ms'] if x is not None]), 'conds': sorted(a['conds']), **{k: mean(a[k]) for k in ('frame_ms', 'game_ms', 'render_ms', 'draws', 'gpu_ms')}}
-            for fam, a in acc.items()}
+        if dl['timing_valid']:
+            a['timing'].append(dl)
+        if dl['counts_valid']:
+            a['counts'].append(dl)
+    out = {}
+    for fam, a in acc.items():
+        row = {'pairs': a['pairs'], 'timing_pairs': len(a['timing']), 'count_pairs': len(a['counts']), 'conds': sorted(a['conds'])}
+        for k in ('frame_ms', 'game_ms', 'render_ms', 'gpu_ms'):
+            row[k] = mean([x[k] for x in a['timing']])
+        row['draws'] = mean([x['draws'] for x in a['counts']])
+        out[fam] = row
+    return out
 
 
 def fmt(x, nd=1):
@@ -269,10 +324,14 @@ def signed(x, nd=1):
 def markdown(rows, families=None, title='Cost table'):
     """the table as markdown: every window one row; the pass shares; the family prices; the drift of repeated baselines"""
     add_deltas(rows)
+    nt = sum(1 for r in rows if r['valid']['timing'])
+    nc = sum(1 for r in rows if r['valid']['counts'] and not r['valid']['timing'])
     lines = [f'## {title}', '', f'**{LABEL}.** Other work on this PC is in every number; a difference here is an observation of one process, '
              f'not a measurement. Frame ms are the renderer trace\'s interval (headless: CPU after the offscreen submit).', '',
-             '| run | cond | viewpoint | v | s | frames | mean ms | p99 | low1 fps | game | render | gpu wait | pace | bound | draws | GPU ms | submit | d frame | d draws | flags |',
-             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+             f"**Validity: {len(rows)} windows; {nt} met the quiet rule and were as asked (`timing`: frame ms and CPU ms are readings of the game); {nc} were as asked "
+             f"but not quiet or not recorded (`counts`: draws, passes, split and pictures only); {len(rows) - nt - nc} were not as asked (`NO`).**", '',
+             '| run | cond | viewpoint | v | s | frames | mean ms | p99 | low1 fps | game | render | gpu wait | pace | bound | draws | GPU ms | submit | d frame | d draws | valid | flags |',
+             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for r in rows:
         f, p, lg = r['frame'], r['parts'], r['log']
         dl = r.get('delta') or {}
@@ -280,7 +339,8 @@ def markdown(rows, families=None, title='Cost table'):
         lines.append('| ' + ' | '.join([r['run'], r['cond'], r['vp'], str(r['visit']), fmt(r['dwell_s']), str(f['n']), fmt(f['mean'], 2), fmt(f['p99'], 1), fmt(f['low1_fps'], 0),
                                         fmt(p.get('game_ms'), 2), fmt(p.get('render_ms'), 2), fmt(p.get('gpu_wait_ms'), 2), fmt(p.get('pace_ms'), 2), r['bound'] or '-',
                                         fmt(lg['draws'], 0), fmt(lg['gpu_ms'], 1), fmt(lg['replay'].get('submit'), 1),
-                                        signed(dl.get('frame_ms'), 2) + mark if dl else '-', signed(dl.get('draws'), 0) if dl else '-', '; '.join(r['flags']) or '-']) + ' |')
+                                        signed(dl.get('frame_ms'), 2) + mark if dl else '-', signed(dl.get('draws'), 0) if dl else '-',
+                                        'timing' if r['valid']['timing'] else 'counts' if r['valid']['counts'] else 'NO', '; '.join(r['flags'] + [w for w in r['valid']['why'] if w not in r['flags']]) or '-']) + ' |')
     cpus = [r for r in rows if r['cpu']]
     if cpus:
         lines += ['', '### CPU and the quiet record (the game\'s CPU time a frame barely moves with the machine\'s load; wall frame ms does)', '',
@@ -308,15 +368,20 @@ def markdown(rows, families=None, title='Cost table'):
     if families:
         prices = family_prices(rows, families)
         if prices:
-            lines += ['', '### What each part took away (mean difference to the same run\'s baseline; negative = cheaper without it)', '',
-                      '| part | conditions | viewpoints | d frame ms | d game ms | d render ms | d draws | d GPU ms |', '|---|---|---|---|---|---|---|---|']
+            lines += ['', '### What each part took away (mean difference to the same run\'s baseline; negative = cheaper without it; frame, game, render and GPU ms over the pairs that met the quiet rule only, draws over the pairs that were as asked)', '',
+                      '| part | conditions | pairs | quiet pairs | d frame ms | d game ms | d render ms | d GPU ms | d draws |', '|---|---|---|---|---|---|---|---|---|']
             for fam, v in sorted(prices.items(), key=lambda kv: (kv[1]['frame_ms'] is None, kv[1]['frame_ms'] or 0)):
-                lines.append(f"| {fam} | {', '.join(v['conds'])} | {v['viewpoints']} | {signed(v['frame_ms'], 2)} | {signed(v['game_ms'], 2)} | {signed(v['render_ms'], 2)} | {signed(v['draws'], 0)} | {signed(v['gpu_ms'], 2)} |")
-    dr = drift(rows)
-    if dr:
-        lines += ['', '### Revisit drift (the same viewpoint in the baseline blocks of one run)', '', '| run | viewpoint | spread of the mean | steady (<= 5%) |', '|---|---|---|---|']
-        for (run, vp), s in sorted(dr.items()):
-            lines.append(f"| {run} | {vp} | {100 * s:.1f}% | {'yes' if s <= DRIFT_LIMIT else 'NO'} |")
+                lines.append(f"| {fam} | {', '.join(v['conds'])} | {v['pairs']} | {v['timing_pairs']} | {signed(v['frame_ms'], 2)} | {signed(v['game_ms'], 2)} | {signed(v['render_ms'], 2)} | {signed(v['gpu_ms'], 2)} | {signed(v['draws'], 0)} |")
+    dr, dd = drift(rows), drift(rows, 'draws', 'counts')
+    keys = sorted(set(dr) | set(dd))
+    if keys:
+        lines += ['', '### Revisit drift (the same viewpoint in the baseline blocks of one run; frame ms over quiet windows only, draws over windows that were as asked)', '',
+                  '| run | viewpoint | spread of the frame mean | spread of draws | frame mean steady (<= 5%) |', '|---|---|---|---|---|']
+        for (run, vp) in keys:
+            f = dr.get((run, vp))
+            g = dd.get((run, vp))
+            steady = '-' if f is None else 'yes' if f <= DRIFT_LIMIT else 'NO'
+            lines.append(f"| {run} | {vp} | {'-' if f is None else f'{100 * f:.1f}%'} | {'-' if g is None else f'{100 * g:.1f}%'} | {steady} |")
     return '\n'.join(lines) + '\n'
 
 
