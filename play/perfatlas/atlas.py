@@ -86,7 +86,9 @@ def cmd_plan(a):
     conds = model.conditions_for(lib, [s for s in a.conditions.split(',') if s])
     costs = {'fps_floor': a.fps_floor} if a.fps_floor else None
     over = {k: v for k, v in (('dwell_s', a.dwell), ('settle_s', a.settle), ('min_frames', a.min_frames)) if v is not None}
-    if a.sweep:
+    if a.save_proof:
+        runs = planner.plan_save_proof(lib, ids, dwell_s=a.dwell or 10.0, prefix=a.prefix)
+    elif a.sweep:
         yaws = [float(x) for x in a.yaws.split(',') if x]
         runs = planner.plan_sweep(lib, ids, yaws, run_budget_s=a.run_budget, dwell_s=a.dwell or 3.0, prefix=a.prefix)
     else:
@@ -114,12 +116,14 @@ def cmd_merge(a):
     return 0
 
 
-def find_log(run_dir, wait_s=900):   # (the wrapper may wait for the GPU gate first: the game's wall counts from its start, the log's first line)
+def find_log(run_dir, wait_s=900, proc=None):   # (the wrapper may wait for the GPU gate first: the game's wall counts from its start, the log's first line)
     end = time.monotonic() + wait_s
     while time.monotonic() < end:
         logs = sorted(Path(run_dir).glob('*_log.txt'))
         if logs:
             return logs[0]
+        if proc is not None and proc.poll() is not None:
+            return None   # (the wrapper ended without a game: nothing will write a log)
         time.sleep(0.5)
     return None
 
@@ -156,10 +160,12 @@ def run_one(a, run, outdir, cap_s=None):
     run_dir = Path(a.copy) / 'runs' / tag
     result = {'aborted': None}
     try:
-        log = find_log(run_dir)
+        log = find_log(run_dir, a.gate_wait, proc)
         started = time.monotonic_ns()
         if log is None:
-            result['aborted'] = 'the game wrote no log'
+            result['aborted'] = (f'the game wrote no log in {a.gate_wait:.0f} s (the GPU gate did not admit it: another game holds the card, or the wrapper ended)'
+                                 if proc.poll() is None else 'the wrapper ended without a game log')
+            result['gate_blocked'] = proc.poll() is None
         else:
             bridge = Bridge(sock, timeout=15, connect_timeout=300)
             pid = cpumod.find_game_pid(sock)
@@ -175,7 +181,7 @@ def run_one(a, run, outdir, cap_s=None):
         result['aborted'] = f'bridge: {e}'
     finally:
         try:
-            proc.wait(timeout=75)
+            proc.wait(timeout=75 if result.get('aborted') is None or not result.get('gate_blocked') else 0.1)
         except subprocess.TimeoutExpired:
             say(f"run {run['id']}: the wrapper did not end in 75 s; ending its group by pid {proc.pid}")
             os.killpg(proc.pid, signal.SIGTERM)
@@ -217,6 +223,9 @@ def cmd_hold(a):
         except Exception as e:   # (a run's fault must not take the hold's other runs with it)
             say(f"run {run['id']} failed: {type(e).__name__}: {e}")
             metas.append({'id': run['id'], 'aborted': f'{type(e).__name__}: {e}'})
+        if metas[-1].get('gate_blocked'):
+            say(f"run {run['id']}: the gate did not admit the game: the hold ends here and gives its locks back instead of idling behind another game")
+            break
     (out / 'hold.json').write_text(json.dumps({'hold': a.hold, 'runs': metas, 'seconds': round(time.monotonic() - started, 1)}, indent=1) + '\n')
     return 0
 
@@ -282,6 +291,7 @@ def main(argv=None):
     p.add_argument('--min-frames', type=int, help='at least this many presents in each window (1300 for pass timing)')
     p.add_argument('--fps-floor', type=float, help='the frame rate the planner assumes when it turns --min-frames into seconds (default 60: set 25 on a loaded PC)')
     p.add_argument('--sweep', action='store_true', help='scout runs: each viewpoint looked at in each of --yaws, reading the draws (no conditions)')
+    p.add_argument('--save-proof', action='store_true', help="runs that boot each viewpoint's own save and check where Link stands (no !pos)")
     p.add_argument('--yaws', default='0,60,120,180,240,300')
     p.add_argument('--prefix', default='r', help="the runs' ids start with this (so that plans can be merged)")
     p.add_argument('--out', required=True)
@@ -299,6 +309,7 @@ def main(argv=None):
     p.add_argument('--hs-run', default=str(HARNESS / 'hs-run.sh'))
     p.add_argument('--saves', default=str(HARNESS / 'saves'))
     p.add_argument('--wall', type=int, default=0, help="each run's wall seconds (default: its estimate + 90)")
+    p.add_argument('--gate-wait', type=float, default=150.0, help="seconds to wait for the game's log (the GPU gate admitting it) before the run and the hold end")
     p.add_argument('--hold-seconds', type=float, default=0, help="the hold's length: a run that no longer fits is skipped")
     p.set_defaults(fn=cmd_hold)
     p = sub.add_parser('table')

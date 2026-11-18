@@ -51,6 +51,7 @@ class Driver:
         self.boot_timeout_s = boot_timeout_s
         self.say = log or (lambda text: None)
         self.options_before = {}
+        self.options_failed = {}   # (a live setting the game would not take: every window until its restore says so)
         self.n = 0
         self.aborted = None
         self.cpu = cpu                      # (cpu.Sampler: the game's and the machine's CPU, for the quiet record and CPU ms a frame)
@@ -173,14 +174,18 @@ class Driver:
                 self.options_before[name] = got.get('option', {}).get('value')
         r = self.bridge.option_set(name, op['value'])
         self.sleep(self.poll_s)
+        if not r.get('ok'):
+            self.options_failed[name] = r.get('error') or 'failed'
         return {'ok': bool(r.get('ok')), 'was': r.get('was'), 'now': (r.get('option') or {}).get('value'), 'error': None if r.get('ok') else r.get('error')}
 
     def op_option_restore(self, op):
         name = op['name']
         if name not in self.options_before or self.options_before[name] is None:
+            self.options_failed.pop(name, None)
             return {'ok': False, 'error': 'no value was recorded before'}
         r = self.bridge.option_set(name, self.options_before[name])
         self.sleep(self.poll_s)
+        self.options_failed.pop(name, None)
         return {'ok': bool(r.get('ok')), 'now': (r.get('option') or {}).get('value')}
 
     def reload_area(self, area_map, timeout_s=60.0):
@@ -340,6 +345,19 @@ class Driver:
 
     def op_pos(self, op):
         pos_ok, st = self.go_to(op['line'])
+        return self.stand_window(op, pos_ok)
+
+    def op_stand(self, op):
+        """no `!pos`: Link is where the save put him. Reads where he stands, checks it against op['expect'] [x, z] (within `tol_m`, 1 m), turns the
+        camera, dwells and takes a picture: the proof that a save made for a viewpoint boots to it (the camera heading read before any turn is
+        in the record's status0)"""
+        st = self.status()
+        p = (st.get('game') or {}).get('pos')
+        tol = op.get('tol_m', 1.0)
+        pos_ok = bool(p) and math.hypot(p[0] - op['expect'][0], p[2] - op['expect'][1]) <= tol
+        return self.stand_window(op, pos_ok)
+
+    def stand_window(self, op, pos_ok):
         aim = op.get('aim')
         cam_ok, cam, pitch, pushes = (True, None, None, 0)
         if aim is not None:
@@ -353,7 +371,8 @@ class Driver:
         rec = self.write_window(kind='viewpoint', cond=op['cond'], vp=op['vp'], visit=op['visit'], tod=op.get('tod'), t0_ns=t0, t1_ns=t1,
                                 log0=log0, log1=log1, frame0=st0.get('frame'), frame1=st1.get('frame'),
                                 status0=self.snapshot(st0), status1=self.snapshot(st1), arrived=pos_ok, camera_ok=cam_ok, aim=aim, aimed_pushes=pushes,
-                                shot=shot, moved_m=self.moved(samples), event_seen=any(s.get('event') for s in samples), samples=len(samples), cpu=cpu)
+                                shot=shot, moved_m=self.moved(samples), event_seen=any(s.get('event') for s in samples), samples=len(samples), cpu=cpu,
+                                options_failed=sorted(self.options_failed))
         return {'ok': pos_ok, 'window': rec['n'], 'camera_ok': cam_ok, 'camera': cam}
 
     def op_sweep(self, op):

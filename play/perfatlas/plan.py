@@ -14,6 +14,7 @@ Ops (what `driver.py` executes; each is a plain dict, the plan is JSON):
     {"op": "option", "name": "...", "value": ...}    live, through the menu's setter; the first-seen value is remembered
     {"op": "option_restore", "name": "..."}
     {"op": "pos", "cond": id, "vp": id, "visit": n, "settle_s": 3, "dwell_s": 15, "min_frames": 0, "line": "!pos x y z", "aim": [yaw, pitch] | null, "shot": true}
+    {"op": "stand", "cond": id, "vp": id, "visit": 1, "expect": [x, z], "aim": [yaw, pitch] | null, "settle_s": 2, "dwell_s": 10, "shot": true}   no !pos: where the save put Link
     {"op": "sweep", "vp": id, "line": "!pos x y z", "yaws": [0, 60, ...], "dwell_s": 3}   look each way and read the draws (a scout)
     {"op": "walk", "cond": id, "walk": id, "points": [[x, z], ...], "start": [x, y, z] | null, "radius": 1.5, "timeout_s": 90, "shot": true}
     {"op": "quit"}
@@ -46,7 +47,7 @@ def op_seconds(op, costs):
         return costs['option_s']
     if k == 'time':
         return costs['time_s']
-    if k == 'pos':
+    if k in ('pos', 'stand'):
         return (costs['arrive_s'] + (costs['aim_s'] if op.get('aim') else 0) + op['settle_s'] + max(op['dwell_s'], op.get('min_frames', 0) / costs['fps_floor'])
                 + (costs['shot_s'] if op.get('shot') else 0))
     if k == 'sweep':
@@ -258,4 +259,22 @@ def plan_sweep(lib, vp_ids, yaws, run_budget_s=420.0, dwell_s=3.0, costs=None, p
             raise PlanError(f'one place with {len(yaws)} yaws needs {seconds_of([op], costs):.0f} s: more than the run budget {run_budget_s:.0f} s')
         cur['ops'].append(op)
     runs.append(close(cur))
+    return runs
+
+
+def plan_save_proof(lib, vp_ids, dwell_s=10.0, costs=None, prefix='v'):
+    """one run that boots each viewpoint's own save and checks where Link stands (no `!pos`): the proof that a save made for a viewpoint reaches
+    play at that place. Each viewpoint needs its own area (its own save) in the library; one run, in the order given. Estimates only."""
+    costs = {**DEFAULT_COSTS, **(costs or {})}
+    runs = []
+    for i, vid in enumerate(vp_ids, 1):
+        vp = lib.viewpoints.get(vid)
+        if vp is None:
+            raise PlanError(f'{vid}: no such viewpoint')
+        a = lib.areas[vp.area]
+        save = lib.save_for(vp.area, vp.tod)
+        ops = [{'op': 'boot', 'map': a.map},
+               {'op': 'stand', 'cond': 'save-proof', 'vp': vid, 'visit': 1, 'expect': [vp.pos[0], vp.pos[2]], 'aim': vp.aim(), 'settle_s': 2.0,
+                'dwell_s': dwell_s, 'shot': True, 'tod': vp.tod}, {'op': 'quit'}]
+        runs.append({'id': f'{prefix}{i}', 'area': vp.area, 'map': a.map, 'tod': vp.tod, 'save': save, 'env': [], 'ops': ops, 'est_s': round(seconds_of(ops, costs), 1)})
     return runs

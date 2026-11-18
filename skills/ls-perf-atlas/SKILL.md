@@ -41,7 +41,7 @@ crowds can fail the 5% same-arm tolerance (an earlier exclusive Market hold had 
 | `!cheat N` | time of day, teleport | `100+h` sets hour h; `1000+i` teleports to destination i | `!pos` is not taken in the same update as a pending `!cheat` |
 | FPS counter | the frame's parts on screen | option `fps_counter` 4 = Breakdown, 5 = Dev (draws, dispatches, passes, uploads, GPU slot waits) | headless needs `RX_VK_SHOT_MENU=1` to draw it; the same parts are the frame trace's columns |
 | Frame trace | per frame: interval, game, render, GPU wait, pace, waits, the main thread's time (on CPU, blocked, waiting for a core), draw/descriptor/command ms | `RX_VK_FRAME_TRACE=1 HOS_PROFILE_DIR=<folder>` writes `<folder>/frames.csv`; `at_ns` is the host clock (`time.monotonic_ns()` on Linux) | draw/descriptor/command ms time one draw in eight unless `RX_VK_PROF_ALL=1` |
-| `/proc` sampling (`cpu.py`) | the game's CPU time a frame by thread group, the cores of everything else (the quiet record) | the driver snapshots `/proc/stat` and `/proc/<game pid>/task/*/stat` while it stands; the pid is found by the `HOS_CONTROL` in the process's environment | ticks of 10 ms: a window needs at least a few seconds; threads that end inside a window are missed |
+| `/proc` sampling (`cpu.py`) | the game's CPU time a frame by thread group, the cores of everything else (the quiet record) | the driver snapshots `/proc/stat` and `/proc/<game pid>/task/*/stat` while it stands; the pid is found by the `HOS_CONTROL` in the process's environment | ticks of 10 ms: a window needs at least a few seconds; threads that end inside a window are missed. **CPU ms a frame also rises on a busy PC** (89 ms at 3 other cores, 144 ms at 29: spinning and waiting count), less than wall time but not constant: compare only windows whose quiet flag is met |
 | Pass timing | GPU time per pass, program and copy | `RX_VK_PASS_TIMING=1\|2`, logged every 600 presents, no file | every span waits for the GPU: spans add up to more than an unprofiled frame, read shares only |
 | Scene lines | draws, dispatches, passes, barriers, uploads, textures, GPU time, replay ms by part | always on, every 120 presents | averages of the last 120 presents |
 | Draw statistics | one frame's draws by program | `RX_VK_DRAW_STATS=<folder>`, touch `<folder>/draw_stats.now` | one frame |
@@ -109,6 +109,11 @@ part 0.3 to 1.1 ms; GPU 4 to 9 ms; the main thread was blocked 74 to 80% of the 
 the CPU record, the **CPU ms a frame by thread group**, which does not move with other work the way wall time does. Use ordinary windows for counts,
 pictures, CPU per frame and the split; keep every frame-ms comparison for the exclusive worker.
 
+**What a quiet window showed (hold 2, two windows with the quiet rule met, ordinary, no speed claim):** the square view at 2048x1152 on this PC read 16 ms and
+14 ms a frame (60 to 70 fps; the field's Castle Town sessions average 34 fps on other hardware); the actor executors (6 threads) took 38 of the 89 CPU ms
+a frame, the module workers 14, the renderer's replay and recorder threads 11 and 10; the main thread was on CPU 4.6 ms and blocked 12.4 ms. With people off the next
+quiet window read 14.7 ms and 79 CPU ms (the executors 34): about 10% less at that one view, one unpaired pair, a lead for the exclusive worker.
+
 **Places:** a place picked from the nav mesh can be inside a shop or against a wall (5 of the first 8 pictures were); pick from where Link has walked (the route
 library's tracks), then let a **scout** choose the views: `plan --sweep --yaws 0,60,...` stands at each place, turns the camera to each yaw and reads the
 bridge's `draws` (a count: it does not move with the machine's load). Look at the top views' pictures before keeping them.
@@ -160,4 +165,6 @@ The ordinary holds find and rank; only the worker decides. For one viewpoint (`t
 
 The driver and the cost table are tested against a fake game and made-up logs. Hold 1 (three runs, 24 windows, ordinary) ran on the real game: the
 driver arrived, reloaded areas with actor rules (people off: 16 left out, animals off: 14, no stall) and took pictures; viewpoint facing and camera did not
-apply (above), and the PC was busy. The camera aim, the sweep and the CPU record were written after it and have not run in a game yet (update this line).
+apply (above), and the PC was busy. Hold 2 ran the camera aim (6 of 6 sweeps and all 10 windows reached their yaw within 10 degrees), the sweep, the actor families with their left-out counts
+(people 16, animals 14, all offered 111) and the CPU record, which also says which windows were quiet (the first two were: other work 2.7 cores mean,
+2.8 peak). The PC was then busy again (others up to 30 cores) and the later windows are not comparable.

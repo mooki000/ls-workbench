@@ -8,7 +8,7 @@ It is the pattern of a scene driver around the shared adapter (the adapter measu
     scene.py validate OUTPUT                                                          (the scenario's `validator_command`)
 
 The scenario's `run` object carries `atlas_scene` = {"map", "aim_yaw", "aim_tol", "pos": [x, z], "pos_tol_m", "control_by_s", "ready_by_s"}:
-the map Link must stand in, the camera heading, where he must read, and the seconds after the first present by which the game must be
+the map Link must stand in, the camera heading, where he must read (`boot_press`, default true: the driver presses A through the title itself, only while no map is up), and the seconds after the first present by which the game must be
 controllable and the aim finished (both before the window's `from`). `validate` fails the run (the worker keeps it as invalid) unless
 the game was controllable in time, Link read where the save puts him, the camera held its heading through the window, no event ran and
 nothing loaded. A viewpoint is a save made for the place (`--start` of the save maker); no `!pos` is needed, so the same scene runs on a
@@ -80,6 +80,7 @@ def drive(bridge, out, spec, first, until_s, clock=time.monotonic, sleep=time.sl
     def save():
         Path(out, 'actions.json').write_text(json.dumps(rec, indent=1) + '\n')
 
+    last_press = -1e9
     try:
         while rel() < spec['control_by_s'] and not stop.is_set():
             st = bridge.status()
@@ -89,6 +90,11 @@ def drive(bridge, out, spec, first, until_s, clock=time.monotonic, sleep=time.sl
                 rec['controllable_at_s'] = round(rel(), 2)
                 rec['before_aim'] = snap(flat)
                 break
+            # the title: A through it, only while no map is up (a press near a person once control begins would start a conversation)
+            if spec.get('boot_press', True) and not flat['map'] and clock() - last_press >= 2.5:
+                bridge.press('A', 12, wait=False)
+                last_press = clock()
+                rec['presses'] = rec.get('presses', 0) + 1
             sleep(1.0)
         if rec['controllable_at_s'] is None:
             rec['errors'].append(f"not controllable in {spec['map']} by {spec['control_by_s']} s after the first present")

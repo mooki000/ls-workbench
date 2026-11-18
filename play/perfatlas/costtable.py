@@ -133,6 +133,8 @@ def window_row(run, w):
         flags.append(f"moved {w['moved_m']} m")
     if w.get('event_seen'):
         flags.append('an event ran')
+    for name in w.get('options_failed') or []:
+        flags.append(f'the setting {name} was NOT taken (the window ran at the earlier value)')
     if w['kind'] == 'walk' and w.get('result') != 'reached':
         flags.append(f"walk {w.get('result')}")
     ps = pass_summary(run.records, w)

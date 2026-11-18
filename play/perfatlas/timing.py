@@ -28,7 +28,7 @@ class TimingError(ValueError):
     pass
 
 
-def make_scenario(label, save, scene, good_max, bad_min, from_s=55, to_s=105, boot_input='5:A,8.7:A,11.7:A,15:A', measure='mean_ms',
+def make_scenario(label, save, scene, good_max, bad_min, from_s=55, to_s=105, boot_input=None, measure='mean_ms',
                   env=None, seconds=110, grace_seconds=5, repetitions=2, extra_expect=()):
     """the scenario JSON for one viewpoint. `scene` is the atlas_scene object (map, aim_yaw, pos [x, z], control_by_s, ready_by_s, ...).
     good_max and bad_min are the decision bands in the measure's own unit (worseness: higher is worse); both are required."""
@@ -40,14 +40,15 @@ def make_scenario(label, save, scene, good_max, bad_min, from_s=55, to_s=105, bo
         raise TimingError(f'the window {from_s}..{to_s} must lie inside the run ({seconds} s) with 3 s to spare')
     if scene.get('ready_by_s', 1e9) > from_s - 2:
         raise TimingError(f"the aim must be done by {from_s - 2} s (the window starts at {from_s}): ready_by_s is {scene.get('ready_by_s')}")
+    run_extra = {'input': boot_input} if boot_input else {}   # (default: no input script: the scene driver presses A through the title itself)
     e = dict(FIXED_ENV)
     e.update(env or {})
     return {'schema_version': 1, 'name': label, 'kind': 'timing', 'seconds': seconds, 'grace_seconds': grace_seconds, 'repetitions': repetitions,
             'max_retries': 0, 'quiet_cores': 3.0, 'quiet_peak_cores': 6.0, 'repeat_tolerance': SPREAD_MAX,
             'measure': {'name': measure, 'direction': 'higher-worse', 'good_max': good_max, 'bad_min': bad_min},
-            'run': {'label': label, 'user': save, 'input': boot_input, 'anchor': 'first', 'from': from_s, 'to': to_s, 'readback_csv': False,
+            'run': {'label': label, 'user': save, 'anchor': 'first', 'from': from_s, 'to': to_s, 'readback_csv': False,
                     'sample_seconds': 2.5, 'atlas_scene': scene, 'env': e, 'expect_log': ['2048x1152', *extra_expect],
-                    'forbid_log': ['device lost']}}
+                    'forbid_log': ['device lost'], **run_extra}}
 
 
 def make_plan(entries, scenario_path, run_command, seconds=110, grace_seconds=5, settle_seconds=10, quiet_cores=3, max_hold_seconds=CAP_S, avoid=(AVOID_WIDGET,)):

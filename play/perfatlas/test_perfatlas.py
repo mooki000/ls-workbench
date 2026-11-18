@@ -9,6 +9,7 @@ import json
 import math
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -431,6 +432,42 @@ class Driver(unittest.TestCase):
         self.assertEqual(rows[0]['draws'], max(v['draws'] for v in views))
         self.assertIn('Scout', costtable.sweep_markdown(rows))
 
+    def test_a_setting_the_game_refuses_is_flagged_in_every_window_until_restored(self):
+        self.bridge.option_set = lambda name, value: {'ok': False, 'error': 'failed'}
+        drv, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
+        drv.op_boot({'op': 'boot', 'map': 'AreaA'})
+        r = drv.op_option({'op': 'option', 'name': 'resolution', 'value': 6, 'cond': 'res-33'})
+        self.assertFalse(r['ok'])
+        drv.op_pos({'op': 'pos', 'cond': 'res-33', 'vp': 'v2', 'visit': 1, 'line': '!pos -3.000 5.000 8.000', 'aim': None, 'settle_s': 0.5, 'dwell_s': 3.0, 'shot': False})
+        drv.close()
+        wins = [json.loads(ln) for ln in (Path(self.tmp.name) / 'out' / 'windows.jsonl').read_text().splitlines()]
+        self.assertEqual(wins[0]['options_failed'], ['resolution'])
+        run = costtable.Run(Path(self.tmp.name) / 'out')
+        self.assertTrue(any('NOT taken' in f for f in costtable.build_rows([run])[0]['flags']))
+
+    def test_stand_checks_where_the_save_put_link_without_a_pos_line(self):
+        obj = library_obj()
+        obj['areas']['t'] = {'map': 'AreaA', 'age': 'child', 'saves': {'day': 'save-t'}}
+        obj['viewpoints'].append({'id': 'tv', 'area': 't', 'pos': [10, 5, 20], 'camera': {'yaw': 60}, 'dwell_s': 5})
+        lib = model.load_library(obj)
+        runs = planner.plan_save_proof(lib, ['tv'], dwell_s=4.0)
+        self.assertEqual(runs[0]['save'], 'save-t')
+        self.assertEqual([o['op'] for o in runs[0]['ops']], ['boot', 'stand', 'quit'])
+        self.assertEqual(runs[0]['ops'][1]['expect'], [10.0, 20.0])
+        self.bridge.pos = [10.0, 5.0, 20.0]   # (where the save put him)
+        drv, live, _ = make_driver(self.tmp.name, self.bridge, self.clock)
+        res = drv.run(runs[0]['ops'])
+        self.assertTrue(res[1]['result']['ok'])
+        self.assertEqual(live.read_text(), '')   # (no !pos was sent)
+        w = json.loads((Path(self.tmp.name) / 'out' / 'windows.jsonl').read_text().splitlines()[0])
+        self.assertEqual((w['cond'], w['arrived'], w['camera_ok']), ('save-proof', True, True))
+        # a save that put him elsewhere is a failed proof, not a crash
+        self.bridge.pos = [40.0, 5.0, 20.0]
+        drv2, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
+        r = drv2.op_stand({'op': 'stand', 'cond': 'save-proof', 'vp': 'tv', 'visit': 1, 'expect': [10.0, 20.0], 'aim': None, 'settle_s': 0.5, 'dwell_s': 2.0, 'shot': False})
+        self.assertFalse(r['ok'])
+        drv2.close()
+
     def test_boot_presses_a_through_the_title(self):
         drv, _, _ = make_driver(self.tmp.name, self.bridge, self.clock)
         res = drv.run([{'op': 'boot', 'map': 'AreaA'}, {'op': 'quit'}])
@@ -689,8 +726,8 @@ class SceneAndTiming(unittest.TestCase):
         return scene.drive(self.bridge, self.tmp.name, spec, first, until_s, clock=clock, sleep=self.clock.sleep)
 
     def test_a_good_scene_validates(self):
-        self.bridge.press('A')   # (the boot script's presses: the fake game is in play after one)
-        rec = self.drive()
+        rec = self.drive()   # (the fake game starts at the title: the scene driver presses A itself)
+        self.assertGreaterEqual(rec['presses'], 1)
         self.assertIsNotNone(rec['controllable_at_s'])
         self.assertTrue(rec['aim']['ok'])
         self.assertLessEqual(rec['ready_at_s'], 53)
@@ -716,8 +753,8 @@ class SceneAndTiming(unittest.TestCase):
         self.assertEqual(scene.validate({'spec': self.SPEC, 'controllable_at_s': None, 'errors': ['x']}), ['x', 'never controllable'])
 
     def test_a_game_that_never_gets_controllable_is_recorded(self):
-        # the title is never passed (no press): the fake stays in the menu
-        rec = self.drive({**self.SPEC, 'control_by_s': 8})
+        # the title is never passed (no press is allowed): the fake stays in the menu
+        rec = self.drive({**self.SPEC, 'control_by_s': 8, 'boot_press': False})
         self.assertIsNone(rec['controllable_at_s'])
         self.assertTrue(rec['errors'])
         self.assertTrue(scene.validate(rec))
@@ -751,6 +788,8 @@ class SceneAndTiming(unittest.TestCase):
         self.assertEqual(sc['schema_version'], 1)
         self.assertEqual(sc['measure'], {'name': 'mean_ms', 'direction': 'higher-worse', 'good_max': 30.0, 'bad_min': 36.0})
         self.assertEqual((sc['run']['anchor'], sc['run']['from'], sc['run']['to']), ('first', 60, 105))
+        self.assertNotIn('input', sc['run'])   # (no input script: the scene driver presses A itself)
+        self.assertEqual(self.scenario(boot_input='5:A')['run']['input'], '5:A')
         self.assertEqual(sc['run']['env']['HOS_DYNRES'], '0')
         self.assertEqual(sc['run']['atlas_scene']['aim_yaw'], 120.0)
         for kw, text in (({'good_max': None}, 'bands'), ({'bad_min': 20.0}, 'below'), ({'to_s': 120}, 'window'), ({'from_s': 54}, 'aim must be done')):
@@ -794,6 +833,35 @@ class SceneAndTiming(unittest.TestCase):
         self.assertEqual(timing.null_pair_verdict(runs([30.0, 30.3])[:2])['verdict'], 'invalid')
         self.assertEqual(len(timing.null_pair_verdict(runs([30.0, 30.3, 30.2, 29.9]))['rows']), 4)   # (every row is kept)
         self.assertIsNone(timing.spread([1.0]))
+
+
+class GateBlocked(unittest.TestCase):
+    def test_a_game_the_gate_does_not_admit_ends_the_run_and_the_hold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            lib = tmp / 'lib.json'
+            obj = library_obj()
+            obj['viewpoints'] = obj['viewpoints'][:1]
+            obj['walks'] = []
+            lib.write_text(json.dumps(obj))
+            planf = tmp / 'plan.json'
+            self.assertEqual(atlas.main(['plan', str(lib), '--area', 'a', '--tod', 'day', '--viewpoints', 'v1', '--conditions', 'baseline,actors-people', '--run-budget', '110',
+                                         '--out', str(planf)]), 0)
+            self.assertGreater(len(json.loads(planf.read_text())['holds'][0]['runs']), 1)   # (more than one run: the second must be skipped)
+            blocked = tmp / 'blocked.sh'
+            blocked.write_text('#!/bin/sh\nsleep 60\n')
+            blocked.chmod(0o755)
+            copy = tmp / 'copy'
+            (copy / 'runs').mkdir(parents=True)
+            out = tmp / 'out'
+            t0 = time.monotonic()
+            rc = atlas.main(['hold', str(planf), '--hold', 'h1', '--copy', str(copy), '--out', str(out), '--hs-run', str(blocked), '--saves', str(tmp), '--wall', '120', '--gate-wait', '3'])
+            self.assertEqual(rc, 0)
+            self.assertLess(time.monotonic() - t0, 20)
+            hold = json.loads((out / 'hold.json').read_text())
+            self.assertEqual(len(hold['runs']), 1)   # (the hold ended at the first run)
+            self.assertTrue(hold['runs'][0]['gate_blocked'])
+            self.assertIn('did not admit', hold['runs'][0]['aborted'])
 
 
 class Rehearsal(unittest.TestCase):
